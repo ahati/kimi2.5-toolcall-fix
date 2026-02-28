@@ -4,9 +4,9 @@ import (
 	"io"
 	"net/http"
 
+	"ai-proxy/config"
+	"ai-proxy/upstream"
 	"github.com/gin-gonic/gin"
-	"proxy/config"
-	"proxy/upstream"
 )
 
 func ListModels(cfg *config.Config) gin.HandlerFunc {

@@ -2,24 +2,24 @@
 
 ## Project Overview
 
-Go-based HTTP proxy server for OpenAI-compatible LLM APIs. Proxies requests to llm.chutes.ai while exposing an OpenAI-compatible interface.
+Go-based HTTP ai-proxy server for OpenAI-compatible LLM APIs. Proxies requests to llm.chutes.ai while exposing an OpenAI-compatible interface.
 
 ## Build Commands
 
 ```bash
 # Build the project
-go build -o proxy .
+go build -o ai-proxy .
 
 # Run the server
-./proxy
+./ai-proxy
 
 # Run with custom port
-PORT=8080 ./proxy
+PORT=8080 ./ai-proxy
 
 # Run with custom upstream URL and API key
 UPSTREAM_URL=https://llm.chutes.ai/v1/chat/completions \
 UPSTREAM_API_KEY=your-api-key \
-./proxy
+./ai-proxy
 
 # Run tests
 go test ./...
@@ -57,7 +57,7 @@ go list -m all
 
 ### Imports
 
-Group imports in order: standard library, external packages (github.com), then internal packages (proxy/...). Use blank lines between groups. No import aliases unless necessary.
+Group imports in order: standard library, external packages (github.com), then internal packages (ai-proxy/...). Use blank lines between groups. No import aliases unless necessary.
 
 ```go
 import (
@@ -69,8 +69,8 @@ import (
     "github.com/gin-gonic/gin"
     "github.com/tmaxmax/go-sse"
 
-    "proxy/config"
-    "proxy/logging"
+    "ai-proxy/config"
+    "ai-proxy/logging"
 )
 ```
 
@@ -86,7 +86,7 @@ import (
 - **Variables/Functions**: `camelCase` (e.g., `apiKey`, `streamResponse`)
 - **Constants**: `PascalCase` or `camelCase` for unexported
 - **Types/Interfaces**: `PascalCase` (e.g., `Config`)
-- **Packages**: lowercase, short, no underscores (e.g., `proxy`)
+- **Packages**: lowercase, short, no underscores (e.g., `ai-proxy`)
 - **Files**: lowercase with underscores (e.g., `completions.go`)
 - **Exported/Unexported**: Uppercase/lowercase first letter
 - **Acronyms**: Use all caps for acronyms > 2 letters (e.g., `APIKey`)
@@ -142,7 +142,7 @@ func readBody(c *gin.Context) ([]byte, error) {
 
 ### Logging
 
-- Use `proxy/logging` package: `logging.InfoMsg` and `logging.ErrorMsg`
+- Use `ai-proxy/logging` package: `logging.InfoMsg` and `logging.ErrorMsg`
 
 ### Dependencies
 
@@ -152,7 +152,7 @@ func readBody(c *gin.Context) ([]byte, error) {
 ### Project Structure
 
 ```
-proxy/
+ai-proxy/
 ├── main.go           # Entry point, route setup
 ├── config/           # Configuration loading
 ├── downstream/       # HTTP handlers (client-facing)

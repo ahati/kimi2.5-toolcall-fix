@@ -4,8 +4,9 @@ import (
 	"io"
 	"net/http"
 
-	"proxy/config"
-	"proxy/upstream"
+	"ai-proxy/config"
+	"ai-proxy/logging"
+	"ai-proxy/upstream"
 
 	"github.com/gin-gonic/gin"
 )
@@ -61,7 +62,23 @@ func proxyAndRespond(c *gin.Context, cfg *config.Config, body []byte) {
 		return
 	}
 
-	streamResponse(c, resp.Body)
+	toolCallTransformer := NewToolCallTransformer(c.Writer)
+
+	var loggingTransformer *LoggingTransformer
+	if cfg.SSELogDir != "" {
+		var err error
+		loggingTransformer, err = NewLoggingTransformer(cfg.SSELogDir)
+		if err != nil {
+			logging.ErrorMsg("Failed to create logging transformer: %v", err)
+		}
+	}
+	defer func() {
+		if loggingTransformer != nil {
+			loggingTransformer.Close()
+		}
+	}()
+
+	streamResponse(c, resp.Body, loggingTransformer, toolCallTransformer)
 }
 
 func readBody(c *gin.Context) ([]byte, error) {

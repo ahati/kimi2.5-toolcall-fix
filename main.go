@@ -3,10 +3,10 @@ package main
 import (
 	"os"
 
+	"ai-proxy/config"
+	"ai-proxy/downstream"
+	"ai-proxy/logging"
 	"github.com/gin-gonic/gin"
-	"proxy/config"
-	"proxy/downstream"
-	"proxy/logging"
 )
 
 func main() {
@@ -22,7 +22,7 @@ func main() {
 	r.POST("/v1/chat/completions", downstream.Completions(cfg))
 
 	addr := ":" + cfg.Port
-	logging.InfoMsg("Proxy server starting on %s", addr)
+	logging.InfoMsg("ai-proxy server starting on %s", addr)
 	if err := r.Run(addr); err != nil {
 		logging.ErrorMsg("Failed to start server: %v", err)
 		os.Exit(1)

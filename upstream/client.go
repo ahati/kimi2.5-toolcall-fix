@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"proxy/logging"
+	"ai-proxy/logging"
 )
 
 type Client struct {

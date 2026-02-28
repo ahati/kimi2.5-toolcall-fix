@@ -5,10 +5,10 @@ import (
 	"io"
 	"net/http"
 
+	"ai-proxy/config"
+	"ai-proxy/logging"
 	"github.com/gin-gonic/gin"
 	"github.com/tmaxmax/go-sse"
-	"proxy/config"
-	"proxy/logging"
 )
 
 func Completions(cfg *config.Config) gin.HandlerFunc {
@@ -41,21 +41,34 @@ func handleUpstreamError(c *gin.Context, resp *http.Response) {
 	sendError(c, http.StatusBadGateway, msg, fmt.Sprintf("status_%d", resp.StatusCode))
 }
 
-func streamResponse(c *gin.Context, body io.Reader) {
+func streamResponse(c *gin.Context, body io.Reader, transformers ...SSETransformer) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+
+	var activeTransformers []SSETransformer
+	for _, t := range transformers {
+		if t != nil {
+			activeTransformers = append(activeTransformers, t)
+		}
+	}
 
 	c.Stream(func(w io.Writer) bool {
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
 				return false
 			}
-			if ev.Data != "" {
-				w.Write([]byte("data: " + ev.Data + "\n\n"))
+			for _, transformer := range activeTransformers {
+				transformer.Transform(&ev)
 			}
 		}
 		return false
 	})
+
+	for _, transformer := range activeTransformers {
+		if closer, ok := transformer.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	}
 }
