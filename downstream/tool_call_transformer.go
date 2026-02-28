@@ -128,10 +128,9 @@ func (t *ToolCallTransformer) processEvent(raw []byte) ([][]byte, error) {
 	}
 
 	if !containsAnyToken(reasoning) && t.state == stateIdle {
-		// if reasoning != "" {
-		// 	chunk.Choices[0].Delta.Content = reasoning
-		// 	chunk.Choices[0].Delta.Reasoning = ""
-		// 	chunk.Choices[0].Delta.ReasoningContent = ""
+		// Is this really needed?
+		// if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
+		// 	chunk = normalizeToolCallIDs(chunk)
 		// }
 		return t.emit(chunk)
 	}
@@ -272,6 +271,38 @@ func parseFunctionName(raw string) string {
 		raw = raw[:i]
 	}
 	return raw
+}
+
+func normalizeToolCallIDs(chunk Chunk) Chunk {
+	for i := range chunk.Choices[0].Delta.ToolCalls {
+		tc := &chunk.Choices[0].Delta.ToolCalls[i]
+		if tc.ID != "" && !strings.HasPrefix(tc.ID, "call_") {
+			tc.ID = normalizeID(tc.ID)
+		}
+		if tc.Function.Name != "" && strings.Contains(tc.Function.Name, ".") {
+			parts := strings.Split(tc.Function.Name, ".")
+			tc.Function.Name = parts[len(parts)-1]
+		}
+	}
+	return chunk
+}
+
+func normalizeID(rawID string) string {
+	numPart := extractNumber(rawID)
+	if numPart != "" {
+		return "call_" + numPart
+	}
+	return "call_" + rawID
+}
+
+func extractNumber(s string) string {
+	var num strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			num.WriteRune(r)
+		}
+	}
+	return num.String()
 }
 
 func containsAnyToken(s string) bool {
