@@ -60,19 +60,34 @@ This proxy sits between your application and the Kimi-K2.5/K2 upstream API, tran
 
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `GET` | `/v1/models` | List available models |
-| `POST` | `/v1/chat/completions` | Chat completions (streaming supported) |
+| Method | Path | Format | Description |
+|--------|------|--------|-------------|
+| `GET` | `/health` | N/A | Health check |
+| `GET` | `/v1/models` | OpenAI | List available models |
+| `POST` | `/v1/chat/completions` | OpenAI | Chat completions (streaming) |
+| `POST` | `/v1/messages` | Anthropic | Chat completions (streaming) |
 
 ## Configuration
+
+### OpenAI Format (`/v1/chat/completions`)
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `PORT` | `8080` | Server port |
-| `UPSTREAM_URL` | `https://llm.chutes.ai/v1/chat/completions` | Upstream API URL |
-| `UPSTREAM_API_KEY` | (empty) | Default API key for upstream |
+| `UPSTREAM_URL` | `https://llm.chutes.ai/v1/chat/completions` | OpenAI-compatible upstream URL |
+| `UPSTREAM_API_KEY` | (empty) | API key for OpenAI-compatible upstream |
+
+### Anthropic Format (`/v1/messages`)
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `ANTHROPIC_UPSTREAM_URL` | `https://api.anthropic.com/v1/messages` | Anthropic upstream URL |
+| `ANTHROPIC_API_KEY` | (empty) | API key for Anthropic upstream |
+
+### Common
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
 | `SSELOG_DIR` | (empty) | Directory for SSE debug logs |
 
 ## Usage
@@ -81,11 +96,26 @@ This proxy sits between your application and the Kimi-K2.5/K2 upstream API, tran
 # Build
 go build -o ai-proxy .
 
-# Run with default settings
+# Run with OpenAI-compatible upstream (default)
 ./ai-proxy
 
-# Run with custom configuration
-UPSTREAM_API_KEY=your-key PORT=3000 ./ai-proxy
+# Run with custom OpenAI upstream
+UPSTREAM_URL=https://llm.chutes.ai/v1/chat/completions \
+UPSTREAM_API_KEY=your-key \
+./ai-proxy
+
+# Run with Anthropic upstream
+ANTHROPIC_UPSTREAM_URL=https://api.anthropic.com/v1/messages \
+ANTHROPIC_API_KEY=your-anthropic-key \
+./ai-proxy
+
+# Run with both upstreams
+UPSTREAM_URL=https://llm.chutes.ai/v1/chat/completions \
+UPSTREAM_API_KEY=your-key \
+ANTHROPIC_UPSTREAM_URL=https://api.anthropic.com/v1/messages \
+ANTHROPIC_API_KEY=your-anthropic-key \
+PORT=3000 \
+./ai-proxy
 ```
 
 ## Technical Details

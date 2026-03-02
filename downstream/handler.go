@@ -24,16 +24,16 @@ func handler(c *gin.Context, cfg *config.Config) {
 func resolveAPIKey(c *gin.Context, cfg *config.Config) string {
 	auth := c.GetHeader("Authorization")
 	if auth == "" {
-		return cfg.UpstreamAPIKey
+		return cfg.OpenAIUpstreamAPIKey
 	}
 	if len(auth) > 7 && auth[:7] == "Bearer " {
 		return auth[7:]
 	}
-	return cfg.UpstreamAPIKey
+	return cfg.OpenAIUpstreamAPIKey
 }
 
 func proxyAndRespond(c *gin.Context, cfg *config.Config, body []byte) {
-	client := upstream.NewClient(cfg.UpstreamURL, cfg.UpstreamAPIKey)
+	client := upstream.NewClient(cfg.OpenAIUpstreamURL, cfg.OpenAIUpstreamAPIKey)
 	defer client.Close()
 
 	req, err := client.BuildRequest(c.Request.Context(), body)

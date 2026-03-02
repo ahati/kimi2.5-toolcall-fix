@@ -12,7 +12,7 @@ import (
 func ListModels(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
-		apiKey := cfg.UpstreamAPIKey
+		apiKey := cfg.OpenAIUpstreamAPIKey
 
 		if len(auth) > 7 && auth[:7] == "Bearer " {
 			apiKey = auth[7:]
@@ -29,10 +29,10 @@ func ListModels(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		client := upstream.NewClient(cfg.UpstreamURL, cfg.UpstreamAPIKey)
+		client := upstream.NewClient(cfg.OpenAIUpstreamURL, cfg.OpenAIUpstreamAPIKey)
 		defer client.Close()
 
-		modelsURL := cfg.UpstreamURL
+		modelsURL := cfg.OpenAIUpstreamURL
 		modelsURL = modelsURL[:len(modelsURL)-len("chat/completions")] + "models"
 
 		req, err := http.NewRequestWithContext(c.Request.Context(), "GET", modelsURL, nil)
