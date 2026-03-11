@@ -46,8 +46,11 @@ import (
     "github.com/gin-gonic/gin"
     "github.com/tmaxmax/go-sse"
 
+    "ai-proxy/api"
     "ai-proxy/config"
     "ai-proxy/logging"
+    "ai-proxy/proxy"
+    "ai-proxy/types"
 )
 ```
 
@@ -131,10 +134,27 @@ func readBody(c *gin.Context) ([]byte, error) {
 ```
 ai-proxy/
 ├── main.go           # Entry point, route setup
+├── api/              # HTTP server, handlers, and middleware
+│   ├── handlers/     # HTTP endpoint handlers
+│   ├── middleware.go # Capture middleware
+│   └── server.go     # Server setup and routing
+├── capture/          # Request/response capture and logging
+│   ├── context.go    # Request context utilities
+│   ├── recorder.go   # Recording requests/responses
+│   ├── storage.go    # Storage for captured data
+│   └── writer.go     # Writing captured data to files
 ├── config/           # Configuration loading
-├── downstream/       # HTTP handlers (client-facing)
-├── upstream/         # Upstream API client
-└── logging/          # Logging utilities
+├── logging/          # Logging utilities
+├── proxy/            # Upstream API client
+│   ├── client.go     # HTTP client for upstream APIs
+│   └── request.go    # Request building
+├── transform/        # Format transformations
+│   ├── interface.go  # Transformer interface
+│   └── toolcall/     # Tool call transformations
+└── types/            # Shared types
+    ├── anthropic.go  # Anthropic API types
+    ├── openai.go     # OpenAI API types
+    └── sse.go        # SSE types
 ```
 
 ### Git Conventions
@@ -157,13 +177,13 @@ ai-proxy/
 
 ### Adding a new endpoint
 
-1. Add handler in `downstream/`
-2. Register route in `main.go`
+1. Add handler in `api/handlers/`
+2. Register route in `api/server.go`
 
 ### Modifying SSE handling
 
 - SSE parsing via `github.com/tmaxmax/go-sse`
-- Use `sse.Read()` in `downstream/completions.go`
+- Use `sse.Read()` in `api/handlers/completions.go`
 
 ## Testing
 
