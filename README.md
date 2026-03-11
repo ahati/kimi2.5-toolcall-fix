@@ -66,6 +66,7 @@ This proxy sits between your application and the Kimi-K2.5/K2 upstream API, tran
 | `GET` | `/v1/models` | OpenAI | List available models |
 | `POST` | `/v1/chat/completions` | OpenAI | Chat completions (streaming) |
 | `POST` | `/v1/messages` | Anthropic | Chat completions (streaming) |
+| `POST` | `/v1/openai-to-anthropic/messages` | Anthropic | Reverse proxy: Anthropic format → OpenAI upstream → Anthropic response |
 
 ## Configuration
 
@@ -83,6 +84,15 @@ This proxy sits between your application and the Kimi-K2.5/K2 upstream API, tran
 |---------------------|---------|-------------|
 | `ANTHROPIC_UPSTREAM_URL` | `https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages` | Anthropic-compatiable upstream URL |
 | `ANTHROPIC_API_KEY` | (empty) | API key for Anthropic upstream |
+
+### OpenAI-to-Anthropic Reverse Proxy (`/v1/openai-to-anthropic/messages`)
+
+This endpoint accepts requests in **Anthropic format**, forwards them to an **OpenAI-compatible upstream**, and transforms the response back to **Anthropic format**. Useful when you have clients expecting Anthropic API responses but need to use an OpenAI-compatible backend.
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `UPSTREAM_URL` | `https://llm.chutes.ai/v1/chat/completions` | OpenAI-compatible upstream URL |
+| `UPSTREAM_API_KEY` | (empty) | API key for OpenAI-compatible upstream |
 
 ### Common
 
@@ -107,6 +117,11 @@ UPSTREAM_API_KEY=your-key \
 # Run with Anthropic upstream
 ANTHROPIC_UPSTREAM_URL=https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages \
 ANTHROPIC_API_KEY=your-anthropic-key \
+./ai-proxy
+
+# Run with OpenAI-to-Anthropic reverse proxy
+UPSTREAM_URL=https://llm.chutes.ai/v1/chat/completions \
+UPSTREAM_API_KEY=your-key \
 ./ai-proxy
 
 # Run with both upstreams
