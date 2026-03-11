@@ -111,7 +111,10 @@ func TestStreamHandler_Anthropic_ToolCalls_Transformer(t *testing.T) {
 	transformer := adapter.CreateTransformer(&output, types.StreamChunk{ID: "msg_123"})
 
 	events := []string{
-		`{"id":"msg_123","choices":[{"index":0,"delta":{"reasoning":"I'll help you.<|tool_calls_section_begin|><|tool_call_begin|>bash:1<|tool_call_argument_begin|>{\"command\":\"ls -la\"}<|tool_call_end|><|tool_calls_section_end|>"}}]}`,
+		`{"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","model":"kimi-k2.5"}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I'll help you.<|tool_calls_section_begin|><|tool_call_begin|>bash:1<|tool_call_argument_begin|>{\"command\":\"ls -la\"}<|tool_call_end|><|tool_calls_section_end|>"}}`,
+		`{"type":"content_block_stop","index":0}`,
 	}
 
 	for _, event := range events {

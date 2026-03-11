@@ -16,6 +16,16 @@ import (
 	"github.com/tmaxmax/go-sse"
 )
 
+// SSETransformer defines the interface for SSE event transformation.
+// Implementations transform tool call tokens in SSE streams.
+//
+// @brief Interface for SSE stream transformation.
+type SSETransformer interface {
+	Transform(event *sse.Event)
+	Flush()
+	Close()
+}
+
 // ProtocolAdapter defines the interface for handling different API formats.
 // Implementations transform requests and responses between client-facing and
 // upstream API formats.
@@ -29,7 +39,7 @@ import (
 type ProtocolAdapter interface {
 	TransformRequest(body []byte) ([]byte, error)
 	ValidateRequest(body []byte) error
-	CreateTransformer(w io.Writer, base types.StreamChunk) *ToolCallTransformer
+	CreateTransformer(w io.Writer, base types.StreamChunk) SSETransformer
 	UpstreamURL(cfg *config.Config) string
 	UpstreamAPIKey(cfg *config.Config) string
 	ForwardHeaders(src, dst http.Header)

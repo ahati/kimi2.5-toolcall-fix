@@ -11,7 +11,6 @@ import (
 
 	"ai-proxy/config"
 	"ai-proxy/logging"
-	"ai-proxy/transform/toolcall"
 	"ai-proxy/types"
 
 	"github.com/gin-gonic/gin"
@@ -65,10 +64,9 @@ func (a *AnthropicAdapter) ValidateRequest(body []byte) error {
 // @brief    Creates transformer for Anthropic-format tool calls.
 // @param    w Writer for transformed output.
 // @param    base Base stream chunk for context.
-// @return   Pointer to ToolCallTransformer configured for Anthropic output.
-func (a *AnthropicAdapter) CreateTransformer(w io.Writer, base types.StreamChunk) *ToolCallTransformer {
-	output := toolcall.NewAnthropicOutput(w, toolcall.ContextText, 0)
-	return NewToolCallTransformer(w, base, output)
+// @return   SSETransformer configured for Anthropic output.
+func (a *AnthropicAdapter) CreateTransformer(w io.Writer, base types.StreamChunk) SSETransformer {
+	return NewAnthropicEventTransformer(w)
 }
 
 // UpstreamURL returns the configured Anthropic upstream URL.

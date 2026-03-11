@@ -147,7 +147,16 @@ func TestAnthropicAdapter_CreateTransformer(t *testing.T) {
 	}
 
 	transformer.Transform(&sse.Event{
-		Data: `{"id":"msg-123","choices":[{"index":0,"delta":{"content":"Hello"}}]}`,
+		Data: `{"type":"message_start","message":{"id":"msg-123","type":"message","role":"assistant"}}`,
+	})
+	transformer.Transform(&sse.Event{
+		Data: `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+	})
+	transformer.Transform(&sse.Event{
+		Data: `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`,
+	})
+	transformer.Transform(&sse.Event{
+		Data: `{"type":"content_block_stop","index":0}`,
 	})
 	transformer.Flush()
 

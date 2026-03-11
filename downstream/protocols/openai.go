@@ -65,8 +65,8 @@ func (a *OpenAIAdapter) ValidateRequest(body []byte) error {
 // @brief    Creates transformer for OpenAI-format tool calls.
 // @param    w Writer for transformed output.
 // @param    base Base stream chunk for context.
-// @return   Pointer to ToolCallTransformer configured for OpenAI output.
-func (a *OpenAIAdapter) CreateTransformer(w io.Writer, base types.StreamChunk) *ToolCallTransformer {
+// @return   SSETransformer configured for OpenAI output.
+func (a *OpenAIAdapter) CreateTransformer(w io.Writer, base types.StreamChunk) SSETransformer {
 	output := toolcall.NewOpenAIOutput(w, base)
 	return NewToolCallTransformer(w, base, output)
 }

@@ -335,8 +335,8 @@ func (a *BridgeAdapter) ValidateRequest(body []byte) error {
 // @brief    Creates transformer for Anthropic-format output.
 // @param    w Writer for transformed output.
 // @param    base Base stream chunk for context.
-// @return   Pointer to ToolCallTransformer configured for Anthropic output.
-func (a *BridgeAdapter) CreateTransformer(w io.Writer, base types.StreamChunk) *ToolCallTransformer {
+// @return   SSETransformer configured for Anthropic output.
+func (a *BridgeAdapter) CreateTransformer(w io.Writer, base types.StreamChunk) SSETransformer {
 	output := toolcall.NewAnthropicOutput(w, toolcall.ContextText, 0)
 	return NewToolCallTransformer(w, base, output)
 }
