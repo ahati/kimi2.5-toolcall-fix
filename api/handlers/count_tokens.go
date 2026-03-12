@@ -9,6 +9,7 @@ import (
 
 	"ai-proxy/config"
 	"ai-proxy/proxy"
+	"ai-proxy/tokens"
 	"ai-proxy/types"
 
 	"github.com/gin-gonic/gin"
@@ -216,7 +217,7 @@ func HandleNonStreaming(h NonStreamingHandler) gin.HandlerFunc {
 }
 
 // proxyNonStreamingRequest forwards the request to the upstream API and returns the response.
-// This handles non-streaming requests that return a single JSON response.
+// If upstream returns 404 (endpoint not supported), falls back to local token counting.
 //
 // @param c - Gin context for the current request.
 // @param h - Handler defining upstream URL, headers, and error handling.
@@ -255,6 +256,11 @@ func proxyNonStreamingRequest(c *gin.Context, h NonStreamingHandler, body []byte
 
 	// Check for non-200 responses from upstream
 	if resp.StatusCode != http.StatusOK {
+		// If endpoint not found, fall back to local counting
+		if resp.StatusCode == http.StatusNotFound {
+			handleLocalTokenCount(c, body, h)
+			return
+		}
 		handleUpstreamError(c, resp)
 		return
 	}
@@ -269,4 +275,36 @@ func proxyNonStreamingRequest(c *gin.Context, h NonStreamingHandler, body []byte
 	// Set content type for JSON response
 	c.Header("Content-Type", "application/json")
 	c.Data(resp.StatusCode, "application/json", responseBody)
+}
+
+// handleLocalTokenCount performs local token counting when upstream doesn't support the endpoint.
+//
+// @param c - Gin context for writing the response.
+// @param body - The request body containing token counting request.
+// @param h - Handler for error responses.
+func handleLocalTokenCount(c *gin.Context, body []byte, h NonStreamingHandler) {
+	var req types.MessageCountTokensRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		h.WriteError(c, http.StatusInternalServerError, "Failed to parse request for local counting")
+		return
+	}
+
+	count, err := tokens.CountTokens(&req)
+	if err != nil {
+		h.WriteError(c, http.StatusInternalServerError, "Failed to count tokens locally")
+		return
+	}
+
+	response := types.MessageCountTokensResponse{
+		InputTokens: count,
+	}
+
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		h.WriteError(c, http.StatusInternalServerError, "Failed to encode response")
+		return
+	}
+
+	c.Header("Content-Type", "application/json")
+	c.Data(http.StatusOK, "application/json", responseJSON)
 }
