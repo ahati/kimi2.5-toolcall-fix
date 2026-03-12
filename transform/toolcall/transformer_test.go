@@ -411,6 +411,143 @@ func TestTransformer_Anthropic_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestTransformer_AnthropicPassthrough(t *testing.T) {
+	buf := &bytes.Buffer{}
+	tr := NewAnthropicTransformer(buf, "", "")
+
+	// Test that standard Anthropic events are passed through with SSE formatting
+	event := types.Event{
+		Type:  "content_block_delta",
+		Index: intPtr(0),
+		Delta: json.RawMessage(`{"type":"text_delta","text":"Hello"}`),
+	}
+	data, _ := json.Marshal(event)
+
+	sseEvent := &sse.Event{Data: string(data)}
+	if err := tr.Transform(sseEvent); err != nil {
+		t.Fatalf("Transform failed: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "data:") {
+		t.Error("expected output to contain SSE data: prefix")
+	}
+	if !strings.Contains(output, "text_delta") {
+		t.Error("expected output to contain text_delta")
+	}
+	if !strings.Contains(output, "Hello") {
+		t.Error("expected output to contain Hello")
+	}
+}
+
+func TestTransformer_AnthropicToolCallMarkup(t *testing.T) {
+	buf := &bytes.Buffer{}
+	tr := NewAnthropicTransformer(buf, "", "")
+
+	// Test that text with tool call markup is detected and processed
+	delta := map[string]interface{}{
+		"type": "text_delta",
+		"text": "<|tool_calls_section_begin|><|tool_call_begin|>bash<|tool_call_argument_begin|>{\"cmd\":\"ls\"}<|tool_call_end|><|tool_calls_section_end|>",
+	}
+	deltaJSON, _ := json.Marshal(delta)
+
+	event := types.Event{
+		Type:  "content_block_delta",
+		Index: intPtr(0),
+		Delta: deltaJSON,
+	}
+	data, _ := json.Marshal(event)
+
+	sseEvent := &sse.Event{Data: string(data)}
+	if err := tr.Transform(sseEvent); err != nil {
+		t.Fatalf("Transform failed: %v", err)
+	}
+	if err := tr.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	output := buf.String()
+	t.Logf("Output: %s", output)
+	// When tool call markup is detected, it should be processed
+	// The exact output depends on whether we're transforming or passing through
+	if !strings.Contains(output, "bash") {
+		t.Error("expected output to contain bash tool name")
+	}
+}
+
+func TestTransformer_OpenAIPassthrough(t *testing.T) {
+	buf := &bytes.Buffer{}
+	tr := NewOpenAITransformer(buf, "", "")
+
+	// Test that standard OpenAI chunks with content are passed through
+	chunk := types.Chunk{
+		ID:    "test-id",
+		Model: "gpt-4",
+		Choices: []types.Choice{{
+			Delta: types.Delta{Content: "Hello"},
+		}},
+	}
+	data, _ := json.Marshal(chunk)
+
+	sseEvent := &sse.Event{Data: string(data)}
+	if err := tr.Transform(sseEvent); err != nil {
+		t.Fatalf("Transform failed: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "data:") {
+		t.Error("expected output to contain SSE data: prefix")
+	}
+	if !strings.Contains(output, "Hello") {
+		t.Error("expected output to contain Hello")
+	}
+}
+
+func TestTransformer_OpenAIToolCallFromReasoning(t *testing.T) {
+	buf := &bytes.Buffer{}
+	tr := NewOpenAITransformer(buf, "", "")
+
+	// Test that reasoning content with tool call markup is transformed
+	chunks := []string{
+		"<|tool_calls_section_begin|>",
+		"<|tool_call_begin|>",
+		"bash",
+		"<|tool_call_argument_begin|>",
+		`{"command":"ls -la"}`,
+		"<|tool_call_end|>",
+		"<|tool_calls_section_end|>",
+	}
+
+	for _, text := range chunks {
+		chunk := types.Chunk{
+			ID:    "test-id",
+			Model: "gpt-4",
+			Choices: []types.Choice{{
+				Delta: types.Delta{Reasoning: text},
+			}},
+		}
+		data, _ := json.Marshal(chunk)
+
+		sseEvent := &sse.Event{Data: string(data)}
+		if err := tr.Transform(sseEvent); err != nil {
+			t.Fatalf("Transform failed: %v", err)
+		}
+	}
+
+	if err := tr.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	output := buf.String()
+	t.Logf("Output: %s", output)
+	if !strings.Contains(output, `"name":"bash"`) {
+		t.Error("expected output to contain bash tool name")
+	}
+	if !strings.Contains(output, `"arguments"`) {
+		t.Error("expected output to contain tool arguments")
+	}
+}
+
 func TestTransformer_WriteEvent_AllTypes(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -7,6 +7,7 @@ import (
 
 	"ai-proxy/config"
 	"ai-proxy/transform"
+	"ai-proxy/transform/toolcall"
 
 	"github.com/gin-gonic/gin"
 )
@@ -106,22 +107,22 @@ func (h *CompletionsHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 	req.Header.Set("Extra", c.Request.Header.Get("Extra"))
 }
 
-// CreateTransformer builds an SSE transformer for the response stream.
-// For standard OpenAI-compatible endpoints, events are passed through unchanged.
+// CreateTransformer builds an OpenAI SSE transformer for the response stream.
+// The transformer converts embedded tool call markup to proper tool_calls format.
 //
 // @param w - Writer to receive transformed output.
-// @return Transformer for passing through SSE events unchanged.
+// @return Transformer for processing SSE events with tool call conversion.
 //
 // @pre w != nil and ready to receive writes.
 // @post Caller must call Close() on returned transformer.
 //
-// @note Uses PassthroughTransformer for standard OpenAI-compatible endpoints.
+// @note Kimi K2.5 and similar models embed tool calls in reasoning content
 //
-//	For models with embedded tool call markup (e.g., Kimi K2.5), use
-//	toolcall.NewOpenAITransformer instead.
+//	using proprietary markup: <|tool_calls_section_begin|>...
+//	This transformer converts that markup to proper OpenAI tool_calls format.
 func (h *CompletionsHandler) CreateTransformer(w io.Writer) transform.SSETransformer {
-	// Use passthrough transformer for standard OpenAI-compatible endpoints
-	return transform.NewPassthroughTransformer(w)
+	// Use OpenAI transformer to convert embedded tool call markup to proper format
+	return toolcall.NewOpenAITransformer(w, "", "")
 }
 
 // WriteError sends an error response in OpenAI format.
