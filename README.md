@@ -154,6 +154,48 @@ The `ToolCallTransformer` implements a 5-state machine (`IDLE → IN_SECTION →
 | `<|tool_call_end|>` | Ends the current tool call |
 | `<|tool_calls_section_end|>` | Ends the tool calls section |
 
+## Project Structure
+
+```
+ai-proxy/
+├── main.go                 # Entry point, server initialization
+├── api/                    # HTTP server and routing
+│   ├── server.go           # Server setup and route registration
+│   ├── middleware.go       # Capture middleware
+│   └── handlers/           # HTTP request handlers
+│       ├── health.go       # Health check endpoint
+│       ├── models.go       # Models listing endpoint
+│       ├── completions.go  # OpenAI chat completions
+│       ├── messages.go     # Anthropic messages endpoint
+│       ├── bridge.go       # OpenAI-to-Anthropic bridge
+│       └── common.go       # Shared handler utilities
+├── config/                 # Configuration loading
+│   └── config.go
+├── logging/                # Logging utilities
+│   └── logging.go
+├── proxy/                  # Upstream API client
+│   ├── client.go           # HTTP client for upstream APIs
+│   └── request.go          # Request building utilities
+├── transform/              # Response transformation
+│   ├── interface.go        # Transformer interface
+│   └── toolcall/           # Tool call format transformation
+│       ├── transformer.go  # State machine transformer
+│       ├── parser.go       # Token parsing
+│       ├── tokens.go       # Special token definitions
+│       ├── formatter.go    # Output formatting
+│       ├── anthropic.go    # Anthropic format support
+│       └── openai.go       # OpenAI format support
+├── types/                  # Type definitions
+│   ├── openai.go           # OpenAI API types
+│   ├── anthropic.go        # Anthropic API types
+│   └── sse.go              # Server-Sent Events types
+└── capture/                # Request/response capture
+    ├── storage.go          # Log storage management
+    ├── writer.go           # JSON log writer
+    ├── recorder.go         # Request/response recording
+    └── context.go          # Context utilities
+```
+
 ## Development
 
 ```bash
