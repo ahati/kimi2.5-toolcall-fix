@@ -121,8 +121,7 @@ func (h *CompletionsHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 //	using proprietary markup: <|tool_calls_section_begin|>...
 //	This transformer converts that markup to proper OpenAI tool_calls format.
 func (h *CompletionsHandler) CreateTransformer(w io.Writer) transform.SSETransformer {
-	// Use OpenAI transformer to convert embedded tool call markup to proper format
-	return toolcall.NewOpenAITransformer(w, "", "")
+	return toolcall.NewOpenAITransformer(w)
 }
 
 // WriteError sends an error response in OpenAI format.

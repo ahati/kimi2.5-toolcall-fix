@@ -1,0 +1,650 @@
+package toolcall
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
+
+	"ai-proxy/logging"
+	"ai-proxy/types"
+
+	"github.com/tmaxmax/go-sse"
+)
+
+type AnthropicTransformer struct {
+	output     io.Writer
+	formatter  *AnthropicFormatter
+	state      anthropicState
+	buf        string
+	toolIndex  int
+	blockIndex int
+	currentID  string
+	messageID  string
+
+	inThinking       bool
+	inText           bool
+	thinkingIndex    int
+	textIndex        int
+	needThinkingStop bool
+	needTextStop     bool
+	toolsEmitted     bool
+}
+
+type anthropicState int
+
+const (
+	anthropicStateIdle anthropicState = iota
+	anthropicStateInSection
+	anthropicStateReadingID
+	anthropicStateReadingArgs
+	anthropicStateTrailing
+)
+
+func NewAnthropicTransformer(output io.Writer) *AnthropicTransformer {
+	return &AnthropicTransformer{
+		output:    output,
+		formatter: NewAnthropicFormatter("", ""),
+		state:     anthropicStateIdle,
+	}
+}
+
+func (t *AnthropicTransformer) Transform(event *sse.Event) error {
+	if event.Data == "" {
+		return nil
+	}
+
+	if event.Data == "[DONE]" {
+		return t.writeData([]byte("[DONE]"))
+	}
+
+	var anthropicEvent types.Event
+	if err := json.Unmarshal([]byte(event.Data), &anthropicEvent); err != nil {
+		return t.writePassthrough("error", []byte(event.Data))
+	}
+	if anthropicEvent.Type == "" {
+		return t.writeData([]byte(event.Data))
+	}
+
+	return t.handleEvent(anthropicEvent)
+}
+
+func (t *AnthropicTransformer) handleEvent(event types.Event) error {
+	switch event.Type {
+	case "message_start":
+		return t.handleMessageStart(event)
+	case "content_block_start":
+		return t.handleContentBlockStart(event)
+	case "content_block_delta":
+		return t.handleContentBlockDelta(event)
+	case "content_block_stop":
+		return t.handleContentBlockStop(event)
+	case "message_delta":
+		return t.handleMessageDelta(event)
+	case "message_stop", "ping":
+		return t.writePassthrough(event.Type, marshalJSON(event))
+	default:
+		return t.writePassthrough(event.Type, marshalJSON(event))
+	}
+}
+
+func (t *AnthropicTransformer) handleMessageStart(event types.Event) error {
+	if event.Message != nil && event.Message.ID != "" {
+		t.messageID = event.Message.ID
+		t.blockIndex = 0
+		t.formatter.SetMessageID(event.Message.ID)
+		t.formatter.SetModel(event.Message.Model)
+	}
+
+	var rawEvent struct {
+		Type    string `json:"type"`
+		Message struct {
+			ID      string                 `json:"id"`
+			Type    string                 `json:"type"`
+			Role    string                 `json:"role"`
+			Content []interface{}          `json:"content"`
+			Model   string                 `json:"model"`
+			Usage   map[string]interface{} `json:"usage"`
+		} `json:"message"`
+	}
+
+	rawData := marshalJSON(event)
+	if err := json.Unmarshal(rawData, &rawEvent); err == nil {
+		if rawEvent.Message.Usage != nil {
+			if _, hasInputTokens := rawEvent.Message.Usage["input_tokens"]; !hasInputTokens {
+				if promptTokens, ok := rawEvent.Message.Usage["prompt_tokens"]; ok {
+					rawEvent.Message.Usage["input_tokens"] = promptTokens
+					delete(rawEvent.Message.Usage, "prompt_tokens")
+				}
+				if completionTokens, ok := rawEvent.Message.Usage["completion_tokens"]; ok {
+					rawEvent.Message.Usage["output_tokens"] = completionTokens
+					delete(rawEvent.Message.Usage, "completion_tokens")
+				}
+				delete(rawEvent.Message.Usage, "total_tokens")
+				return t.writePassthrough(event.Type, marshalJSON(rawEvent))
+			}
+		}
+	}
+
+	return t.writePassthrough(event.Type, marshalJSON(event))
+}
+
+func (t *AnthropicTransformer) handleContentBlockStart(event types.Event) error {
+	if event.ContentBlock != nil {
+		var block types.ContentBlock
+		if err := json.Unmarshal(event.ContentBlock, &block); err == nil {
+			if block.Type == "thinking" {
+				t.inThinking = true
+				if event.Index != nil {
+					t.thinkingIndex = *event.Index
+				}
+				t.needThinkingStop = true
+				return t.writePassthrough(event.Type, marshalJSON(event))
+			}
+			if block.Type == "text" {
+				t.inText = true
+				if event.Index != nil {
+					t.textIndex = *event.Index
+				}
+				t.needTextStop = true
+				return t.writePassthrough(event.Type, marshalJSON(event))
+			}
+		}
+	}
+	if event.Index != nil && *event.Index >= t.blockIndex {
+		t.blockIndex = *event.Index + 1
+	}
+	return t.writePassthrough(event.Type, marshalJSON(event))
+}
+
+func (t *AnthropicTransformer) handleContentBlockDelta(event types.Event) error {
+	if t.inThinking {
+		return t.handleThinkingDelta(event)
+	}
+	if t.inText {
+		return t.handleTextDelta(event)
+	}
+	return t.writePassthrough(event.Type, marshalJSON(event))
+}
+
+func (t *AnthropicTransformer) handleThinkingDelta(event types.Event) error {
+	var delta types.ThinkingDelta
+	if err := json.Unmarshal(event.Delta, &delta); err != nil {
+		return t.writePassthrough(event.Type, marshalJSON(event))
+	}
+	if delta.Type != "thinking_delta" {
+		return t.writePassthrough(event.Type, marshalJSON(event))
+	}
+
+	idx := 0
+	if event.Index != nil {
+		idx = *event.Index
+	}
+
+	chunks := t.processThinking(delta.Thinking, idx)
+	for _, chunk := range chunks {
+		if err := t.write(chunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *AnthropicTransformer) handleTextDelta(event types.Event) error {
+	var delta types.TextDelta
+	if err := json.Unmarshal(event.Delta, &delta); err != nil {
+		return t.writePassthrough(event.Type, marshalJSON(event))
+	}
+	if delta.Type != "text_delta" {
+		return t.writePassthrough(event.Type, marshalJSON(event))
+	}
+
+	idx := 0
+	if event.Index != nil {
+		idx = *event.Index
+	}
+
+	chunks := t.processText(delta.Text, idx)
+	for _, chunk := range chunks {
+		if err := t.write(chunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *AnthropicTransformer) handleContentBlockStop(event types.Event) error {
+	if t.inThinking {
+		return t.handleThinkingBlockStop(event)
+	}
+	if t.inText {
+		return t.handleTextBlockStop(event)
+	}
+	return t.writePassthrough(event.Type, marshalJSON(event))
+}
+
+func (t *AnthropicTransformer) handleThinkingBlockStop(event types.Event) error {
+	t.inThinking = false
+	if t.buf != "" {
+		idx := 0
+		if event.Index != nil {
+			idx = *event.Index
+		}
+		t.flushRemainingThinking(idx)
+	}
+	t.buf = ""
+	t.state = anthropicStateIdle
+	if t.needThinkingStop {
+		t.write(t.makeThinkingBlockStop(t.thinkingIndex))
+		t.needThinkingStop = false
+	}
+	return nil
+}
+
+func (t *AnthropicTransformer) handleTextBlockStop(event types.Event) error {
+	t.inText = false
+	if t.buf != "" {
+		idx := 0
+		if event.Index != nil {
+			idx = *event.Index
+		}
+		t.flushRemainingText(idx)
+	}
+	t.buf = ""
+	t.state = anthropicStateIdle
+	if t.needTextStop {
+		t.write(t.makeTextBlockStop(t.textIndex))
+		t.needTextStop = false
+	}
+	return nil
+}
+
+func (t *AnthropicTransformer) handleMessageDelta(event types.Event) error {
+	if t.toolsEmitted && event.Delta != nil {
+		var delta struct {
+			StopReason   string  `json:"stop_reason,omitempty"`
+			StopSequence *string `json:"stop_sequence,omitempty"`
+		}
+		if err := json.Unmarshal(event.Delta, &delta); err == nil {
+			if delta.StopReason == "end_turn" {
+				logging.InfoMsg("[%s] Changing stop_reason from 'end_turn' to 'tool_use' due to emitted tool calls", t.messageID)
+				delta.StopReason = "tool_use"
+				event.Delta = json.RawMessage(marshalJSON(delta))
+				return t.writePassthrough(event.Type, marshalJSON(event))
+			}
+		}
+	}
+	return t.writePassthrough(event.Type, marshalJSON(event))
+}
+
+func (t *AnthropicTransformer) processThinking(text string, index int) [][]byte {
+	t.buf += text
+	var out [][]byte
+
+	for {
+		switch t.state {
+		case anthropicStateIdle:
+			idx := strings.Index(t.buf, "<|tool_calls_section_begin|>")
+			if idx < 0 {
+				return out
+			}
+			logging.InfoMsg("[%s] Tool call markup detected in thinking block, transforming to tool_use events", t.messageID)
+			if idx > 0 {
+				out = append(out, t.makeThinkingDelta(index, t.buf[:idx]))
+			}
+			t.buf = t.buf[idx+len("<|tool_calls_section_begin|>"):]
+			t.state = anthropicStateInSection
+			if t.needThinkingStop {
+				out = append(out, t.makeThinkingBlockStop(t.thinkingIndex))
+				t.needThinkingStop = false
+			}
+
+		case anthropicStateInSection:
+			idx := strings.Index(t.buf, "<|tool_call_begin|>")
+			endIdx := strings.Index(t.buf, "<|tool_calls_section_end|>")
+
+			if endIdx >= 0 && (idx < 0 || endIdx < idx) {
+				t.buf = t.buf[endIdx+len("<|tool_calls_section_end|>"):]
+				t.state = anthropicStateTrailing
+				if t.buf != "" {
+					t.thinkingIndex = t.blockIndex
+					t.blockIndex++
+					out = append(out, t.makeThinkingBlockStart(t.thinkingIndex))
+					out = append(out, t.makeThinkingDelta(t.thinkingIndex, t.buf))
+					t.needThinkingStop = true
+					t.buf = ""
+				}
+				return out
+			}
+			if idx < 0 {
+				return out
+			}
+			t.buf = t.buf[idx+len("<|tool_call_begin|>"):]
+			t.state = anthropicStateReadingID
+
+		case anthropicStateReadingID:
+			argIdx := strings.Index(t.buf, "<|tool_call_argument_begin|>")
+			if argIdx < 0 {
+				return out
+			}
+			rawID := strings.TrimSpace(t.buf[:argIdx])
+			t.currentID = parseToolCallID(rawID, t.toolIndex)
+			name := parseFunctionName(rawID)
+			logging.InfoMsg("[%s] Tool call parsed: name=%s, id=%s, blockIndex=%d", t.messageID, name, t.currentID, t.blockIndex+1)
+			t.buf = t.buf[argIdx+len("<|tool_call_argument_begin|>"):]
+			t.state = anthropicStateReadingArgs
+			t.blockIndex++
+			out = append(out, t.makeToolUseBlockStart(name))
+
+		case anthropicStateReadingArgs:
+			endIdx := strings.Index(t.buf, "<|tool_call_end|>")
+			if endIdx < 0 {
+				if t.buf != "" {
+					out = append(out, t.makeInputJSONDelta(t.buf))
+					t.buf = ""
+				}
+				return out
+			}
+			args := t.buf[:endIdx]
+			if args != "" {
+				out = append(out, t.makeInputJSONDelta(args))
+			}
+			out = append(out, t.makeContentBlockStop())
+			t.buf = t.buf[endIdx+len("<|tool_call_end|>"):]
+			t.toolIndex++
+			t.state = anthropicStateInSection
+
+		case anthropicStateTrailing:
+			idx := strings.Index(t.buf, "<|tool_calls_section_begin|>")
+			if idx >= 0 {
+				if idx > 0 {
+					out = append(out, t.makeThinkingDelta(index, t.buf[:idx]))
+				}
+				t.buf = t.buf[idx+len("<|tool_calls_section_begin|>"):]
+				t.state = anthropicStateInSection
+				continue
+			}
+			if t.buf != "" {
+				out = append(out, t.makeThinkingDelta(index, t.buf))
+			}
+			return out
+		}
+	}
+}
+
+func (t *AnthropicTransformer) processText(text string, index int) [][]byte {
+	t.buf += text
+	var out [][]byte
+
+	for {
+		switch t.state {
+		case anthropicStateIdle:
+			idx := strings.Index(t.buf, "<|tool_calls_section_begin|>")
+			if idx < 0 {
+				return out
+			}
+			logging.InfoMsg("[%s] Tool call markup detected in text block, transforming to tool_use events", t.messageID)
+			if idx > 0 {
+				out = append(out, t.makeTextDelta(index, t.buf[:idx]))
+			}
+			t.buf = t.buf[idx+len("<|tool_calls_section_begin|>"):]
+			t.state = anthropicStateInSection
+			if t.needTextStop {
+				out = append(out, t.makeTextBlockStop(t.textIndex))
+				t.needTextStop = false
+				t.blockIndex++
+			}
+
+		case anthropicStateInSection:
+			idx := strings.Index(t.buf, "<|tool_call_begin|>")
+			endIdx := strings.Index(t.buf, "<|tool_calls_section_end|>")
+
+			if endIdx >= 0 && (idx < 0 || endIdx < idx) {
+				t.buf = t.buf[endIdx+len("<|tool_calls_section_end|>"):]
+				t.state = anthropicStateTrailing
+				if t.buf != "" {
+					t.textIndex = t.blockIndex
+					t.blockIndex++
+					out = append(out, t.makeTextBlockStart(t.textIndex))
+					out = append(out, t.makeTextDelta(t.textIndex, t.buf))
+					t.needTextStop = true
+					t.buf = ""
+				}
+				return out
+			}
+			if idx < 0 {
+				return out
+			}
+			t.buf = t.buf[idx+len("<|tool_call_begin|>"):]
+			t.state = anthropicStateReadingID
+
+		case anthropicStateReadingID:
+			argIdx := strings.Index(t.buf, "<|tool_call_argument_begin|>")
+			if argIdx < 0 {
+				return out
+			}
+			rawID := strings.TrimSpace(t.buf[:argIdx])
+			t.currentID = parseToolCallID(rawID, t.toolIndex)
+			name := parseFunctionName(rawID)
+			logging.InfoMsg("[%s] Tool call parsed: name=%s, id=%s, blockIndex=%d", t.messageID, name, t.currentID, t.blockIndex+1)
+			t.buf = t.buf[argIdx+len("<|tool_call_argument_begin|>"):]
+			t.state = anthropicStateReadingArgs
+			t.blockIndex++
+			out = append(out, t.makeToolUseBlockStart(name))
+
+		case anthropicStateReadingArgs:
+			endIdx := strings.Index(t.buf, "<|tool_call_end|>")
+			if endIdx < 0 {
+				if t.buf != "" {
+					out = append(out, t.makeInputJSONDelta(t.buf))
+					t.buf = ""
+				}
+				return out
+			}
+			args := t.buf[:endIdx]
+			if args != "" {
+				out = append(out, t.makeInputJSONDelta(args))
+			}
+			out = append(out, t.makeContentBlockStop())
+			t.buf = t.buf[endIdx+len("<|tool_call_end|>"):]
+			t.toolIndex++
+			t.state = anthropicStateInSection
+
+		case anthropicStateTrailing:
+			idx := strings.Index(t.buf, "<|tool_calls_section_begin|>")
+			if idx >= 0 {
+				if idx > 0 {
+					out = append(out, t.makeTextDelta(index, t.buf[:idx]))
+				}
+				t.buf = t.buf[idx+len("<|tool_calls_section_begin|>"):]
+				t.state = anthropicStateInSection
+				continue
+			}
+			if t.buf != "" {
+				out = append(out, t.makeTextDelta(index, t.buf))
+			}
+			return out
+		}
+	}
+}
+
+func (t *AnthropicTransformer) makeThinkingDelta(index int, thinking string) []byte {
+	event := types.Event{
+		Type:  "content_block_delta",
+		Index: intPtr(index),
+		Delta: json.RawMessage(fmt.Sprintf(`{"type":"thinking_delta","thinking":%q}`, thinking)),
+	}
+	return serializeAnthropicEvent(event)
+}
+
+func (t *AnthropicTransformer) makeThinkingBlockStart(index int) []byte {
+	event := types.Event{
+		Type:         "content_block_start",
+		Index:        intPtr(index),
+		ContentBlock: json.RawMessage(`{"type":"thinking","thinking":""}`),
+	}
+	return serializeAnthropicEvent(event)
+}
+
+func (t *AnthropicTransformer) makeThinkingBlockStop(index int) []byte {
+	event := types.Event{
+		Type:  "content_block_stop",
+		Index: intPtr(index),
+	}
+	return serializeAnthropicEvent(event)
+}
+
+func (t *AnthropicTransformer) makeTextDelta(index int, text string) []byte {
+	event := types.Event{
+		Type:  "content_block_delta",
+		Index: intPtr(index),
+		Delta: json.RawMessage(fmt.Sprintf(`{"type":"text_delta","text":%q}`, text)),
+	}
+	return serializeAnthropicEvent(event)
+}
+
+func (t *AnthropicTransformer) makeTextBlockStart(index int) []byte {
+	event := types.Event{
+		Type:         "content_block_start",
+		Index:        intPtr(index),
+		ContentBlock: json.RawMessage(`{"type":"text","text":""}`),
+	}
+	return serializeAnthropicEvent(event)
+}
+
+func (t *AnthropicTransformer) makeTextBlockStop(index int) []byte {
+	event := types.Event{
+		Type:  "content_block_stop",
+		Index: intPtr(index),
+	}
+	return serializeAnthropicEvent(event)
+}
+
+func (t *AnthropicTransformer) makeToolUseBlockStart(name string) []byte {
+	t.toolsEmitted = true
+	event := types.Event{
+		Type:         "content_block_start",
+		Index:        intPtr(t.blockIndex),
+		ContentBlock: json.RawMessage(fmt.Sprintf(`{"type":"tool_use","id":%q,"name":%q,"input":{}}`, t.currentID, name)),
+	}
+	return serializeAnthropicEvent(event)
+}
+
+func (t *AnthropicTransformer) makeInputJSONDelta(partialJSON string) []byte {
+	event := types.Event{
+		Type:  "content_block_delta",
+		Index: intPtr(t.blockIndex),
+		Delta: json.RawMessage(fmt.Sprintf(`{"type":"input_json_delta","partial_json":%q}`, partialJSON)),
+	}
+	return serializeAnthropicEvent(event)
+}
+
+func (t *AnthropicTransformer) makeContentBlockStop() []byte {
+	event := types.Event{
+		Type:  "content_block_stop",
+		Index: intPtr(t.blockIndex),
+	}
+	return serializeAnthropicEvent(event)
+}
+
+func (t *AnthropicTransformer) flushRemainingThinking(index int) {
+	event := types.Event{
+		Type:  "content_block_delta",
+		Index: intPtr(index),
+		Delta: json.RawMessage(fmt.Sprintf(`{"type":"thinking_delta","thinking":%q}`, t.buf)),
+	}
+	t.write(serializeAnthropicEvent(event))
+}
+
+func (t *AnthropicTransformer) flushRemainingText(index int) {
+	event := types.Event{
+		Type:  "content_block_delta",
+		Index: intPtr(index),
+		Delta: json.RawMessage(fmt.Sprintf(`{"type":"text_delta","text":%q}`, t.buf)),
+	}
+	t.write(serializeAnthropicEvent(event))
+}
+
+func (t *AnthropicTransformer) write(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	_, err := t.output.Write(data)
+	return err
+}
+
+func (t *AnthropicTransformer) writeData(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	_, err := t.output.Write([]byte("data: "))
+	if err != nil {
+		return err
+	}
+	_, err = t.output.Write(data)
+	if err != nil {
+		return err
+	}
+	_, err = t.output.Write([]byte("\n\n"))
+	return err
+}
+
+func (t *AnthropicTransformer) writePassthrough(eventType string, data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	_, err := t.output.Write([]byte("event: " + eventType + "\n"))
+	if err != nil {
+		return err
+	}
+	_, err = t.output.Write([]byte("data: "))
+	if err != nil {
+		return err
+	}
+	_, err = t.output.Write(data)
+	if err != nil {
+		return err
+	}
+	_, err = t.output.Write([]byte("\n\n"))
+	return err
+}
+
+func (t *AnthropicTransformer) Flush() error {
+	if t.buf == "" {
+		return nil
+	}
+
+	if t.inThinking {
+		t.flushRemainingThinking(t.thinkingIndex)
+	} else if t.inText {
+		t.flushRemainingText(t.textIndex)
+	} else {
+		switch t.state {
+		case anthropicStateIdle, anthropicStateTrailing:
+			t.thinkingIndex = t.blockIndex
+			t.blockIndex++
+			t.write(t.makeThinkingBlockStart(t.thinkingIndex))
+			t.flushRemainingThinking(t.thinkingIndex)
+			t.write(t.makeThinkingBlockStop(t.thinkingIndex))
+		case anthropicStateInSection, anthropicStateReadingID, anthropicStateReadingArgs:
+			t.thinkingIndex = t.blockIndex
+			t.blockIndex++
+			t.write(t.makeThinkingBlockStart(t.thinkingIndex))
+			debugContent := fmt.Sprintf("[INCOMPLETE TOOL CALL - state=%d] %s", t.state, t.buf)
+			event := types.Event{
+				Type:  "content_block_delta",
+				Index: intPtr(t.thinkingIndex),
+				Delta: json.RawMessage(fmt.Sprintf(`{"type":"thinking_delta","thinking":%q}`, debugContent)),
+			}
+			t.write(serializeAnthropicEvent(event))
+			t.write(t.makeThinkingBlockStop(t.thinkingIndex))
+		}
+	}
+
+	t.buf = ""
+	return nil
+}
+
+func (t *AnthropicTransformer) Close() error {
+	return t.Flush()
+}

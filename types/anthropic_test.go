@@ -211,8 +211,8 @@ func TestEvent(t *testing.T) {
 		},
 		{
 			name:     "message_delta with usage",
-			input:    Event{Type: "message_delta", Usage: &Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30}},
-			wantJSON: `{"type":"message_delta","usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}`,
+			input:    Event{Type: "message_delta", Usage: &AnthropicUsage{InputTokens: 10, OutputTokens: 20}},
+			wantJSON: `{"type":"message_delta","usage":{"input_tokens":10,"output_tokens":20}}`,
 		},
 		{
 			name:     "message_stop event",
@@ -297,9 +297,9 @@ func TestMessageInfo(t *testing.T) {
 				Type:  "message",
 				Role:  "assistant",
 				Model: "claude-3",
-				Usage: &Usage{PromptTokens: 50, CompletionTokens: 100, TotalTokens: 150},
+				Usage: &AnthropicUsage{InputTokens: 50, OutputTokens: 100},
 			},
-			wantJSON: `{"id":"msg_789","type":"message","role":"assistant","content":null,"model":"claude-3","usage":{"prompt_tokens":50,"completion_tokens":100,"total_tokens":150}}`,
+			wantJSON: `{"id":"msg_789","type":"message","role":"assistant","content":null,"model":"claude-3","usage":{"input_tokens":50,"output_tokens":100}}`,
 		},
 	}
 
@@ -630,10 +630,10 @@ func TestEventUnmarshalFromJSON(t *testing.T) {
 		},
 		{
 			name:    "message_delta with usage",
-			jsonStr: `{"type":"message_delta","usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30},"stop_reason":"end_turn"}`,
+			jsonStr: `{"type":"message_delta","usage":{"input_tokens":10,"output_tokens":20},"stop_reason":"end_turn"}`,
 			want: Event{
 				Type:       "message_delta",
-				Usage:      &Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
+				Usage:      &AnthropicUsage{InputTokens: 10, OutputTokens: 20},
 				StopReason: "end_turn",
 			},
 		},
@@ -663,7 +663,7 @@ func TestEventUnmarshalFromJSON(t *testing.T) {
 				}
 			}
 			if tt.want.Usage != nil {
-				if got.Usage == nil || got.Usage.TotalTokens != tt.want.Usage.TotalTokens {
+				if got.Usage == nil || got.Usage.InputTokens != tt.want.Usage.InputTokens {
 					t.Errorf("usage: got %v, want %v", got.Usage, tt.want.Usage)
 				}
 			}

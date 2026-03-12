@@ -131,8 +131,7 @@ func (h *MessagesHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 //	<|tool_calls_section_begin|><|tool_call_begin|>name<|tool_call_argument_begin|>args<|tool_call_end|>
 //	This transformer converts that markup to proper Anthropic tool_use content blocks.
 func (h *MessagesHandler) CreateTransformer(w io.Writer) transform.SSETransformer {
-	// Use Anthropic transformer to convert embedded tool call markup to proper Anthropic format
-	return toolcall.NewAnthropicTransformer(w, "", "")
+	return toolcall.NewAnthropicTransformer(w)
 }
 
 // WriteError sends an error response in Anthropic format.

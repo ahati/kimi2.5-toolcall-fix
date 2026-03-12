@@ -82,10 +82,8 @@ type Event struct {
 	ContentBlock json.RawMessage `json:"content_block,omitempty"`
 	// Message contains message metadata for message_start events.
 	// Provides ID, model, and usage information.
-	Message *MessageInfo `json:"message,omitempty"`
-	// Usage contains token usage for message_delta events.
-	// Updated incrementally during streaming.
-	Usage *Usage `json:"usage,omitempty"`
+	Message *MessageInfo    `json:"message,omitempty"`
+	Usage   *AnthropicUsage `json:"usage,omitempty"`
 	// StopReason indicates why generation stopped.
 	// Values: "end_turn", "max_tokens", "stop_sequence", "tool_use".
 	StopReason string `json:"stop_reason,omitempty"`
@@ -111,10 +109,8 @@ type MessageInfo struct {
 	Content []ContentBlock `json:"content"`
 	// Model is the model used for generation.
 	// May differ from requested model for aliases.
-	Model string `json:"model"`
-	// Usage contains token usage statistics.
-	// Only present in message_start events.
-	Usage *Usage `json:"usage,omitempty"`
+	Model string          `json:"model"`
+	Usage *AnthropicUsage `json:"usage,omitempty"`
 }
 
 // ContentBlock represents a block of content in an Anthropic message.
@@ -173,16 +169,10 @@ type InputJSONDelta struct {
 // AnthropicUsage represents token usage statistics from the Anthropic API.
 // Uses snake_case field names matching Anthropic's API format.
 type AnthropicUsage struct {
-	// InputTokens is the number of tokens in the input.
-	// Includes system prompt, messages, and tool definitions.
-	InputTokens int `json:"input_tokens"`
-	// OutputTokens is the number of tokens in the output.
-	// Accumulated during streaming; final value in message_delta.
+	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 }
 
-// AnthropicErrorResponse represents an error response from the Anthropic API.
-// Returned when the API cannot process the request.
 type AnthropicErrorResponse struct {
 	// Type identifies the error response type.
 	// Typically "error" for error responses.

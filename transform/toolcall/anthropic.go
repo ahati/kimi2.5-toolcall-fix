@@ -329,23 +329,6 @@ func (f *AnthropicFormatter) marshalEvent(event types.Event) []byte {
 // @post Returned pointer is valid and non-nil.
 //
 // @note Used for optional JSON fields that should be omitted when not set.
-func intPtr(i int) *int {
-	return &i
-}
-
-// SetMessageID updates the message ID used in output events.
-//
-// @brief Updates the message ID for subsequent output events.
-//
-// @param id The new message ID.
-//
-//	Format: typically "msg_xxx" or similar.
-//	Must be valid UTF-8 for JSON encoding.
-//
-// @return None (method returns no value).
-//
-// @pre id should be a valid message ID format.
-// @post All subsequent events will use the new message ID.
 func (f *AnthropicFormatter) SetMessageID(id string) {
 	f.messageID = id
 }

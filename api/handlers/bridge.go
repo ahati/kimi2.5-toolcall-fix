@@ -121,8 +121,7 @@ func (h *BridgeHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 // @pre w != nil and ready to receive writes.
 // @post Caller must call Close() on returned transformer.
 func (h *BridgeHandler) CreateTransformer(w io.Writer) transform.SSETransformer {
-	// Create Anthropic transformer to convert OpenAI responses back to Anthropic format
-	return toolcall.NewAnthropicTransformer(w, "", "")
+	return toolcall.NewAnthropicTransformer(w)
 }
 
 // WriteError sends an error response in Anthropic format.

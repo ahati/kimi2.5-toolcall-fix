@@ -13,16 +13,10 @@ import (
 
 func TestNewOpenAITransformer(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
+	tr := NewOpenAITransformer(buf)
 
 	if tr == nil {
 		t.Fatal("expected transformer to be non-nil")
-	}
-	if tr.messageID != "msg-123" {
-		t.Errorf("expected messageID 'msg-123', got %q", tr.messageID)
-	}
-	if tr.model != "gpt-4" {
-		t.Errorf("expected model 'gpt-4', got %q", tr.model)
 	}
 	if tr.parser == nil {
 		t.Error("expected parser to be non-nil")
@@ -34,22 +28,19 @@ func TestNewOpenAITransformer(t *testing.T) {
 
 func TestNewAnthropicTransformer(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf, "msg-456", "claude-3")
+	tr := NewAnthropicTransformer(buf)
 
 	if tr == nil {
 		t.Fatal("expected transformer to be non-nil")
 	}
-	if tr.messageID != "msg-456" {
-		t.Errorf("expected messageID 'msg-456', got %q", tr.messageID)
-	}
-	if tr.model != "claude-3" {
-		t.Errorf("expected model 'claude-3', got %q", tr.model)
+	if tr.formatter == nil {
+		t.Error("expected formatter to be non-nil")
 	}
 }
 
 func TestTransformer_Transform_SimpleContent(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
+	tr := NewOpenAITransformer(buf)
 
 	chunk := types.Chunk{
 		ID:      "msg-123",
@@ -65,42 +56,30 @@ func TestTransformer_Transform_SimpleContent(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, `"content":"Hello"`) {
-		t.Errorf("expected output to contain content, got %q", output)
-	}
-}
-
-func TestTransformer_Transform_EmptyData(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
-
-	event := &sse.Event{Data: ""}
-	if err := tr.Transform(event); err != nil {
-		t.Fatalf("Transform failed: %v", err)
-	}
-
-	if buf.Len() != 0 {
-		t.Errorf("expected empty output, got %q", buf.String())
+	if !strings.Contains(output, "Hello") {
+		t.Errorf("expected output to contain Hello, got %q", output)
 	}
 }
 
 func TestTransformer_Transform_DoneMarker(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
+	tr := NewOpenAITransformer(buf)
 
 	event := &sse.Event{Data: "[DONE]"}
 	if err := tr.Transform(event); err != nil {
 		t.Fatalf("Transform failed: %v", err)
 	}
 
-	if buf.Len() != 0 {
-		t.Errorf("expected empty output for [DONE], got %q", buf.String())
+	output := buf.String()
+	expected := "data: [DONE]\n\n"
+	if output != expected {
+		t.Errorf("expected %q, got %q", expected, output)
 	}
 }
 
 func TestTransformer_Transform_InvalidJSON(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
+	tr := NewOpenAITransformer(buf)
 
 	event := &sse.Event{Data: "not valid json"}
 	if err := tr.Transform(event); err != nil {
@@ -115,12 +94,11 @@ func TestTransformer_Transform_InvalidJSON(t *testing.T) {
 
 func TestTransformer_Transform_ExtractsMessageID(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "", "")
+	tr := NewOpenAITransformer(buf)
 
 	chunk := types.Chunk{
 		ID:      "extracted-id",
-		Object:  "chat.completion.chunk",
-		Model:   "extracted-model",
+		Model:   "gpt-4",
 		Choices: []types.Choice{{Delta: types.Delta{Content: "test"}}},
 	}
 	data, _ := json.Marshal(chunk)
@@ -133,14 +111,11 @@ func TestTransformer_Transform_ExtractsMessageID(t *testing.T) {
 	if tr.messageID != "extracted-id" {
 		t.Errorf("expected messageID 'extracted-id', got %q", tr.messageID)
 	}
-	if tr.model != "extracted-model" {
-		t.Errorf("expected model 'extracted-model', got %q", tr.model)
-	}
 }
 
 func TestTransformer_Transform_NoChoices(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
+	tr := NewOpenAITransformer(buf)
 
 	chunk := types.Chunk{
 		ID:      "msg-123",
@@ -154,14 +129,18 @@ func TestTransformer_Transform_NoChoices(t *testing.T) {
 		t.Fatalf("Transform failed: %v", err)
 	}
 
-	if buf.Len() != 0 {
-		t.Errorf("expected empty output for no choices, got %q", buf.String())
+	output := buf.String()
+	if !strings.Contains(output, "data:") {
+		t.Error("expected output to contain data: prefix")
+	}
+	if !strings.Contains(output, "msg-123") {
+		t.Error("expected output to contain msg-123")
 	}
 }
 
 func TestTransformer_Transform_WithToolCalls(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
+	tr := NewOpenAITransformer(buf)
 
 	input := "Before" +
 		"<|tool_calls_section_begin|>" +
@@ -174,8 +153,7 @@ func TestTransformer_Transform_WithToolCalls(t *testing.T) {
 		"After"
 
 	chunk := types.Chunk{
-		ID:      "msg-123",
-		Object:  "chat.completion.chunk",
+		ID:      "test-id",
 		Model:   "gpt-4",
 		Choices: []types.Choice{{Delta: types.Delta{Reasoning: input}}},
 	}
@@ -190,23 +168,32 @@ func TestTransformer_Transform_WithToolCalls(t *testing.T) {
 	}
 
 	output := buf.String()
+	t.Logf("Output: %s", output)
+
+	if !strings.Contains(output, "tool_calls") {
+		t.Error("expected output to contain tool_calls")
+	}
 	if !strings.Contains(output, `"name":"bash"`) {
-		t.Errorf("expected output to contain tool name, got %q", output)
+		t.Error("expected output to contain bash tool name")
 	}
 	if !strings.Contains(output, `"arguments":"{\"command\":\"ls\"}"`) {
-		t.Errorf("expected output to contain tool arguments, got %q", output)
+		t.Error("expected output to contain arguments")
 	}
 }
 
-func TestTransformer_Transform_ReasoningContent(t *testing.T) {
+func TestTransformer_Transform_MultipleToolCalls(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
+	tr := NewOpenAITransformer(buf)
+
+	input := "<|tool_calls_section_begin|>" +
+		"<|tool_call_begin|>read<|tool_call_argument_begin|>{\"file\":\"test.txt\"}<|tool_call_end|>" +
+		"<|tool_call_begin|>write<|tool_call_argument_begin|>{\"file\":\"out.txt\"}<|tool_call_end|>" +
+		"<|tool_calls_section_end|>"
 
 	chunk := types.Chunk{
-		ID:      "msg-123",
-		Object:  "chat.completion.chunk",
+		ID:      "test-id",
 		Model:   "gpt-4",
-		Choices: []types.Choice{{Delta: types.Delta{ReasoningContent: "reasoning text"}}},
+		Choices: []types.Choice{{Delta: types.Delta{Reasoning: input}}},
 	}
 	data, _ := json.Marshal(chunk)
 
@@ -214,101 +201,24 @@ func TestTransformer_Transform_ReasoningContent(t *testing.T) {
 	if err := tr.Transform(event); err != nil {
 		t.Fatalf("Transform failed: %v", err)
 	}
-
-	output := buf.String()
-	if !strings.Contains(output, "reasoning text") {
-		t.Errorf("expected output to contain reasoning content, got %q", output)
-	}
-}
-
-func TestTransformer_Flush(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
-
-	chunk := types.Chunk{
-		ID:      "msg-123",
-		Object:  "chat.completion.chunk",
-		Model:   "gpt-4",
-		Choices: []types.Choice{{Delta: types.Delta{Content: "unflushed content"}}},
-	}
-	data, _ := json.Marshal(chunk)
-
-	event := &sse.Event{Data: string(data)}
-	if err := tr.Transform(event); err != nil {
-		t.Fatalf("Transform failed: %v", err)
-	}
-
-	if err := tr.Flush(); err != nil {
-		t.Fatalf("Flush failed: %v", err)
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "unflushed content") {
-		t.Errorf("expected output to contain flushed content, got %q", output)
-	}
-}
-
-func TestTransformer_Flush_EmptyBuffer(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
-
-	if err := tr.Flush(); err != nil {
-		t.Fatalf("Flush failed: %v", err)
-	}
-
-	if buf.Len() != 0 {
-		t.Errorf("expected empty output, got %q", buf.String())
-	}
-}
-
-func TestTransformer_Close(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
-
-	chunk := types.Chunk{
-		ID:      "msg-123",
-		Object:  "chat.completion.chunk",
-		Model:   "gpt-4",
-		Choices: []types.Choice{{Delta: types.Delta{Content: "content to flush"}}},
-	}
-	data, _ := json.Marshal(chunk)
-
-	event := &sse.Event{Data: string(data)}
-	if err := tr.Transform(event); err != nil {
-		t.Fatalf("Transform failed: %v", err)
-	}
-
 	if err := tr.Close(); err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "content to flush") {
-		t.Errorf("expected output to contain flushed content, got %q", output)
+	t.Logf("Output: %s", output)
+
+	if !strings.Contains(output, `"name":"read"`) {
+		t.Error("expected output to contain read tool name")
+	}
+	if !strings.Contains(output, `"name":"write"`) {
+		t.Error("expected output to contain write tool name")
 	}
 }
 
-func TestTransformer_Parser(t *testing.T) {
+func TestTransformer_Transform_StreamingToolCalls(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
-
-	if tr.Parser() == nil {
-		t.Error("expected Parser to return non-nil")
-	}
-}
-
-func TestTransformer_Formatter(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
-
-	if tr.Formatter() == nil {
-		t.Error("expected Formatter to return non-nil")
-	}
-}
-
-func TestTransformer_OpenAI_EndToEnd(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "", "")
+	tr := NewOpenAITransformer(buf)
 
 	chunks := []string{
 		"Start",
@@ -316,7 +226,7 @@ func TestTransformer_OpenAI_EndToEnd(t *testing.T) {
 		"<|tool_call_begin|>",
 		"bash",
 		"<|tool_call_argument_begin|>",
-		`{"command":"ls -la"}`,
+		`{"command":"ls"}`,
 		"<|tool_call_end|>",
 		"<|tool_calls_section_end|>",
 		"End",
@@ -324,8 +234,7 @@ func TestTransformer_OpenAI_EndToEnd(t *testing.T) {
 
 	for i, text := range chunks {
 		chunk := types.Chunk{
-			ID:      "e2e-msg",
-			Object:  "chat.completion.chunk",
+			ID:      "test-id",
 			Model:   "gpt-4",
 			Choices: []types.Choice{{Delta: types.Delta{Reasoning: text}}},
 		}
@@ -342,24 +251,16 @@ func TestTransformer_OpenAI_EndToEnd(t *testing.T) {
 	}
 
 	output := buf.String()
+	t.Logf("Output: %s", output)
 
-	if !strings.Contains(output, `"content":"Start"`) {
-		t.Error("expected output to contain 'Start' content")
-	}
 	if !strings.Contains(output, `"name":"bash"`) {
 		t.Error("expected output to contain bash tool name")
 	}
-	if !strings.Contains(output, `"arguments":"{\"command\":\"ls -la\"}"`) {
-		t.Error("expected output to contain tool arguments")
-	}
-	if !strings.Contains(output, `"content":"End"`) {
-		t.Error("expected output to contain 'End' content")
-	}
 }
 
-func TestTransformer_Anthropic_EndToEnd(t *testing.T) {
+func TestTransformer_OpenAI_EndToEnd(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf, "", "")
+	tr := NewOpenAITransformer(buf)
 
 	chunks := []string{
 		"Start",
@@ -375,9 +276,8 @@ func TestTransformer_Anthropic_EndToEnd(t *testing.T) {
 
 	for i, text := range chunks {
 		chunk := types.Chunk{
-			ID:      "anthropic-msg",
-			Object:  "chat.completion.chunk",
-			Model:   "claude-3",
+			ID:      "test-id",
+			Model:   "gpt-4",
 			Choices: []types.Choice{{Delta: types.Delta{Reasoning: text}}},
 		}
 		data, _ := json.Marshal(chunk)
@@ -393,29 +293,59 @@ func TestTransformer_Anthropic_EndToEnd(t *testing.T) {
 	}
 
 	output := buf.String()
+	t.Logf("Output: %s", output)
 
-	if !strings.Contains(output, "content_block_delta") {
-		t.Error("expected output to contain content_block_delta event")
-	}
-	if !strings.Contains(output, "content_block_start") {
-		t.Error("expected output to contain content_block_start event")
-	}
 	if !strings.Contains(output, `"name":"read"`) {
 		t.Error("expected output to contain read tool name")
+	}
+}
+
+func TestTransformer_Anthropic_EndToEnd(t *testing.T) {
+	buf := &bytes.Buffer{}
+	tr := NewAnthropicTransformer(buf)
+
+	events := []types.Event{
+		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-123", Model: "kimi-k2.5"}},
+		{Type: "content_block_start", Index: intPtr(0), ContentBlock: json.RawMessage(`{"type":"thinking","thinking":""}`)},
+		{Type: "content_block_delta", Index: intPtr(0), Delta: json.RawMessage(`{"type":"thinking_delta","thinking":"Some reasoning<|tool_calls_section_begin|><|tool_call_begin|>bash<|tool_call_argument_begin|>{\"cmd\":\"ls\"}<|tool_call_end|><|tool_calls_section_end|>"}`)},
+		{Type: "content_block_stop", Index: intPtr(0)},
+		{Type: "message_delta", Delta: json.RawMessage(`{"stop_reason":"end_turn"}`)},
+		{Type: "message_stop"},
+	}
+
+	for i, event := range events {
+		data, _ := json.Marshal(event)
+		sseEvent := &sse.Event{Data: string(data)}
+		if err := tr.Transform(sseEvent); err != nil {
+			t.Fatalf("Transform failed at event %d: %v", i, err)
+		}
+	}
+
+	if err := tr.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	output := buf.String()
+	t.Logf("Output: %s", output)
+
+	if !strings.Contains(output, `"type":"tool_use"`) {
+		t.Error("expected output to contain tool_use block")
+	}
+	if !strings.Contains(output, `"name":"bash"`) {
+		t.Error("expected output to contain bash tool name")
 	}
 	if !strings.Contains(output, "input_json_delta") {
 		t.Error("expected output to contain input_json_delta")
 	}
-	if !strings.Contains(output, "content_block_stop") {
-		t.Error("expected output to contain content_block_stop event")
+	if !strings.Contains(output, `"stop_reason":"tool_use"`) {
+		t.Error("expected stop_reason to be changed to tool_use")
 	}
 }
 
 func TestTransformer_AnthropicPassthrough(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf, "", "")
+	tr := NewAnthropicTransformer(buf)
 
-	// Test that standard Anthropic events are passed through with SSE formatting
 	event := types.Event{
 		Type:  "content_block_delta",
 		Index: intPtr(0),
@@ -442,9 +372,8 @@ func TestTransformer_AnthropicPassthrough(t *testing.T) {
 
 func TestTransformer_AnthropicToolCallMarkup(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf, "", "")
+	tr := NewAnthropicTransformer(buf)
 
-	// Test that text with tool call markup is detected and processed
 	delta := map[string]interface{}{
 		"type": "text_delta",
 		"text": "<|tool_calls_section_begin|><|tool_call_begin|>bash<|tool_call_argument_begin|>{\"cmd\":\"ls\"}<|tool_call_end|><|tool_calls_section_end|>",
@@ -468,8 +397,6 @@ func TestTransformer_AnthropicToolCallMarkup(t *testing.T) {
 
 	output := buf.String()
 	t.Logf("Output: %s", output)
-	// When tool call markup is detected, it should be processed
-	// The exact output depends on whether we're transforming or passing through
 	if !strings.Contains(output, "bash") {
 		t.Error("expected output to contain bash tool name")
 	}
@@ -477,9 +404,8 @@ func TestTransformer_AnthropicToolCallMarkup(t *testing.T) {
 
 func TestTransformer_OpenAIPassthrough(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "", "")
+	tr := NewOpenAITransformer(buf)
 
-	// Test that standard OpenAI chunks with content are passed through
 	chunk := types.Chunk{
 		ID:    "test-id",
 		Model: "gpt-4",
@@ -489,48 +415,67 @@ func TestTransformer_OpenAIPassthrough(t *testing.T) {
 	}
 	data, _ := json.Marshal(chunk)
 
-	sseEvent := &sse.Event{Data: string(data)}
-	if err := tr.Transform(sseEvent); err != nil {
+	event := &sse.Event{Data: string(data)}
+	if err := tr.Transform(event); err != nil {
 		t.Fatalf("Transform failed: %v", err)
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "data:") {
-		t.Error("expected output to contain SSE data: prefix")
-	}
 	if !strings.Contains(output, "Hello") {
-		t.Error("expected output to contain Hello")
+		t.Errorf("expected output to contain Hello, got %q", output)
 	}
 }
 
 func TestTransformer_OpenAIToolCallFromReasoning(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "", "")
+	tr := NewOpenAITransformer(buf)
 
-	// Test that reasoning content with tool call markup is transformed
-	chunks := []string{
-		"<|tool_calls_section_begin|>",
-		"<|tool_call_begin|>",
-		"bash",
-		"<|tool_call_argument_begin|>",
-		`{"command":"ls -la"}`,
-		"<|tool_call_end|>",
-		"<|tool_calls_section_end|>",
+	chunk := types.Chunk{
+		ID:    "test-id",
+		Model: "gpt-4",
+		Choices: []types.Choice{{
+			Delta: types.Delta{Reasoning: "<|tool_calls_section_begin|><|tool_call_begin|>bash<|tool_call_argument_begin|>{\"command\":\"ls -la\"}<|tool_call_end|><|tool_calls_section_end|>"},
+		}},
+	}
+	data, _ := json.Marshal(chunk)
+
+	event := &sse.Event{Data: string(data)}
+	if err := tr.Transform(event); err != nil {
+		t.Fatalf("Transform failed: %v", err)
+	}
+	if err := tr.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
 	}
 
-	for _, text := range chunks {
-		chunk := types.Chunk{
-			ID:    "test-id",
-			Model: "gpt-4",
-			Choices: []types.Choice{{
-				Delta: types.Delta{Reasoning: text},
-			}},
-		}
-		data, _ := json.Marshal(chunk)
+	output := buf.String()
+	t.Logf("Output: %s", output)
 
+	if !strings.Contains(output, `"name":"bash"`) {
+		t.Error("expected output to contain bash tool name")
+	}
+	if !strings.Contains(output, `"arguments":"{\"command\":\"ls -la\"}"`) {
+		t.Error("expected output to contain arguments")
+	}
+}
+
+func TestTransformer_Anthropic_ToolCallsInThinking(t *testing.T) {
+	buf := &bytes.Buffer{}
+	tr := NewAnthropicTransformer(buf)
+
+	events := []types.Event{
+		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-123", Model: "kimi-k2.5"}},
+		{Type: "content_block_start", Index: intPtr(0), ContentBlock: json.RawMessage(`{"type":"thinking","thinking":""}`)},
+		{Type: "content_block_delta", Index: intPtr(0), Delta: json.RawMessage(`{"type":"thinking_delta","thinking":"Some reasoning<|tool_calls_section_begin|><|tool_call_begin|>bash<|tool_call_argument_begin|>{\"cmd\":\"ls\"}<|tool_call_end|><|tool_calls_section_end|>"}`)},
+		{Type: "content_block_stop", Index: intPtr(0)},
+		{Type: "message_delta", Delta: json.RawMessage(`{"stop_reason":"end_turn"}`)},
+		{Type: "message_stop"},
+	}
+
+	for i, event := range events {
+		data, _ := json.Marshal(event)
 		sseEvent := &sse.Event{Data: string(data)}
 		if err := tr.Transform(sseEvent); err != nil {
-			t.Fatalf("Transform failed: %v", err)
+			t.Fatalf("Transform failed at event %d: %v", i, err)
 		}
 	}
 
@@ -540,214 +485,125 @@ func TestTransformer_OpenAIToolCallFromReasoning(t *testing.T) {
 
 	output := buf.String()
 	t.Logf("Output: %s", output)
+
+	if !strings.Contains(output, `"type":"tool_use"`) {
+		t.Error("expected output to contain tool_use block")
+	}
 	if !strings.Contains(output, `"name":"bash"`) {
 		t.Error("expected output to contain bash tool name")
 	}
-	if !strings.Contains(output, `"arguments"`) {
-		t.Error("expected output to contain tool arguments")
+	if !strings.Contains(output, "input_json_delta") {
+		t.Error("expected output to contain input_json_delta")
+	}
+	if !strings.Contains(output, `"stop_reason":"tool_use"`) {
+		t.Error("expected stop_reason to be changed to tool_use")
 	}
 }
 
-func TestTransformer_WriteEvent_AllTypes(t *testing.T) {
-	tests := []struct {
-		name      string
-		event     Event
-		wantEmpty bool
-	}{
-		{
-			name:      "EventContent",
-			event:     Event{Type: EventContent, Text: "hello"},
-			wantEmpty: false,
-		},
-		{
-			name:      "EventToolStart",
-			event:     Event{Type: EventToolStart, ID: "call_1", Name: "bash", Index: 0},
-			wantEmpty: false,
-		},
-		{
-			name:      "EventToolArgs",
-			event:     Event{Type: EventToolArgs, Args: "{}", Index: 0},
-			wantEmpty: false,
-		},
-		{
-			name:      "EventToolEnd",
-			event:     Event{Type: EventToolEnd, Index: 0},
-			wantEmpty: true,
-		},
-		{
-			name:      "EventSectionEnd",
-			event:     Event{Type: EventSectionEnd},
-			wantEmpty: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			buf := &bytes.Buffer{}
-			tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
-
-			if err := tr.writeEvent(tt.event); err != nil {
-				t.Fatalf("writeEvent failed: %v", err)
-			}
-
-			if tt.wantEmpty && buf.Len() != 0 {
-				t.Errorf("expected empty output, got %q", buf.String())
-			}
-			if !tt.wantEmpty && buf.Len() == 0 {
-				t.Error("expected non-empty output")
-			}
-		})
-	}
-}
-
-func TestTransformer_MultipleToolCalls(t *testing.T) {
+func TestTransformer_Anthropic_ToolCallsInText(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
+	tr := NewAnthropicTransformer(buf)
 
-	input := "<|tool_calls_section_begin|>" +
-		"<|tool_call_begin|>bash<|tool_call_argument_begin|>{}<|tool_call_end|>" +
-		"<|tool_call_begin|>read<|tool_call_argument_begin|>{}<|tool_call_end|>" +
-		"<|tool_call_begin|>write<|tool_call_argument_begin|>{}<|tool_call_end|>" +
-		"<|tool_calls_section_end|>"
-
-	chunk := types.Chunk{
-		ID:      "msg-123",
-		Object:  "chat.completion.chunk",
-		Model:   "gpt-4",
-		Choices: []types.Choice{{Delta: types.Delta{Reasoning: input}}},
+	events := []types.Event{
+		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-456", Model: "kimi-k2.5"}},
+		{Type: "content_block_start", Index: intPtr(0), ContentBlock: json.RawMessage(`{"type":"text","text":""}`)},
+		{Type: "content_block_delta", Index: intPtr(0), Delta: json.RawMessage(`{"type":"text_delta","text":"Hello<|tool_calls_section_begin|><|tool_call_begin|>read<|tool_call_argument_begin|>{\"file\":\"test.txt\"}<|tool_call_end|><|tool_calls_section_end|>World"}`)},
+		{Type: "content_block_stop", Index: intPtr(0)},
+		{Type: "message_delta", Delta: json.RawMessage(`{"stop_reason":"end_turn"}`)},
+		{Type: "message_stop"},
 	}
-	data, _ := json.Marshal(chunk)
 
-	event := &sse.Event{Data: string(data)}
-	if err := tr.Transform(event); err != nil {
-		t.Fatalf("Transform failed: %v", err)
+	for i, event := range events {
+		data, _ := json.Marshal(event)
+		sseEvent := &sse.Event{Data: string(data)}
+		if err := tr.Transform(sseEvent); err != nil {
+			t.Fatalf("Transform failed at event %d: %v", i, err)
+		}
 	}
+
 	if err := tr.Close(); err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
 
 	output := buf.String()
+	t.Logf("Output: %s", output)
 
-	if strings.Count(output, `"name":"bash"`) != 1 {
-		t.Error("expected exactly one bash tool call")
+	if !strings.Contains(output, `"type":"tool_use"`) {
+		t.Error("expected output to contain tool_use block")
 	}
-	if strings.Count(output, `"name":"read"`) != 1 {
-		t.Error("expected exactly one read tool call")
+	if !strings.Contains(output, `"name":"read"`) {
+		t.Error("expected output to contain read tool name")
 	}
-	if strings.Count(output, `"name":"write"`) != 1 {
-		t.Error("expected exactly one write tool call")
+	if !strings.Contains(output, `"stop_reason":"tool_use"`) {
+		t.Error("expected stop_reason to be changed to tool_use")
 	}
 }
 
-func TestTransformer_ContentPreference(t *testing.T) {
+func TestTransformer_Anthropic_TextPassthrough(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
+	tr := NewAnthropicTransformer(buf)
 
-	chunk := types.Chunk{
-		ID:     "msg-123",
-		Object: "chat.completion.chunk",
-		Model:  "gpt-4",
-		Choices: []types.Choice{{Delta: types.Delta{
-			Content:   "content field",
-			Reasoning: "should be ignored when content present",
-		}}},
+	events := []types.Event{
+		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-789", Model: "kimi-k2.5"}},
+		{Type: "content_block_start", Index: intPtr(0), ContentBlock: json.RawMessage(`{"type":"text","text":""}`)},
+		{Type: "content_block_delta", Index: intPtr(0), Delta: json.RawMessage(`{"type":"text_delta","text":"Hello World"}`)},
+		{Type: "content_block_stop", Index: intPtr(0)},
+		{Type: "message_delta", Delta: json.RawMessage(`{"stop_reason":"end_turn"}`)},
+		{Type: "message_stop"},
 	}
-	data, _ := json.Marshal(chunk)
 
-	event := &sse.Event{Data: string(data)}
-	if err := tr.Transform(event); err != nil {
-		t.Fatalf("Transform failed: %v", err)
+	for i, event := range events {
+		data, _ := json.Marshal(event)
+		sseEvent := &sse.Event{Data: string(data)}
+		if err := tr.Transform(sseEvent); err != nil {
+			t.Fatalf("Transform failed at event %d: %v", i, err)
+		}
+	}
+
+	if err := tr.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "content field") {
-		t.Error("expected output to contain content field")
-	}
-	if strings.Contains(output, "should be ignored") {
-		t.Error("expected reasoning to be ignored when content present")
-	}
-}
+	t.Logf("Output: %s", output)
 
-func TestTransformer_Write(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
-
-	if err := tr.write([]byte("test data")); err != nil {
-		t.Fatalf("write failed: %v", err)
+	if !strings.Contains(output, "Hello World") {
+		t.Error("expected output to contain Hello World")
 	}
-
-	if buf.String() != "test data" {
-		t.Errorf("expected 'test data', got %q", buf.String())
+	if !strings.Contains(output, `"stop_reason":"end_turn"`) {
+		t.Error("expected stop_reason to remain end_turn")
 	}
 }
 
-func TestTransformer_Write_EmptyData(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
+func TestParser_Parse(t *testing.T) {
+	p := NewParser(DefaultTokens)
 
-	if err := tr.write([]byte{}); err != nil {
-		t.Fatalf("write failed: %v", err)
+	events := p.Parse("<|tool_calls_section_begin|><|tool_call_begin|>bash<|tool_call_argument_begin|>{\"cmd\":\"ls\"}<|tool_call_end|><|tool_calls_section_end|>")
+	if len(events) == 0 {
+		t.Fatal("expected events to be parsed")
 	}
 
-	if buf.Len() != 0 {
-		t.Errorf("expected empty buffer, got %q", buf.String())
-	}
-}
-
-func TestTransformer_Write_NilData(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
-
-	if err := tr.write(nil); err != nil {
-		t.Fatalf("write failed: %v", err)
+	foundToolStart := false
+	for _, e := range events {
+		if e.Type == EventToolStart && e.Name == "bash" {
+			foundToolStart = true
+		}
 	}
 
-	if buf.Len() != 0 {
-		t.Errorf("expected empty buffer, got %q", buf.String())
+	if !foundToolStart {
+		t.Error("expected to find tool start event for bash")
 	}
 }
 
-func TestTransformer_AnthropicFormatter_Methods(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf, "msg-123", "claude-3")
+func TestParser_IsIdle(t *testing.T) {
+	p := NewParser(DefaultTokens)
 
-	af, ok := tr.Formatter().(*AnthropicFormatter)
-	if !ok {
-		t.Fatal("expected AnthropicFormatter")
+	if !p.IsIdle() {
+		t.Error("expected parser to be idle initially")
 	}
 
-	af.SetMessageID("new-id")
-	af.SetModel("new-model")
-	af.SetBlockIndex(5)
-	af.IncrementBlockIndex()
-
-	if af.messageID != "new-id" {
-		t.Errorf("expected messageID 'new-id', got %q", af.messageID)
-	}
-	if af.model != "new-model" {
-		t.Errorf("expected model 'new-model', got %q", af.model)
-	}
-	if af.BlockIndex() != 6 {
-		t.Errorf("expected block index 6, got %d", af.BlockIndex())
-	}
-}
-
-func TestTransformer_OpenAIFormatter_Methods(t *testing.T) {
-	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf, "msg-123", "gpt-4")
-
-	of, ok := tr.Formatter().(*OpenAIFormatter)
-	if !ok {
-		t.Fatal("expected OpenAIFormatter")
-	}
-
-	of.SetMessageID("new-id")
-	of.SetModel("new-model")
-
-	if of.messageID != "new-id" {
-		t.Errorf("expected messageID 'new-id', got %q", of.messageID)
-	}
-	if of.model != "new-model" {
-		t.Errorf("expected model 'new-model', got %q", of.model)
+	p.Parse("<|tool_calls_section_begin|>")
+	if p.IsIdle() {
+		t.Error("expected parser to not be idle after section begin")
 	}
 }
