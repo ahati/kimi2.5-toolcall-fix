@@ -107,16 +107,16 @@ func TestCaptureMiddleware_Handler_PopulatesRecorder(t *testing.T) {
 				t.Fatal("capture context is nil")
 			}
 
-			if cc.Recorder.Method != tt.method {
-				t.Errorf("expected method %s, got %s", tt.method, cc.Recorder.Method)
+			if cc.Recorder.Data().Method != tt.method {
+				t.Errorf("expected method %s, got %s", tt.method, cc.Recorder.Data().Method)
 			}
 
-			if cc.Recorder.Path != tt.path {
-				t.Errorf("expected path %s, got %s", tt.path, cc.Recorder.Path)
+			if cc.Recorder.Data().Path != tt.path {
+				t.Errorf("expected path %s, got %s", tt.path, cc.Recorder.Data().Path)
 			}
 
-			if cc.Recorder.ClientIP != tt.remoteAddr {
-				t.Errorf("expected ClientIP %s, got %s", tt.remoteAddr, cc.Recorder.ClientIP)
+			if cc.Recorder.Data().ClientIP != tt.remoteAddr {
+				t.Errorf("expected ClientIP %s, got %s", tt.remoteAddr, cc.Recorder.Data().ClientIP)
 			}
 		})
 	}

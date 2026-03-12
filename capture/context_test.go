@@ -75,16 +75,16 @@ func TestNewCaptureContext_RecorderFields(t *testing.T) {
 
 			cc := NewCaptureContext(req)
 
-			if cc.Recorder.Method != tt.method {
-				t.Errorf("expected Method %q, got %q", tt.method, cc.Recorder.Method)
+			if cc.Recorder.Data().Method != tt.method {
+				t.Errorf("expected Method %q, got %q", tt.method, cc.Recorder.Data().Method)
 			}
 
-			if cc.Recorder.Path != tt.path {
-				t.Errorf("expected Path %q, got %q", tt.path, cc.Recorder.Path)
+			if cc.Recorder.Data().Path != tt.path {
+				t.Errorf("expected Path %q, got %q", tt.path, cc.Recorder.Data().Path)
 			}
 
-			if cc.Recorder.ClientIP != tt.remoteAddr {
-				t.Errorf("expected ClientIP %q, got %q", tt.remoteAddr, cc.Recorder.ClientIP)
+			if cc.Recorder.Data().ClientIP != tt.remoteAddr {
+				t.Errorf("expected ClientIP %q, got %q", tt.remoteAddr, cc.Recorder.Data().ClientIP)
 			}
 		})
 	}
@@ -109,8 +109,8 @@ func TestCaptureContext_SetRequestID(t *testing.T) {
 		t.Errorf("expected RequestID %q, got %q", "test-request-id-123", cc.RequestID)
 	}
 
-	if cc.Recorder.RequestID != "test-request-id-123" {
-		t.Errorf("expected Recorder.RequestID %q, got %q", "test-request-id-123", cc.Recorder.RequestID)
+	if cc.Recorder.Data().RequestID != "test-request-id-123" {
+		t.Errorf("expected Recorder.RequestID %q, got %q", "test-request-id-123", cc.Recorder.Data().RequestID)
 	}
 
 	if !cc.IDExtracted {
@@ -133,8 +133,8 @@ func TestCaptureContext_SetRequestID_Overwrite(t *testing.T) {
 		t.Errorf("expected RequestID %q, got %q", "second-id", cc.RequestID)
 	}
 
-	if cc.Recorder.RequestID != "second-id" {
-		t.Errorf("expected Recorder.RequestID %q, got %q", "second-id", cc.Recorder.RequestID)
+	if cc.Recorder.Data().RequestID != "second-id" {
+		t.Errorf("expected Recorder.RequestID %q, got %q", "second-id", cc.Recorder.Data().RequestID)
 	}
 }
 
@@ -212,15 +212,15 @@ func TestRecordDownstreamRequest(t *testing.T) {
 	body := []byte(`{"model": "test", "messages": []}`)
 	RecordDownstreamRequest(ctx, req, body)
 
-	if cc.Recorder.DownstreamRequest == nil {
+	if cc.Recorder.Data().DownstreamRequest == nil {
 		t.Fatal("DownstreamRequest should not be nil")
 	}
 
-	if string(cc.Recorder.DownstreamRequest.Body) != string(body) {
-		t.Errorf("expected Body %q, got %q", body, cc.Recorder.DownstreamRequest.Body)
+	if string(cc.Recorder.Data().DownstreamRequest.Body) != string(body) {
+		t.Errorf("expected Body %q, got %q", body, cc.Recorder.Data().DownstreamRequest.Body)
 	}
 
-	if cc.Recorder.DownstreamRequest.Headers["Content-Type"] != "application/json" {
+	if cc.Recorder.Data().DownstreamRequest.Headers["Content-Type"] != "application/json" {
 		t.Error("Content-Type header should be recorded")
 	}
 }
@@ -259,7 +259,7 @@ func TestCaptureContext_StartTime(t *testing.T) {
 		t.Error("StartTime should not be after creation")
 	}
 
-	if cc.Recorder.StartedAt.Before(before) || cc.Recorder.StartedAt.After(after) {
+	if cc.Recorder.Data().StartedAt.Before(before) || cc.Recorder.Data().StartedAt.After(after) {
 		t.Error("Recorder.StartedAt should be within the same time window")
 	}
 }
@@ -285,15 +285,15 @@ func TestCaptureContext_MultipleContexts(t *testing.T) {
 	retrieved1 := GetCaptureContext(ctx1)
 	retrieved2 := GetCaptureContext(ctx2)
 
-	if retrieved1.Recorder.Path == retrieved2.Recorder.Path {
+	if retrieved1.Recorder.Data().Path == retrieved2.Recorder.Data().Path {
 		t.Error("contexts should be independent")
 	}
 
-	if retrieved1.Recorder.Path != "/test1" {
-		t.Errorf("expected path /test1, got %s", retrieved1.Recorder.Path)
+	if retrieved1.Recorder.Data().Path != "/test1" {
+		t.Errorf("expected path /test1, got %s", retrieved1.Recorder.Data().Path)
 	}
 
-	if retrieved2.Recorder.Path != "/test2" {
-		t.Errorf("expected path /test2, got %s", retrieved2.Recorder.Path)
+	if retrieved2.Recorder.Data().Path != "/test2" {
+		t.Errorf("expected path /test2, got %s", retrieved2.Recorder.Data().Path)
 	}
 }

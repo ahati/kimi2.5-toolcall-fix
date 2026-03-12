@@ -36,12 +36,14 @@ type Server struct {
 //
 //	Must not be nil. Caller retains ownership.
 //
+// @param middleware - Optional middleware functions to apply before route handlers.
+//
 // @return Pointer to newly allocated Server instance. Never returns nil.
 //
 // @pre cfg != nil
 // @post Returned Server has all routes registered and is ready to accept connections.
 // @post Gin is set to ReleaseMode if cfg.Port is non-empty (production mode).
-func NewServer(cfg *config.Config) *Server {
+func NewServer(cfg *config.Config, middleware ...gin.HandlerFunc) *Server {
 	// Set Gin to release mode for production when port is configured
 	// to reduce console noise and improve performance
 	if cfg.Port != "" {
@@ -53,7 +55,12 @@ func NewServer(cfg *config.Config) *Server {
 		config: cfg,
 	}
 
-	// Register all API routes before returning the server
+	// Apply middleware first so it runs before routes
+	for _, m := range middleware {
+		s.router.Use(m)
+	}
+
+	// Register all API routes after middleware is set up
 	s.setupRoutes()
 
 	return s

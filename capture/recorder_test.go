@@ -372,10 +372,10 @@ func TestRequestRecorder_AllFields(t *testing.T) {
 }
 
 func TestNewRecorder(t *testing.T) {
-	rec := newRecorder("req-id", "GET", "/test", "localhost:8080")
+	rec := NewRecorder("req-id", "GET", "/test", "localhost:8080")
 
 	if rec == nil {
-		t.Fatal("newRecorder returned nil")
+		t.Fatal("NewRecorder returned nil")
 	}
 
 	if rec.data.RequestID != "req-id" {
@@ -400,7 +400,7 @@ func TestNewRecorder(t *testing.T) {
 }
 
 func TestRecorder_RecordDownstreamRequest(t *testing.T) {
-	rec := newRecorder("req-id", "POST", "/test", "localhost")
+	rec := NewRecorder("req-id", "POST", "/test", "localhost")
 	headers := http.Header{
 		"Content-Type":  []string{"application/json"},
 		"Authorization": []string{"Bearer token"},
@@ -419,7 +419,7 @@ func TestRecorder_RecordDownstreamRequest(t *testing.T) {
 }
 
 func TestRecorder_RecordUpstreamRequest(t *testing.T) {
-	rec := newRecorder("req-id", "POST", "/test", "localhost")
+	rec := NewRecorder("req-id", "POST", "/test", "localhost")
 	headers := http.Header{
 		"X-Api-Key":    []string{"upstream-key"},
 		"Content-Type": []string{"application/json"},
@@ -442,7 +442,7 @@ func TestRecorder_RecordUpstreamRequest(t *testing.T) {
 }
 
 func TestRecorder_RecordUpstreamResponse(t *testing.T) {
-	rec := newRecorder("req-id", "POST", "/test", "localhost")
+	rec := NewRecorder("req-id", "POST", "/test", "localhost")
 	headers := http.Header{
 		"Content-Type": []string{"text/event-stream"},
 	}
@@ -463,7 +463,7 @@ func TestRecorder_RecordUpstreamResponse(t *testing.T) {
 }
 
 func TestRecorder_RecordDownstreamResponse(t *testing.T) {
-	rec := newRecorder("req-id", "POST", "/test", "localhost")
+	rec := NewRecorder("req-id", "POST", "/test", "localhost")
 
 	rr := rec.RecordDownstreamResponse()
 
@@ -477,7 +477,7 @@ func TestRecorder_RecordDownstreamResponse(t *testing.T) {
 }
 
 func TestRecorder_Data(t *testing.T) {
-	rec := newRecorder("req-id", "GET", "/test", "localhost")
+	rec := NewRecorder("req-id", "GET", "/test", "localhost")
 
 	data := rec.Data()
 
@@ -491,7 +491,7 @@ func TestRecorder_Data(t *testing.T) {
 }
 
 func TestResponseRecorder_RecordChunk(t *testing.T) {
-	rec := newRecorder("req-id", "POST", "/test", "localhost")
+	rec := NewRecorder("req-id", "POST", "/test", "localhost")
 	rr := rec.RecordUpstreamResponse(200, http.Header{})
 
 	rr.RecordChunk("message", `{"id": "chunk-1", "content": "hello"}`)
@@ -507,7 +507,7 @@ func TestResponseRecorder_RecordChunk(t *testing.T) {
 }
 
 func TestResponseRecorder_RecordChunk_InvalidJSON(t *testing.T) {
-	rec := newRecorder("req-id", "POST", "/test", "localhost")
+	rec := NewRecorder("req-id", "POST", "/test", "localhost")
 	rr := rec.RecordUpstreamResponse(200, http.Header{})
 
 	rr.RecordChunk("error", "not valid json")
@@ -528,7 +528,7 @@ func TestResponseRecorder_RecordChunk_NilReceiver(t *testing.T) {
 }
 
 func TestResponseRecorder_RecordChunkBytes(t *testing.T) {
-	rec := newRecorder("req-id", "POST", "/test", "localhost")
+	rec := NewRecorder("req-id", "POST", "/test", "localhost")
 	rr := rec.RecordUpstreamResponse(200, http.Header{})
 
 	rr.RecordChunkBytes("message", []byte(`{"test": true}`))

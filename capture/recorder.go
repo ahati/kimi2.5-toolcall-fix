@@ -209,11 +209,11 @@ func OffsetMS(start time.Time) int64 {
 	return time.Since(start).Milliseconds()
 }
 
-// recorder provides thread-safe recording of request/response data.
+// Recorder provides thread-safe recording of request/response data.
 // It wraps RequestRecorder with mutex protection for concurrent access.
 //
 // Thread Safety: IS thread-safe. All methods use mutex protection.
-type recorder struct {
+type Recorder struct {
 	// mu protects all fields of this struct.
 	// Must be held for any read or write of 'data'.
 	mu sync.Mutex
@@ -228,23 +228,23 @@ type recorder struct {
 	started time.Time
 }
 
-// newRecorder creates a new recorder initialized with request metadata.
+// NewRecorder creates a new Recorder initialized with request metadata.
 //
 // @param requestID - Unique identifier for this request. May be empty.
 // @param method    - HTTP method. Should be valid HTTP method string.
 // @param path      - URL path. Should be valid URL path.
 // @param clientIP  - Client remote address. Should be IP:port format.
-// @return Pointer to newly allocated recorder, never nil.
+// @return Pointer to newly allocated Recorder, never nil.
 //
 // @pre None
-// @post Returned recorder is ready for concurrent use
-// @post Returned recorder.data fields are initialized with parameters
+// @post Returned Recorder is ready for concurrent use
+// @post Returned Recorder.data fields are initialized with parameters
 //
 // @note Thread-safe: creates new instance with no shared state.
-func newRecorder(requestID, method, path, clientIP string) *recorder {
+func NewRecorder(requestID, method, path, clientIP string) *Recorder {
 	// Capture current time once for consistency between StartedAt and started
 	now := time.Now()
-	return &recorder{
+	return &Recorder{
 		started: now,
 		// Initialize data with all metadata at creation
 		// This prevents nil pointer access in later operations
@@ -269,7 +269,7 @@ func newRecorder(requestID, method, path, clientIP string) *recorder {
 //
 // @note Thread-safe: uses mutex for exclusive access.
 // @note Headers are sanitized to mask sensitive values.
-func (r *recorder) RecordDownstreamRequest(headers http.Header, body []byte) {
+func (r *Recorder) RecordDownstreamRequest(headers http.Header, body []byte) {
 	// Lock for entire operation to ensure atomic update
 	// defer ensures unlock even if panic occurs
 	r.mu.Lock()
@@ -296,7 +296,7 @@ func (r *recorder) RecordDownstreamRequest(headers http.Header, body []byte) {
 //
 // @note Thread-safe: uses mutex for exclusive access.
 // @note Headers are sanitized to mask sensitive values.
-func (r *recorder) RecordUpstreamRequest(headers http.Header, body []byte) {
+func (r *Recorder) RecordUpstreamRequest(headers http.Header, body []byte) {
 	// Lock for entire operation to ensure atomic update
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -323,7 +323,7 @@ func (r *recorder) RecordUpstreamRequest(headers http.Header, body []byte) {
 //
 // @note Thread-safe: uses mutex for exclusive access during initialization.
 // @note Returned responseRecorder is NOT thread-safe; use from single goroutine.
-func (r *recorder) RecordUpstreamResponse(statusCode int, headers http.Header) *responseRecorder {
+func (r *Recorder) RecordUpstreamResponse(statusCode int, headers http.Header) *responseRecorder {
 	// Lock for the initialization phase only
 	// The responseRecorder returned does its own synchronization for chunks
 	r.mu.Lock()
@@ -356,7 +356,7 @@ func (r *recorder) RecordUpstreamResponse(statusCode int, headers http.Header) *
 //
 // @note Thread-safe: uses mutex for exclusive access during initialization.
 // @note Returned responseRecorder is NOT thread-safe; use from single goroutine.
-func (r *recorder) RecordDownstreamResponse() *responseRecorder {
+func (r *Recorder) RecordDownstreamResponse() *responseRecorder {
 	// Lock for the initialization phase only
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -383,13 +383,29 @@ func (r *recorder) RecordDownstreamResponse() *responseRecorder {
 //
 // @note Thread-safe: uses mutex for exclusive access.
 // @note Returns direct reference, not a deep copy; caller should not modify.
-func (r *recorder) Data() *RequestRecorder {
+func (r *Recorder) Data() *RequestRecorder {
 	// Lock to ensure consistent read of data
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	// Return the same pointer; caller should treat as read-only
 	return r.data
+}
+
+// SetRequestID sets the request ID in a thread-safe manner.
+//
+// @param id - The request ID to set. May be empty.
+//
+// @pre r != nil
+// @post r.data.RequestID == id
+//
+// @note Thread-safe: uses mutex for exclusive access.
+func (r *Recorder) SetRequestID(id string) {
+	// Lock for exclusive access to data
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.data.RequestID = id
 }
 
 // responseRecorder records SSE chunks for a single response stream.

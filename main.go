@@ -29,10 +29,8 @@ func main() {
 	storage := api.InitStorage(cfg.SSELogDir)
 
 	// Create server with loaded configuration
-	server := api.NewServer(cfg)
-
-	// Attach capture middleware for request/response logging
-	server.Use(api.NewCaptureMiddleware(storage).Handler())
+	// Middleware is added first so it applies to all routes
+	server := api.NewServer(cfg, api.NewCaptureMiddleware(storage).Handler())
 
 	// Build listen address from configured port
 	addr := ":" + cfg.Port

@@ -45,8 +45,8 @@ type CaptureContext struct {
 
 	// Recorder is the data collector for this request lifecycle.
 	// Never nil after NewCaptureContext returns.
-	// Valid values: pointer to initialized RequestRecorder.
-	Recorder *RequestRecorder
+	// Valid values: pointer to initialized Recorder.
+	Recorder *Recorder
 
 	// IDExtracted indicates whether the request ID has been extracted from SSE response.
 	// Prevents duplicate extraction attempts which could cause race conditions.
@@ -55,7 +55,7 @@ type CaptureContext struct {
 }
 
 // NewCaptureContext creates a new CaptureContext initialized with the current time
-// and a new RequestRecorder populated from the incoming HTTP request.
+// and a new Recorder populated from the incoming HTTP request.
 //
 // @param r - The incoming HTTP request. Must not be nil.
 // @return Pointer to newly allocated CaptureContext, never nil.
@@ -74,12 +74,7 @@ func NewCaptureContext(r *http.Request) *CaptureContext {
 	return &CaptureContext{
 		StartTime: time.Now(),
 		// Recorder is created fresh for each request to isolate capture data
-		Recorder: &RequestRecorder{
-			StartedAt: time.Now(),
-			Method:    r.Method,
-			Path:      r.URL.Path,
-			ClientIP:  r.RemoteAddr,
-		},
+		Recorder: NewRecorder("", r.Method, r.URL.Path, r.RemoteAddr),
 		// IDExtracted starts false to indicate ID extraction is pending
 		IDExtracted: false,
 	}
@@ -92,7 +87,7 @@ func NewCaptureContext(r *http.Request) *CaptureContext {
 //
 // @pre cc != nil (receiver must be valid)
 // @post cc.RequestID == id
-// @post cc.Recorder.RequestID == id
+// @post cc.Recorder.data.RequestID == id
 // @post cc.IDExtracted == true
 //
 // @note This method should only be called once per CaptureContext instance.
@@ -102,7 +97,8 @@ func (cc *CaptureContext) SetRequestID(id string) {
 	// Assign to both fields to maintain consistency between context and recorder
 	// This ensures all downstream code can access ID from either location
 	cc.RequestID = id
-	cc.Recorder.RequestID = id
+	// Set the ID in the recorder using thread-safe method
+	cc.Recorder.SetRequestID(id)
 	// Mark as extracted to prevent redundant SSE parsing attempts
 	// SSE parsing is expensive so we want to avoid doing it multiple times
 	cc.IDExtracted = true
@@ -179,7 +175,12 @@ func RecordDownstreamRequest(ctx context.Context, r *http.Request, body []byte) 
 		// This is not an error condition; capture may be disabled
 		return
 	}
-	// Delegate to recorder; actual recording logic is in RequestRecorder
+	// Delegate to recorder; actual recording logic is in Recorder
 	// This separation of concerns keeps this file focused on context management
-	cc.Recorder.RecordDownstreamRequest(r, body)
+	// Pass headers from request (may be nil if request is nil)
+	if r != nil {
+		cc.Recorder.RecordDownstreamRequest(r.Header, body)
+	} else {
+		cc.Recorder.RecordDownstreamRequest(nil, body)
+	}
 }

@@ -553,9 +553,11 @@ func TestFinalizeCapture(t *testing.T) {
 		startTime := time.Now()
 		cc := &capture.CaptureContext{
 			StartTime:   startTime,
-			Recorder:    &capture.RequestRecorder{UpstreamResponse: &capture.SSEResponseCapture{}},
+			Recorder:    capture.NewRecorder("", "POST", "/test", "localhost:8080"),
 			IDExtracted: false,
 		}
+		// Initialize upstream response before finalize (simulates proxy/client.go behavior)
+		cc.Recorder.RecordUpstreamResponse(200, nil)
 		downstream := capture.NewCaptureWriter(startTime)
 		upstream := capture.NewCaptureWriter(startTime)
 
@@ -564,14 +566,14 @@ func TestFinalizeCapture(t *testing.T) {
 
 		finalizeCapture(cc, downstream, upstream)
 
-		if cc.Recorder.DownstreamResponse == nil {
+		if cc.Recorder.Data().DownstreamResponse == nil {
 			t.Error("expected DownstreamResponse to be set")
 		}
-		if cc.Recorder.UpstreamResponse == nil {
+		if cc.Recorder.Data().UpstreamResponse == nil {
 			t.Error("expected UpstreamResponse to be set")
 		}
-		if len(cc.Recorder.UpstreamResponse.Chunks) != 1 {
-			t.Errorf("expected 1 upstream chunk, got %d", len(cc.Recorder.UpstreamResponse.Chunks))
+		if len(cc.Recorder.Data().UpstreamResponse.Chunks) != 1 {
+			t.Errorf("expected 1 upstream chunk, got %d", len(cc.Recorder.Data().UpstreamResponse.Chunks))
 		}
 	})
 
@@ -579,9 +581,11 @@ func TestFinalizeCapture(t *testing.T) {
 		startTime := time.Now()
 		cc := &capture.CaptureContext{
 			StartTime:   startTime,
-			Recorder:    &capture.RequestRecorder{UpstreamResponse: &capture.SSEResponseCapture{}},
+			Recorder:    capture.NewRecorder("", "POST", "/test", "localhost:8080"),
 			IDExtracted: false,
 		}
+		// Initialize upstream response
+		cc.Recorder.RecordUpstreamResponse(200, nil)
 		downstream := capture.NewCaptureWriter(startTime)
 		upstream := capture.NewCaptureWriter(startTime)
 
@@ -598,10 +602,12 @@ func TestFinalizeCapture(t *testing.T) {
 		startTime := time.Now()
 		cc := &capture.CaptureContext{
 			StartTime:   startTime,
-			Recorder:    &capture.RequestRecorder{UpstreamResponse: &capture.SSEResponseCapture{}},
+			Recorder:    capture.NewRecorder("", "POST", "/test", "localhost:8080"),
 			IDExtracted: true,
 			RequestID:   "existing-id",
 		}
+		// Initialize upstream response
+		cc.Recorder.RecordUpstreamResponse(200, nil)
 		downstream := capture.NewCaptureWriter(startTime)
 		upstream := capture.NewCaptureWriter(startTime)
 
@@ -794,17 +800,19 @@ func TestStreamWithCapture(t *testing.T) {
 	startTime := time.Now()
 	cc := &capture.CaptureContext{
 		StartTime:   startTime,
-		Recorder:    &capture.RequestRecorder{UpstreamResponse: &capture.SSEResponseCapture{}},
+		Recorder:    capture.NewRecorder("", "POST", "/test", "localhost:8080"),
 		IDExtracted: false,
 	}
+	// Initialize upstream response
+	cc.Recorder.RecordUpstreamResponse(200, nil)
 	h := &mockHandler{}
 
 	streamWithCapture(c, reader, h, cc)
 
-	if cc.Recorder.DownstreamResponse == nil {
+	if cc.Recorder.Data().DownstreamResponse == nil {
 		t.Error("expected DownstreamResponse to be set")
 	}
-	if len(cc.Recorder.UpstreamResponse.Chunks) == 0 {
+	if len(cc.Recorder.Data().UpstreamResponse.Chunks) == 0 {
 		t.Error("expected upstream chunks to be recorded")
 	}
 }
@@ -833,7 +841,7 @@ func TestHandle_WithCaptureContext(t *testing.T) {
 
 	Handle(h)(c)
 
-	if cc.Recorder.DownstreamResponse == nil {
+	if cc.Recorder.Data().DownstreamResponse == nil {
 		t.Error("expected DownstreamResponse to be set")
 	}
 }

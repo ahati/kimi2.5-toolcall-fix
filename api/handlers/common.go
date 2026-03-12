@@ -322,14 +322,24 @@ func recordUpstreamEvent(w capture.CaptureWriter, ev sse.Event) {
 // @post cc.RequestID is set if found in SSE stream.
 func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.CaptureWriter) {
 	// Record downstream response (transformed events sent to client)
-	cc.Recorder.DownstreamResponse = &capture.SSEResponseCapture{
-		Chunks: downstream.Chunks(),
+	// Use thread-safe method instead of direct field access
+	downstreamRecorder := cc.Recorder.RecordDownstreamResponse()
+	// Transfer captured chunks to the response recorder
+	for _, chunk := range downstream.Chunks() {
+		downstreamRecorder.RecordChunk(chunk.Event, string(chunk.Data))
 	}
 
 	// Record upstream response (original events from upstream)
 	// May be nil if upstream request failed before response
-	if cc.Recorder.UpstreamResponse != nil {
-		cc.Recorder.UpstreamResponse.Chunks = upstream.Chunks()
+	if cc.Recorder.Data().UpstreamResponse != nil {
+		upstreamRecorder := cc.Recorder.RecordUpstreamResponse(
+			cc.Recorder.Data().UpstreamResponse.StatusCode,
+			nil, // Headers already captured during proxy request
+		)
+		// Transfer captured chunks to the response recorder
+		for _, chunk := range upstream.Chunks() {
+			upstreamRecorder.RecordChunk(chunk.Event, string(chunk.Data))
+		}
 	}
 
 	// Extract request ID from SSE stream if not already found

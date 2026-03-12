@@ -131,11 +131,11 @@ func TestBuildRequest_WithCaptureContext(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cc.Recorder.UpstreamRequest == nil {
+	if cc.Recorder.Data().UpstreamRequest == nil {
 		t.Error("expected UpstreamRequest to be set in capture context")
 	}
-	if string(cc.Recorder.UpstreamRequest.Body) != `{"model":"gpt-4"}` {
-		t.Errorf("expected body to be recorded, got %s", cc.Recorder.UpstreamRequest.Body)
+	if string(cc.Recorder.Data().UpstreamRequest.Body) != `{"model":"gpt-4"}` {
+		t.Errorf("expected body to be recorded, got %s", cc.Recorder.Data().UpstreamRequest.Body)
 	}
 }
 
@@ -160,17 +160,17 @@ func TestSetHeaders_WithCaptureContext(t *testing.T) {
 	client := NewClient("https://api.example.com", "secret-key")
 	httpReq := httptest.NewRequest("POST", "/test", nil)
 	cc := capture.NewCaptureContext(httpReq)
-	cc.Recorder.UpstreamRequest = &capture.HTTPRequestCapture{}
+	cc.Recorder.Data().UpstreamRequest = &capture.HTTPRequestCapture{}
 	ctx := capture.WithCaptureContext(context.Background(), cc)
 	req := httptest.NewRequest("POST", "/test", nil).WithContext(ctx)
 
 	client.SetHeaders(req)
 
-	if cc.Recorder.UpstreamRequest.Headers == nil {
+	if cc.Recorder.Data().UpstreamRequest.Headers == nil {
 		t.Error("expected headers to be recorded in capture context")
 	}
-	if cc.Recorder.UpstreamRequest.Headers["Authorization"] != "***" {
-		t.Errorf("expected Authorization to be sanitized, got %v", cc.Recorder.UpstreamRequest.Headers["Authorization"])
+	if cc.Recorder.Data().UpstreamRequest.Headers["Authorization"] != "***" {
+		t.Errorf("expected Authorization to be sanitized, got %v", cc.Recorder.Data().UpstreamRequest.Headers["Authorization"])
 	}
 }
 
@@ -227,11 +227,11 @@ func TestDo_WithCaptureContext(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if cc.Recorder.UpstreamResponse == nil {
+	if cc.Recorder.Data().UpstreamResponse == nil {
 		t.Error("expected UpstreamResponse to be set in capture context")
 	}
-	if cc.Recorder.UpstreamResponse.StatusCode != http.StatusOK {
-		t.Errorf("expected status 200, got %d", cc.Recorder.UpstreamResponse.StatusCode)
+	if cc.Recorder.Data().UpstreamResponse.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200, got %d", cc.Recorder.Data().UpstreamResponse.StatusCode)
 	}
 }
 

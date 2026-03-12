@@ -4,8 +4,6 @@
 //
 // Thread Safety:
 //   - Storage is NOT thread-safe for Write operations; use external synchronization
-//   - globalStorage is initialized once at startup via InitStorage
-//   - InitStorage should only be called once (not thread-safe for initialization)
 package capture
 
 import (
@@ -47,48 +45,6 @@ type Storage struct {
 	baseDir string
 }
 
-// globalStorage is the singleton storage instance initialized via InitStorage.
-// It provides a default storage location for the application.
-//
-// Thread Safety: NOT thread-safe for initialization. InitStorage should be called once at startup.
-// After initialization, GetStorage returns a pointer that should be treated as read-only.
-var globalStorage *Storage
-
-// InitStorage initializes the global storage instance with the given base directory.
-// If baseDir is empty, no storage is initialized (globalStorage remains nil).
-//
-// @param baseDir - Root directory for log files. Empty string disables storage.
-//
-// @pre Should only be called once at application startup
-// @post If baseDir != "", globalStorage != nil
-// @post If baseDir == "", globalStorage == nil
-//
-// @note NOT thread-safe: should be called before any concurrent access.
-// @note Empty baseDir is valid and disables persistence.
-func InitStorage(baseDir string) {
-	// Only initialize if baseDir is provided
-	// Empty baseDir is valid and results in no storage (disabled persistence)
-	if baseDir != "" {
-		globalStorage = NewStorage(baseDir)
-	}
-}
-
-// GetStorage returns the global storage instance, or nil if not initialized.
-//
-// @return Global Storage instance, or nil if InitStorage was not called or called with empty string.
-//
-// @pre None
-// @post Returns nil if storage not initialized
-// @post Returns valid Storage pointer if initialized
-//
-// @note Thread-safe for reading the pointer, but returned Storage is not thread-safe.
-// @note Callers should check for nil before using.
-func GetStorage() *Storage {
-	// Return the global instance; may be nil if not initialized
-	// Callers must check for nil before using
-	return globalStorage
-}
-
 // NewStorage creates a new Storage instance with the given base directory.
 //
 // @param baseDir - Root directory for log files. May be empty (Write will fail).
@@ -123,7 +79,10 @@ func NewStorage(baseDir string) *Storage {
 // @note NOT thread-safe: concurrent writes may race on file creation.
 // @note Uses O_EXCL to prevent overwriting existing files.
 // @note If file exists, appends "_1" suffix to filename.
-func (s *Storage) Write(recorder *RequestRecorder) error {
+func (s *Storage) Write(recorder *Recorder) error {
+	// Get the underlying RequestRecorder data through thread-safe method
+	data := recorder.Data()
+
 	// Determine the date-based subdirectory for organization
 	// Using date subdirectories prevents a single directory from growing too large
 	dir := s.logDir()
@@ -134,19 +93,19 @@ func (s *Storage) Write(recorder *RequestRecorder) error {
 	}
 
 	// Generate filename from timestamp and request ID
-	filename := s.filename(recorder.RequestID)
+	filename := s.filename(data.RequestID)
 	fullpath := filepath.Join(dir, filename)
 
 	// Check if file already exists to prevent overwrite
 	// This handles the rare case of same-second same-ID requests
 	if _, err := os.Stat(fullpath); err == nil {
 		// File exists; use suffixed filename to avoid collision
-		filename = s.filenameWithTimestamp(recorder.RequestID)
+		filename = s.filenameWithTimestamp(data.RequestID)
 		fullpath = filepath.Join(dir, filename)
 	}
 
 	// Serialize recorder data to JSON-compatible struct
-	data := s.serialize(recorder)
+	logData := s.serialize(data)
 
 	// Create file with O_EXCL to atomically prevent overwrites
 	// This is a safety measure in case the Stat check above raced
@@ -162,7 +121,7 @@ func (s *Storage) Write(recorder *RequestRecorder) error {
 	// Indentation makes logs human-readable for debugging
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(data); err != nil {
+	if err := encoder.Encode(logData); err != nil {
 		return fmt.Errorf("encode log data: %w", err)
 	}
 

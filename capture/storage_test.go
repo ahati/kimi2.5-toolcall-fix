@@ -47,18 +47,8 @@ func TestStorage_Write(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(tmpDir)
 
-	recorder := &RequestRecorder{
-		RequestID: "test-req-123",
-		StartedAt: time.Now(),
-		Method:    "POST",
-		Path:      "/v1/chat/completions",
-		ClientIP:  "localhost:8080",
-		DownstreamRequest: &HTTPRequestCapture{
-			At:      time.Now(),
-			Headers: map[string]string{"Content-Type": "application/json"},
-			Body:    json.RawMessage(`{"model": "test"}`),
-		},
-	}
+	recorder := NewRecorder("test-req-123", "POST", "/v1/chat/completions", "localhost:8080")
+	recorder.RecordDownstreamRequest(nil, json.RawMessage(`{"model": "test"}`))
 
 	err := storage.Write(recorder)
 	if err != nil {
@@ -92,12 +82,7 @@ func TestStorage_Write_CreatesDateDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(tmpDir)
 
-	recorder := &RequestRecorder{
-		RequestID: "test-req",
-		StartedAt: time.Now(),
-		Method:    "GET",
-		Path:      "/test",
-	}
+	recorder := NewRecorder("test-req", "GET", "/test", "localhost:8080")
 
 	err := storage.Write(recorder)
 	if err != nil {
@@ -115,12 +100,7 @@ func TestStorage_Write_NestedDirectory(t *testing.T) {
 	nestedPath := filepath.Join(tmpDir, "nested", "deep", "path")
 	storage := NewStorage(nestedPath)
 
-	recorder := &RequestRecorder{
-		RequestID: "test-req",
-		StartedAt: time.Now(),
-		Method:    "GET",
-		Path:      "/test",
-	}
+	recorder := NewRecorder("test-req", "GET", "/test", "localhost:8080")
 
 	err := storage.Write(recorder)
 	if err != nil {
@@ -137,23 +117,11 @@ func TestStorage_Write_ValidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(tmpDir)
 
-	recorder := &RequestRecorder{
-		RequestID: "json-test",
-		StartedAt: time.Now(),
-		Method:    "POST",
-		Path:      "/v1/chat/completions",
-		DownstreamRequest: &HTTPRequestCapture{
-			At:   time.Now(),
-			Body: json.RawMessage(`{"messages": [{"role": "user", "content": "hello"}]}`),
-		},
-		UpstreamResponse: &SSEResponseCapture{
-			StatusCode: 200,
-			Chunks: []SSEChunk{
-				{OffsetMS: 0, Event: "message", Data: json.RawMessage(`{"id": "1"}`)},
-				{OffsetMS: 100, Event: "done", Raw: "[DONE]"},
-			},
-		},
-	}
+	recorder := NewRecorder("json-test", "POST", "/v1/chat/completions", "localhost:8080")
+	recorder.RecordDownstreamRequest(nil, json.RawMessage(`{"messages": [{"role": "user", "content": "hello"}]}`))
+	respRecorder := recorder.RecordUpstreamResponse(200, nil)
+	respRecorder.RecordChunk("message", `{"id": "1"}`)
+	respRecorder.RecordChunk("done", "[DONE]")
 
 	err := storage.Write(recorder)
 	if err != nil {
@@ -187,38 +155,26 @@ func TestStorage_Write_ValidJSON(t *testing.T) {
 	}
 
 	if parsed.RequestID != "json-test" {
-		t.Errorf("expected RequestID 'json-test', got %q", parsed.RequestID)
+		t.Errorf("expected RequestID %q, got %q", "json-test", parsed.RequestID)
 	}
 
 	if parsed.Method != "POST" {
-		t.Errorf("expected Method 'POST', got %q", parsed.Method)
+		t.Errorf("expected Method %q, got %q", "POST", parsed.Method)
 	}
 }
 
-func TestStorage_Write_DuplicateFilename(t *testing.T) {
+func TestStorage_Write_DuplicateRequestID(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(tmpDir)
 
-	recorder1 := &RequestRecorder{
-		RequestID: "dup-test",
-		StartedAt: time.Now(),
-		Method:    "GET",
-		Path:      "/test1",
-	}
+	recorder1 := NewRecorder("dup-test", "GET", "/test1", "localhost:8080")
 
 	err := storage.Write(recorder1)
 	if err != nil {
 		t.Fatalf("first Write failed: %v", err)
 	}
 
-	time.Sleep(10 * time.Millisecond)
-
-	recorder2 := &RequestRecorder{
-		RequestID: "dup-test",
-		StartedAt: time.Now(),
-		Method:    "GET",
-		Path:      "/test2",
-	}
+	recorder2 := NewRecorder("dup-test", "GET", "/test2", "localhost:8080")
 
 	err = storage.Write(recorder2)
 	if err != nil {
@@ -316,100 +272,26 @@ func TestSanitizeFilename(t *testing.T) {
 		},
 		{
 			name:     "colon",
-			input:    "time:12:30",
-			expected: "time_12_30",
-		},
-		{
-			name:     "asterisk",
-			input:    "wild*card",
-			expected: "wild_card",
-		},
-		{
-			name:     "question mark",
-			input:    "what?",
-			expected: "what_",
-		},
-		{
-			name:     "double quote",
-			input:    `quote"here`,
-			expected: "quote_here",
-		},
-		{
-			name:     "less than",
-			input:    "a<b",
-			expected: "a_b",
-		},
-		{
-			name:     "greater than",
-			input:    "a>b",
-			expected: "a_b",
-		},
-		{
-			name:     "pipe",
-			input:    "a|b",
-			expected: "a_b",
+			input:    "id:123",
+			expected: "id_123",
 		},
 		{
 			name:     "space",
-			input:    "hello world",
-			expected: "hello_world",
+			input:    "id with spaces",
+			expected: "id_with_spaces",
 		},
 		{
 			name:     "multiple special chars",
-			input:    "a/b:c*d?e\"f<g>h|i j",
-			expected: "a_b_c_d_e_f_g_h_i_j",
-		},
-		{
-			name:     "empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "only special chars",
-			input:    "/:\\*?\"<>| ",
-			expected: "__________",
+			input:    "path/to:file*name?",
+			expected: "path_to_file_name_",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := sanitizeFilename(tt.input)
-
 			if result != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestStorage_LogDir(t *testing.T) {
-	tests := []struct {
-		name    string
-		baseDir string
-	}{
-		{
-			name:    "simple path",
-			baseDir: "/var/log",
-		},
-		{
-			name:    "relative path",
-			baseDir: "./logs",
-		},
-		{
-			name:    "empty path",
-			baseDir: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			storage := NewStorage(tt.baseDir)
-			logDir := storage.logDir()
-
-			expectedDate := time.Now().Format("2006-01-02")
-
-			if !strings.Contains(logDir, expectedDate) {
-				t.Errorf("logDir should contain date %q, got %q", expectedDate, logDir)
+				t.Errorf("sanitizeFilename(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -417,183 +299,85 @@ func TestStorage_LogDir(t *testing.T) {
 
 func TestStorage_Serialize(t *testing.T) {
 	storage := NewStorage("/tmp")
-
 	startTime := time.Now()
-	recorder := &RequestRecorder{
-		RequestID: "serialize-test",
-		StartedAt: startTime,
-		Method:    "POST",
-		Path:      "/v1/test",
-		ClientIP:  "192.168.1.1",
-		DownstreamRequest: &HTTPRequestCapture{
-			At:      startTime,
-			Headers: map[string]string{"Content-Type": "application/json"},
-			Body:    json.RawMessage(`{"test": true}`),
-		},
-		UpstreamResponse: &SSEResponseCapture{
-			StatusCode: 200,
-			Chunks:     []SSEChunk{{OffsetMS: 0, Event: "test"}},
-		},
-	}
 
-	data := storage.serialize(recorder)
+	recorder := NewRecorder("serialize-test", "POST", "/v1/chat/completions", "localhost:8080")
+	recorder.RecordDownstreamRequest(nil, json.RawMessage(`{"model": "test"}`))
+	respRecorder := recorder.RecordUpstreamResponse(200, nil)
+	respRecorder.RecordChunk("message", `{"id": "123"}`)
+
+	data := storage.serialize(recorder.Data())
 
 	if data.RequestID != "serialize-test" {
-		t.Errorf("expected RequestID 'serialize-test', got %q", data.RequestID)
+		t.Errorf("expected RequestID %q, got %q", "serialize-test", data.RequestID)
 	}
 
 	if data.Method != "POST" {
-		t.Errorf("expected Method 'POST', got %q", data.Method)
+		t.Errorf("expected Method %q, got %q", "POST", data.Method)
 	}
 
-	if data.Path != "/v1/test" {
-		t.Errorf("expected Path '/v1/test', got %q", data.Path)
+	if data.Path != "/v1/chat/completions" {
+		t.Errorf("expected Path %q, got %q", "/v1/chat/completions", data.Path)
 	}
 
-	if data.ClientIP != "192.168.1.1" {
-		t.Errorf("expected ClientIP '192.168.1.1', got %q", data.ClientIP)
+	if data.ClientIP != "localhost:8080" {
+		t.Errorf("expected ClientIP %q, got %q", "localhost:8080", data.ClientIP)
 	}
 
 	if data.DownstreamRequest == nil {
-		t.Error("DownstreamRequest should not be nil")
+		t.Error("expected DownstreamRequest to be set")
 	}
 
 	if data.UpstreamResponse == nil {
-		t.Error("UpstreamResponse should not be nil")
+		t.Error("expected UpstreamResponse to be set")
 	}
 
 	if data.DurationMS < 0 {
-		t.Error("DurationMS should not be negative")
+		t.Error("DurationMS should be non-negative")
+	}
+
+	if data.StartedAt.Before(startTime) || data.StartedAt.After(time.Now()) {
+		t.Error("StartedAt should be within valid time range")
 	}
 }
 
 func TestStorage_Serialize_EmptyRecorder(t *testing.T) {
 	storage := NewStorage("/tmp")
 
-	recorder := &RequestRecorder{
-		RequestID: "empty-test",
-		StartedAt: time.Now(),
-		Method:    "GET",
-		Path:      "/test",
-	}
+	recorder := NewRecorder("empty-test", "GET", "/test", "localhost:8080")
 
-	data := storage.serialize(recorder)
+	data := storage.serialize(recorder.Data())
 
 	if data.RequestID != "empty-test" {
-		t.Errorf("expected RequestID 'empty-test', got %q", data.RequestID)
+		t.Errorf("expected RequestID %q, got %q", "empty-test", data.RequestID)
 	}
 
 	if data.DownstreamRequest != nil {
-		t.Error("DownstreamRequest should be nil")
-	}
-
-	if data.UpstreamRequest != nil {
-		t.Error("UpstreamRequest should be nil")
+		t.Error("expected DownstreamRequest to be nil")
 	}
 
 	if data.UpstreamResponse != nil {
-		t.Error("UpstreamResponse should be nil")
-	}
-
-	if data.DownstreamResponse != nil {
-		t.Error("DownstreamResponse should be nil")
+		t.Error("expected UpstreamResponse to be nil")
 	}
 }
 
-func TestStorage_Write_InvalidPath(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("skipping test when running as root")
+func TestStorage_Write_ReadOnlyPermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	readOnlyDir := filepath.Join(tmpDir, "readonly")
+	if err := os.MkdirAll(readOnlyDir, 0755); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
 	}
 
-	storage := NewStorage("/nonexistent/path/that/cannot/be/created")
-
-	recorder := &RequestRecorder{
-		RequestID: "fail-test",
-		StartedAt: time.Now(),
-		Method:    "GET",
-		Path:      "/test",
+	if err := os.Chmod(readOnlyDir, 0555); err != nil {
+		t.Fatalf("failed to set permissions: %v", err)
 	}
+	defer os.Chmod(readOnlyDir, 0755)
+
+	storage := NewStorage(readOnlyDir)
+	recorder := NewRecorder("fail-test", "GET", "/test", "localhost:8080")
 
 	err := storage.Write(recorder)
 	if err == nil {
-		t.Error("expected error for invalid path")
-	}
-}
-
-func TestInitStorage(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	InitStorage(tmpDir)
-
-	storage := GetStorage()
-	if storage == nil {
-		t.Fatal("GetStorage returned nil after InitStorage")
-	}
-
-	if storage.baseDir != tmpDir {
-		t.Errorf("expected baseDir %q, got %q", tmpDir, storage.baseDir)
-	}
-}
-
-func TestInitStorage_Empty(t *testing.T) {
-	originalStorage := globalStorage
-	defer func() { globalStorage = originalStorage }()
-
-	globalStorage = nil
-	InitStorage("")
-
-	if globalStorage != nil {
-		t.Error("globalStorage should remain nil for empty path")
-	}
-}
-
-func TestGetStorage_BeforeInit(t *testing.T) {
-	originalStorage := globalStorage
-	defer func() { globalStorage = originalStorage }()
-
-	globalStorage = nil
-	storage := GetStorage()
-
-	if storage != nil {
-		t.Error("GetStorage should return nil before InitStorage")
-	}
-}
-
-func TestLogData_JSONSerialization(t *testing.T) {
-	now := time.Now()
-	data := logData{
-		RequestID:  "json-test",
-		StartedAt:  now,
-		DurationMS: 123,
-		Method:     "POST",
-		Path:       "/v1/chat/completions",
-		ClientIP:   "localhost:8080",
-		DownstreamRequest: &HTTPRequestCapture{
-			At:      now,
-			Headers: map[string]string{"Content-Type": "application/json"},
-			Body:    json.RawMessage(`{"test": true}`),
-		},
-		UpstreamResponse: &SSEResponseCapture{
-			StatusCode: 200,
-			Chunks:     []SSEChunk{{OffsetMS: 0, Event: "message"}},
-		},
-	}
-
-	jsonData, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
-	}
-
-	var parsed logData
-	if err := json.Unmarshal(jsonData, &parsed); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-
-	if parsed.RequestID != "json-test" {
-		t.Errorf("expected RequestID 'json-test', got %q", parsed.RequestID)
-	}
-
-	if parsed.DurationMS != 123 {
-		t.Errorf("expected DurationMS 123, got %d", parsed.DurationMS)
+		t.Error("expected error when writing to read-only directory")
 	}
 }

@@ -132,11 +132,9 @@ func (c *Client) BuildRequest(ctx context.Context, body []byte) (*http.Request, 
 
 	// Capture the request for debugging if capture context is available
 	if cc := capture.GetCaptureContext(ctx); cc != nil {
-		cc.Recorder.UpstreamRequest = &capture.HTTPRequestCapture{
-			At:      cc.StartTime,
-			Body:    body,
-			RawBody: body,
-		}
+		// Use thread-safe method to record upstream request
+		// Headers will be recorded separately in SetHeaders
+		cc.Recorder.RecordUpstreamRequest(nil, body)
 	}
 
 	return req, nil
@@ -157,8 +155,10 @@ func (c *Client) SetHeaders(req *http.Request) {
 	req.Header.Set("Accept", "text/event-stream") // Required for streaming responses
 
 	// Record headers for debugging, sanitizing sensitive values
-	if cc := capture.GetCaptureContext(req.Context()); cc != nil && cc.Recorder.UpstreamRequest != nil {
-		cc.Recorder.UpstreamRequest.Headers = capture.SanitizeHeaders(req.Header)
+	if cc := capture.GetCaptureContext(req.Context()); cc != nil {
+		// Re-record the request with headers now that they're set
+		// This overwrites the previous recording with complete header information
+		cc.Recorder.RecordUpstreamRequest(req.Header, nil)
 	}
 }
 
@@ -182,11 +182,8 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 	// Initialize response capture structure for SSE chunks
 	if cc := capture.GetCaptureContext(req.Context()); cc != nil {
-		cc.Recorder.UpstreamResponse = &capture.SSEResponseCapture{
-			StatusCode: resp.StatusCode,
-			Headers:    capture.SanitizeHeaders(resp.Header),
-			Chunks:     []capture.SSEChunk{}, // Initialize empty slice for append safety
-		}
+		// Use thread-safe method to record upstream response
+		cc.Recorder.RecordUpstreamResponse(resp.StatusCode, resp.Header)
 	}
 
 	return resp, nil
