@@ -135,14 +135,44 @@ PORT=3000 \
 
 ## Technical Details
 
+### Architecture
+
+The proxy uses a **protocol adapter pattern** for handling different API formats:
+
+```
+┌─────────────┐      ┌──────────────────────┐      ┌────────────────────┐
+│   Client    │ ───▶ │   Unified Handler    │ ───▶ │  Upstream API      │
+│ (OpenAI SDK)│ ◀─── │ + Protocol Adapter   │ ◀─── │ (Kimi-K2.5/K2)     │
+└─────────────┘      └──────────────────────┘      └────────────────────┘
+                              │
+                              ▼
+                     ┌─────────────────┐
+                     │ ToolCallParser  │
+                     │ + OutputFormatter│
+                     └─────────────────┘
+```
+
+### Components
+
+| Package | Purpose |
+|---------|---------|
+| `types/` | Shared type definitions (StreamChunk, Event, ToolCall) |
+| `transform/toolcall/` | Unified parser + format-specific output formatters |
+| `downstream/protocols/` | Protocol adapters (OpenAI, Anthropic, Bridge) |
+| `upstream/` | HTTP client with interface for testing |
+
 ### Tool Call Transformation
 
-The `ToolCallTransformer` implements a 5-state machine (`IDLE → IN_SECTION → READING_ID → READING_ARGS → TRAILING`) that:
+The shared `Parser` implements a state machine that:
 
 1. Buffers incoming reasoning text across SSE chunks
 2. Detects special delimiter tokens
 3. Extracts function name and arguments
-4. Emits properly formatted OpenAI `tool_calls` deltas
+4. Calls output formatter to emit format-specific deltas
+
+Output formatters:
+- **OpenAIOutput**: Emits `tool_calls` deltas in OpenAI format
+- **AnthropicOutput**: Emits `tool_use` content blocks in Anthropic format
 
 ### Supported Special Tokens
 

@@ -1,3 +1,6 @@
+// Package downstream provides HTTP handlers for the proxy's client-facing API endpoints.
+// It implements a unified stream handler that works with protocol adapters to support
+// multiple API formats (OpenAI, Anthropic, Bridge).
 package downstream
 
 import (
@@ -6,9 +9,23 @@ import (
 
 	"ai-proxy/config"
 	"ai-proxy/upstream"
+
 	"github.com/gin-gonic/gin"
 )
 
+// ListModels creates a Gin handler for listing available models from the upstream API.
+//
+// @brief    Creates a handler that proxies model listing requests to the upstream OpenAI API.
+// @param    cfg Application configuration containing upstream URL and API key.
+// @return   Gin handler function for the models listing endpoint.
+//
+// @note     Extracts API key from Authorization header if provided, falls back to config.
+// @note     Constructs models URL by replacing "chat/completions" with "models" in upstream URL.
+// @note     Proxies the response directly without transformation.
+//
+// @pre      cfg must contain valid OpenAIUpstreamURL and OpenAIUpstreamAPIKey.
+// @pre      OpenAIUpstreamURL must end with "chat/completions" for URL construction.
+// @post     Response from upstream is forwarded to client with original status and content-type.
 func ListModels(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
@@ -45,7 +62,7 @@ func ListModels(cfg *config.Config) gin.HandlerFunc {
 
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 
-		resp, err := client.Do(req)
+		resp, err := client.Do(c.Request.Context(), req)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": gin.H{"message": "Upstream request failed", "type": "upstream_error"},

@@ -48,6 +48,7 @@ import (
 
     "ai-proxy/config"
     "ai-proxy/logging"
+    "ai-proxy/types"
 )
 ```
 
@@ -64,7 +65,7 @@ import (
 - **Constants**: `PascalCase` or `camelCase` for unexported
 - **Types/Interfaces**: `PascalCase` (e.g., `Config`)
 - **Packages**: lowercase, short, no underscores (e.g., `ai-proxy`)
-- **Files**: lowercase with underscores (e.g., `completions.go`)
+- **Files**: lowercase with underscores (e.g., `unified_handler.go`)
 - **Exported/Unexported**: Uppercase/lowercase first letter
 - **Acronyms**: Use all caps for acronyms > 2 letters (e.g., `APIKey`)
 
@@ -130,11 +131,32 @@ func readBody(c *gin.Context) ([]byte, error) {
 
 ```
 ai-proxy/
-├── main.go           # Entry point, route setup
-├── config/           # Configuration loading
-├── downstream/       # HTTP handlers (client-facing)
-├── upstream/         # Upstream API client
-└── logging/          # Logging utilities
+├── main.go                    # Entry point, route setup
+├── config/                    # Configuration loading
+├── types/                     # Shared type definitions
+│   ├── openai.go              # OpenAI streaming types
+│   ├── anthropic.go           # Anthropic streaming types
+│   └── common.go              # ToolCall, normalization utilities
+├── downstream/                # HTTP handlers (client-facing)
+│   ├── unified_handler.go     # Unified stream handler
+│   ├── protocols/             # Protocol adapters
+│   │   ├── adapter.go         # ProtocolAdapter interface
+│   │   ├── openai.go          # OpenAI adapter
+│   │   ├── anthropic.go       # Anthropic adapter
+│   │   └── bridge.go          # OpenAI→Anthropic bridge
+│   ├── health.go              # Health check endpoint
+│   ├── models.go              # Models listing
+│   ├── response_recorder.go   # Response capture wrapper
+│   └── sse_capture.go         # SSE capture utilities
+├── transform/                 # Transformation pipeline
+│   └── toolcall/              # Tool call transformation
+│       ├── parser.go          # Shared state machine parser
+│       ├── openai_output.go   # OpenAI output formatter
+│       └── anthropic_output.go# Anthropic output formatter
+├── upstream/                  # Upstream API client
+│   ├── client.go              # HTTPClient + Client interface
+│   └── mock.go                # Mock client for testing
+└── logging/                   # Logging and capture utilities
 ```
 
 ### Git Conventions
@@ -153,17 +175,49 @@ ai-proxy/
 | POST | `/v1/messages` | Native Anthropic messages |
 | POST | `/v1/openai-to-anthropic/messages` | OpenAI→Anthropic bridge |
 
+## Architecture
+
+### Protocol Adapter Pattern
+
+The proxy uses a protocol adapter pattern to handle different API formats:
+
+```go
+type ProtocolAdapter interface {
+    TransformRequest(body []byte) ([]byte, error)
+    ValidateRequest(body []byte) error
+    CreateTransformer(w io.Writer, base types.StreamChunk) *ToolCallTransformer
+    UpstreamURL(cfg *config.Config) string
+    UpstreamAPIKey(cfg *config.Config) string
+    ForwardHeaders(src, dst http.Header)
+    SendError(c *gin.Context, status int, msg string)
+    IsStreamingRequest(body []byte) bool
+}
+```
+
+### Tool Call Transformation
+
+Tool calls are transformed using a shared parser with format-specific output formatters:
+
+1. **Parser** (`transform/toolcall/parser.go`): State machine that extracts tool calls from special tokens
+2. **OpenAI Output** (`transform/toolcall/openai_output.go`): Emits OpenAI-format `tool_calls` deltas
+3. **Anthropic Output** (`transform/toolcall/anthropic_output.go`): Emits Anthropic-format `tool_use` content blocks
+
 ## Common Tasks
 
 ### Adding a new endpoint
 
-1. Add handler in `downstream/`
-2. Register route in `main.go`
+1. Create a new protocol adapter in `downstream/protocols/`
+2. Register route in `main.go` using `StreamHandler(cfg, adapter)`
+
+### Adding a new output format
+
+1. Create a new output formatter implementing `toolcall.EventHandler`
+2. Create a new protocol adapter that uses the formatter
 
 ### Modifying SSE handling
 
 - SSE parsing via `github.com/tmaxmax/go-sse`
-- Use `sse.Read()` in `downstream/completions.go`
+- Use `sse.Read()` in `downstream/unified_handler.go`
 
 ## Testing
 
@@ -281,5 +335,3 @@ cat test_logs/$(date +%Y-%m-%d)/*.json
 - Headers (sanitized - auth masked)
 - Body (parsed JSON)
 - SSE chunks (structured JSON in `data` field, raw string in `raw` if invalid)
-
-

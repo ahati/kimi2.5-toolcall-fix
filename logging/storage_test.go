@@ -142,3 +142,33 @@ func containsStrInStorage(s, substr string) bool {
 	}
 	return false
 }
+
+func TestStorage_WriteExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage := NewStorage(tmpDir)
+
+	recorder := &RequestRecorder{
+		RequestID: "duplicate-id",
+		StartedAt: time.Now(),
+		Method:    "POST",
+		Path:      "/test",
+		ClientIP:  "127.0.0.1",
+	}
+
+	err := storage.Write(recorder)
+	if err != nil {
+		t.Fatalf("First write failed: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	err = storage.Write(recorder)
+	if err != nil {
+		t.Fatalf("Second write failed: %v", err)
+	}
+
+	files, _ := filepath.Glob(filepath.Join(tmpDir, "*", "*duplicate-id*.json"))
+	if len(files) != 2 {
+		t.Errorf("Expected 2 files, got %d", len(files))
+	}
+}

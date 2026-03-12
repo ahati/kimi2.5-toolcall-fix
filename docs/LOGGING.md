@@ -208,8 +208,8 @@ logs/
 | Gin Router | Middleware | Create `CaptureContext`, attach to request context, record downstream request headers/body |
 | upstream/client.go | Method parameter | Accept `CaptureContext`, record upstream request before sending |
 | upstream/client.go | Response wrapping | Wrap `resp.Body` with `CapturingReader`, record SSE chunks as read |
-| downstream/completions.go | Response streaming | Record transformed chunks sent to client |
-| downstream/handler.go | Deferred close | Async flush `RequestRecorder` to disk |
+| downstream/unified_handler.go | Response streaming | Record transformed chunks sent to client |
+| downstream/unified_handler.go | Deferred close | Async flush `RequestRecorder` to disk |
 
 ### Capture Flow
 
@@ -458,25 +458,28 @@ The `ResponseRecorder`:
 
 ### Handlers Using ResponseRecorder
 
-All 3 handlers now use `ResponseRecorder`:
+All endpoints use `ResponseRecorder` via the unified handler:
 
-1. **handler.go** (OpenAI completions)
-   ```go
-   recorder := NewResponseRecorder(c.Writer, &capturedChunks, startTime)
-   transformer := NewToolCallTransformer(recorder)
-   ```
+**File:** `downstream/unified_handler.go`
 
-2. **anthropic_handler.go** (Anthropic messages)
-   ```go
-   recorder := NewResponseRecorder(c.Writer, &capturedChunks, startTime)
-   transformer := NewAnthropicToolCallTransformer(recorder)
-   ```
+```go
+recorder := NewResponseRecorder(c.Writer, downstreamCapture)
+transformer := adapter.CreateTransformer(recorder, types.StreamChunk{})
+```
 
-3. **openai_to_anthropic_handler.go** (Bridge)
-   ```go
-   recorder := NewResponseRecorder(c.Writer, &capturedChunks, startTime)
-   transformer := NewOpenAIToAnthropicTransformer(recorder)
-   ```
+The `ResponseRecorder`:
+1. Wraps the HTTP response writer
+2. Captures all bytes written to response
+3. Parses SSE format to extract event type and data
+4. Stores chunks for logging
+
+### Protocol Adapters
+
+The unified handler works with all protocol adapters:
+
+1. **OpenAIAdapter** - OpenAI format (`/v1/chat/completions`)
+2. **AnthropicAdapter** - Anthropic format (`/v1/messages`)
+3. **BridgeAdapter** - OpenAI→Anthropic bridge (`/v1/openai-to-anthropic/messages`)
 
 ## Error Handling
 
