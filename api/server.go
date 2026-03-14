@@ -95,7 +95,7 @@ func (s *Server) setupRoutes() {
 
 	// Chat completions endpoint - primary OpenAI-compatible endpoint
 	// for streaming chat completions with tool call support.
-	s.router.POST("/v1/chat/completions", handlers.NewCompletionsHandler(s.config))
+	s.router.POST("/v1/chat/completions", handlers.NewCompletionsHandler(s.config, s.modelRouter))
 
 	// Messages endpoint - native Anthropic API format endpoint
 	// for streaming messages with tool call support.
@@ -107,7 +107,7 @@ func (s *Server) setupRoutes() {
 
 	// Bridge endpoint - converts Anthropic format requests to OpenAI format
 	// before forwarding to upstream, then converts responses back to Anthropic format.
-	s.router.POST("/v1/openai-to-anthropic/messages", handlers.NewBridgeHandler(s.config))
+	s.router.POST("/v1/openai-to-anthropic/messages", handlers.NewBridgeHandler(s.config, s.modelRouter))
 
 	// Anthropic-to-OpenAI Responses endpoint - converts OpenAI Responses API format requests
 	// to Anthropic format before forwarding to upstream, then converts responses back to

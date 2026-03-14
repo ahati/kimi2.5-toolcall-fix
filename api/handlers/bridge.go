@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"ai-proxy/config"
+	"ai-proxy/router"
 	"ai-proxy/transform"
 	"ai-proxy/transform/toolcall"
 	"ai-proxy/types"
@@ -29,29 +30,63 @@ type BridgeHandler struct {
 	// cfg contains the application configuration including upstream URL and API key.
 	// Must not be nil after construction.
 	cfg *config.Config
+	// router resolves model names to providers. May be nil for legacy behavior.
+	modelRouter router.Router
+	// route is the resolved route for the current request.
+	route *router.ResolvedRoute
+	// resolvedModel is the model name to use in the transformed request.
+	resolvedModel string
 }
 
 // NewBridgeHandler creates a Gin handler for the /v1/openai-to-anthropic/messages endpoint.
 //
 // @param cfg - Application configuration. Must not be nil.
+// @param r - Router for model resolution. May be nil for legacy behavior.
 // @return Gin handler function that processes bridge requests.
 //
 // @pre cfg != nil
-// @pre cfg.OpenAIUpstreamURL != ""
-// @pre cfg.OpenAIUpstreamAPIKey != "" (or valid Authorization header expected)
-func NewBridgeHandler(cfg *config.Config) gin.HandlerFunc {
-	return Handle(&BridgeHandler{cfg: cfg})
+func NewBridgeHandler(cfg *config.Config, r router.Router) gin.HandlerFunc {
+	return Handle(&BridgeHandler{
+		cfg:         cfg,
+		modelRouter: r,
+	})
 }
 
-// ValidateRequest performs no additional validation for bridge requests.
-// The Anthropic format request will be validated during transformation.
+// ValidateRequest validates the request and resolves the model route.
 //
-// @param body - Raw request body bytes (unused).
-// @return Always returns nil (no validation performed).
-//
-// @note Validation happens during TransformRequest to avoid double parsing.
+// @param body - Raw request body bytes.
+// @return Error if JSON parsing fails or model cannot be resolved.
 func (h *BridgeHandler) ValidateRequest(body []byte) error {
-	// No validation - transformation will validate during JSON parsing
+	// If no router, use legacy behavior
+	if h.modelRouter == nil {
+		return nil
+	}
+
+	// Parse to get model name
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil // Let transformation handle invalid JSON
+	}
+
+	if req.Model == "" {
+		return nil // Let upstream handle missing model
+	}
+
+	// Resolve the model to a route
+	route, err := h.modelRouter.Resolve(req.Model)
+	if err != nil {
+		return nil // Use fallback behavior
+	}
+
+	// Only accept OpenAI providers for this bridge endpoint
+	if route.Provider.Type != "openai" {
+		return nil // Fall back to legacy behavior
+	}
+
+	h.route = route
+	h.resolvedModel = route.Model
 	return nil
 }
 
@@ -65,27 +100,48 @@ func (h *BridgeHandler) ValidateRequest(body []byte) error {
 // @pre body is valid JSON.
 // @post Returned body is valid OpenAI ChatCompletion format.
 func (h *BridgeHandler) TransformRequest(body []byte) ([]byte, error) {
-	return transformRequest(body)
+	transformed, err := transformRequest(body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update model if route was resolved
+	if h.resolvedModel != "" {
+		var req map[string]interface{}
+		if err := json.Unmarshal(transformed, &req); err != nil {
+			return transformed, nil
+		}
+		req["model"] = h.resolvedModel
+		return json.Marshal(req)
+	}
+
+	return transformed, nil
 }
 
 // UpstreamURL returns the OpenAI-compatible upstream API URL.
-// The bridge sends requests to an OpenAI-compatible API after transformation.
+// Uses the resolved provider URL if available, otherwise falls back to config.
 //
-// @return URL string from configuration for the OpenAI-compatible upstream.
-//
-// @pre h.cfg != nil
+// @return URL string for the OpenAI-compatible upstream.
 func (h *BridgeHandler) UpstreamURL() string {
+	if h.route != nil {
+		url := h.route.Provider.BaseURL
+		if !strings.HasSuffix(url, "/chat/completions") {
+			url = strings.TrimSuffix(url, "/") + "/chat/completions"
+		}
+		return url
+	}
 	return h.cfg.GetOpenAIUpstreamURL()
 }
 
-// ResolveAPIKey returns the configured OpenAI upstream API key.
-// The bridge uses OpenAI authentication after transforming the request.
+// ResolveAPIKey returns the API key for the upstream.
+// Uses the resolved provider key if available, otherwise falls back to config.
 //
 // @param c - Gin context (unused in this implementation).
-// @return API key string from configuration.
-//
-// @pre h.cfg != nil
+// @return API key string.
 func (h *BridgeHandler) ResolveAPIKey(c *gin.Context) string {
+	if h.route != nil {
+		return h.route.Provider.GetAPIKey()
+	}
 	return h.cfg.GetOpenAIUpstreamAPIKey()
 }
 

@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 
 	"ai-proxy/config"
+	"ai-proxy/router"
 	"ai-proxy/transform"
 	"ai-proxy/transform/toolcall"
 
@@ -18,7 +20,7 @@ import (
 //
 // This handler:
 //   - Accepts requests in OpenAI ChatCompletion format
-//   - Passes through requests without transformation (upstream is OpenAI-compatible)
+//   - Routes to the appropriate upstream based on model configuration
 //   - Returns responses in OpenAI format
 //   - Supports streaming responses with tool call handling
 //
@@ -27,6 +29,10 @@ type CompletionsHandler struct {
 	// cfg contains the application configuration including upstream URL and API key.
 	// Must not be nil after construction.
 	cfg *config.Config
+	// router resolves model names to providers. May be nil for legacy behavior.
+	modelRouter router.Router
+	// route is the resolved route for the current request.
+	route *router.ResolvedRoute
 }
 
 // NewCompletionsHandler creates a Gin handler for the /v1/chat/completions endpoint.
@@ -35,58 +41,94 @@ type CompletionsHandler struct {
 // @return Gin handler function that processes completion requests.
 //
 // @pre cfg != nil
-// @pre cfg.OpenAIUpstreamURL != ""
-// @pre cfg.OpenAIUpstreamAPIKey != "" (or valid Authorization header expected)
-func NewCompletionsHandler(cfg *config.Config) gin.HandlerFunc {
-	return Handle(&CompletionsHandler{cfg: cfg})
+func NewCompletionsHandler(cfg *config.Config, r router.Router) gin.HandlerFunc {
+	return Handle(&CompletionsHandler{
+		cfg:         cfg,
+		modelRouter: r,
+	})
 }
 
-// ValidateRequest performs no additional validation for completions requests.
-// OpenAI format requests are passed through as-is for upstream validation.
+// ValidateRequest validates the request and resolves the model route.
+// It parses the request to extract the model name and resolves it to a provider.
 //
-// @param body - Raw request body bytes (unused).
-// @return Always returns nil (no validation performed).
-//
-// @note This implementation trusts the client to send valid OpenAI format.
-// @note Upstream API will reject invalid requests.
+// @param body - Raw request body bytes.
+// @return Error if JSON parsing fails or model cannot be resolved.
 func (h *CompletionsHandler) ValidateRequest(body []byte) error {
-	// No validation - pass through to upstream for validation
-	// This allows the proxy to be transparent and let upstream handle errors
+	// If no router, use legacy behavior
+	if h.modelRouter == nil {
+		return nil
+	}
+
+	// Parse to get model name
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil // Let upstream handle invalid JSON
+	}
+
+	if req.Model == "" {
+		return nil // Let upstream handle missing model
+	}
+
+	// Resolve the model to a route
+	route, err := h.modelRouter.Resolve(req.Model)
+	if err != nil {
+		return nil // Use fallback behavior
+	}
+
+	// Only accept OpenAI providers for this endpoint
+	if route.Provider.Type != "openai" {
+		return nil // Fall back to legacy behavior
+	}
+
+	h.route = route
 	return nil
 }
 
-// TransformRequest returns the body unchanged as OpenAI format is used directly.
-// The upstream API expects OpenAI format, so no transformation is needed.
+// TransformRequest updates the model name if a route was resolved.
 //
 // @param body - Raw request body in OpenAI ChatCompletion format.
-// @return The same body bytes unchanged.
-// @return Always nil error (no transformation can fail).
-//
-// @post Returned body is identical to input body.
+// @return The body with updated model name if resolved.
 func (h *CompletionsHandler) TransformRequest(body []byte) ([]byte, error) {
-	// Pass through without transformation - upstream is OpenAI-compatible
-	return body, nil
+	// If no route resolved, pass through
+	if h.route == nil {
+		return body, nil
+	}
+
+	// Update model name in request
+	var req map[string]interface{}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body, nil
+	}
+	req["model"] = h.route.Model
+	return json.Marshal(req)
 }
 
-// UpstreamURL returns the OpenAI-compatible upstream API URL.
+// UpstreamURL returns the upstream API URL.
+// Uses the resolved provider URL if available, otherwise falls back to config.
 //
-// @return URL string from configuration for the OpenAI-compatible upstream.
-//
-// @pre h.cfg != nil
-// @post URL includes the full path to the chat completions endpoint.
+// @return URL string for the upstream API endpoint.
 func (h *CompletionsHandler) UpstreamURL() string {
+	if h.route != nil {
+		url := h.route.Provider.BaseURL
+		if !strings.HasSuffix(url, "/chat/completions") {
+			url = strings.TrimSuffix(url, "/") + "/chat/completions"
+		}
+		return url
+	}
 	return h.cfg.GetOpenAIUpstreamURL()
 }
 
-// ResolveAPIKey returns the configured OpenAI upstream API key.
-// This key is used for authentication with the upstream API.
+// ResolveAPIKey returns the API key for the upstream.
+// Uses the resolved provider key if available, otherwise falls back to config.
 //
 // @param c - Gin context (unused in this implementation).
-// @return API key string from configuration.
-//
-// @pre h.cfg != nil
-// @note This implementation uses configured key, not per-request key.
+// @return API key string.
 func (h *CompletionsHandler) ResolveAPIKey(c *gin.Context) string {
+	if h.route != nil {
+		return h.route.Provider.GetAPIKey()
+	}
 	return h.cfg.GetOpenAIUpstreamAPIKey()
 }
 

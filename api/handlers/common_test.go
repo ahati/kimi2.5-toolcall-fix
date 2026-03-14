@@ -652,7 +652,7 @@ func TestNewCompletionsHandler(t *testing.T) {
 		},
 	}
 
-	handler := NewCompletionsHandler(cfg)
+	handler := NewCompletionsHandler(cfg, nil)
 	if handler == nil {
 		t.Error("expected non-nil handler")
 	}
@@ -692,7 +692,7 @@ func TestNewBridgeHandler(t *testing.T) {
 		},
 	}
 
-	handler := NewBridgeHandler(cfg)
+	handler := NewBridgeHandler(cfg, nil)
 	if handler == nil {
 		t.Error("expected non-nil handler")
 	}
