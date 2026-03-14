@@ -76,7 +76,11 @@ func (h *AnthropicToOpenAIHandler) TransformRequest(body []byte) ([]byte, error)
 //
 // @return URL string from configuration for the Anthropic upstream.
 func (h *AnthropicToOpenAIHandler) UpstreamURL() string {
-	return h.cfg.AnthropicUpstreamURL
+	provider, ok := h.cfg.GetAnthropicProvider()
+	if !ok {
+		return ""
+	}
+	return provider.BaseURL
 }
 
 // ResolveAPIKey returns the configured Anthropic upstream API key.
@@ -85,7 +89,11 @@ func (h *AnthropicToOpenAIHandler) UpstreamURL() string {
 // @param c - Gin context (unused in this implementation).
 // @return API key string from configuration.
 func (h *AnthropicToOpenAIHandler) ResolveAPIKey(c *gin.Context) string {
-	return h.cfg.AnthropicAPIKey
+	provider, ok := h.cfg.GetAnthropicProvider()
+	if !ok {
+		return ""
+	}
+	return provider.GetAPIKey()
 }
 
 // ForwardHeaders copies X-*, Anthropic-Version, and Anthropic-Beta headers to the upstream request.

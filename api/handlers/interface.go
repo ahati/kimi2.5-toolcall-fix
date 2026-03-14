@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"ai-proxy/router"
 	"ai-proxy/transform"
 
 	"github.com/gin-gonic/gin"
@@ -99,4 +100,14 @@ type Handler interface {
 	// @pre c != nil and response has not been written yet.
 	// @post Response has been fully written; no further writes should occur.
 	WriteError(c *gin.Context, status int, msg string)
+}
+
+type RoutingHandler interface {
+	Handler
+	ExtractModel(body []byte) (string, error)
+	TransformRequestWithRoute(body []byte, route *router.ResolvedRoute) ([]byte, error)
+	UpstreamURLWithRoute(route *router.ResolvedRoute) string
+	ResolveAPIKeyWithRoute(route *router.ResolvedRoute) string
+	ForwardHeadersWithRoute(c *gin.Context, req *http.Request, route *router.ResolvedRoute)
+	CreateTransformerWithRoute(w io.Writer, route *router.ResolvedRoute) transform.SSETransformer
 }

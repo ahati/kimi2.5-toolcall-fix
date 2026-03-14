@@ -329,9 +329,7 @@ func TestAnthropicToOpenAIHandler_TransformRequest_NilInput(t *testing.T) {
 
 // TestAnthropicToOpenAIHandler_UpstreamURL tests upstream URL.
 func TestAnthropicToOpenAIHandler_UpstreamURL(t *testing.T) {
-	cfg := &config.Config{
-		AnthropicUpstreamURL: "https://api.anthropic.com/v1/messages",
-	}
+	cfg := config.NewTestConfigWithAnthropic("https://api.anthropic.com/v1/messages", "test-key")
 	handler := &AnthropicToOpenAIHandler{cfg: cfg}
 
 	url := handler.UpstreamURL()
@@ -342,9 +340,7 @@ func TestAnthropicToOpenAIHandler_UpstreamURL(t *testing.T) {
 
 // TestAnthropicToOpenAIHandler_ResolveAPIKey tests API key resolution.
 func TestAnthropicToOpenAIHandler_ResolveAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		AnthropicAPIKey: "test-api-key",
-	}
+	cfg := config.NewTestConfigWithAnthropic("https://api.anthropic.com/v1/messages", "test-api-key")
 	handler := &AnthropicToOpenAIHandler{cfg: cfg}
 
 	// Create a dummy gin context
@@ -359,7 +355,7 @@ func TestAnthropicToOpenAIHandler_ResolveAPIKey(t *testing.T) {
 
 // TestAnthropicToOpenAIHandler_WriteError tests error writing.
 func TestAnthropicToOpenAIHandler_WriteError(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := config.NewTestConfig(nil, nil)
 	handler := &AnthropicToOpenAIHandler{cfg: cfg}
 
 	w := httptest.NewRecorder()
@@ -387,7 +383,7 @@ func TestAnthropicToOpenAIHandler_WriteError(t *testing.T) {
 
 // TestAnthropicToOpenAIHandler_CreateTransformer tests transformer creation.
 func TestAnthropicToOpenAIHandler_CreateTransformer(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := config.NewTestConfig(nil, nil)
 	handler := &AnthropicToOpenAIHandler{cfg: cfg}
 
 	var buf bytes.Buffer
@@ -668,10 +664,7 @@ func TestConvertResponsesTools_NilFunction(t *testing.T) {
 
 // TestNewAnthropicToOpenAIHandler tests handler creation.
 func TestNewAnthropicToOpenAIHandler(t *testing.T) {
-	cfg := &config.Config{
-		AnthropicUpstreamURL: "https://api.anthropic.com/v1/messages",
-		AnthropicAPIKey:      "test-key",
-	}
+	cfg := config.NewTestConfigWithAnthropic("https://api.anthropic.com/v1/messages", "test-key")
 
 	handler := NewAnthropicToOpenAIHandler(cfg)
 

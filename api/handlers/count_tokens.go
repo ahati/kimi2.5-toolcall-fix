@@ -128,8 +128,11 @@ func (h *CountTokensHandler) TransformRequest(body []byte) ([]byte, error) {
 // @pre h.cfg != nil
 // @post URL includes the full path to count_tokens endpoint.
 func (h *CountTokensHandler) UpstreamURL() string {
-	// Replace /messages with /messages/count_tokens in the base URL
-	baseURL := h.cfg.AnthropicUpstreamURL
+	provider, ok := h.cfg.GetAnthropicProvider()
+	if !ok {
+		return ""
+	}
+	baseURL := provider.BaseURL
 	return strings.Replace(baseURL, "/messages", "/messages/count_tokens", 1)
 }
 
@@ -141,7 +144,11 @@ func (h *CountTokensHandler) UpstreamURL() string {
 //
 // @pre h.cfg != nil
 func (h *CountTokensHandler) ResolveAPIKey(c *gin.Context) string {
-	return h.cfg.AnthropicAPIKey
+	provider, ok := h.cfg.GetAnthropicProvider()
+	if !ok {
+		return ""
+	}
+	return provider.GetAPIKey()
 }
 
 // ForwardHeaders copies X-*, Anthropic-Version, and Anthropic-Beta headers

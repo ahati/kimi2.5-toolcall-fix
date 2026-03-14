@@ -2,6 +2,7 @@ package api
 
 import (
 	"ai-proxy/config"
+	"ai-proxy/router"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,21 @@ import (
 
 func init() {
 	gin.SetMode(gin.TestMode)
+}
+
+func newTestRouterForServer() router.Router {
+	cfg := &config.AppConfig{
+		Providers: []config.Provider{
+			{Name: "test-openai", Type: "openai", BaseURL: "https://api.example.com/v1", APIKey: "test-key"},
+			{Name: "test-anthropic", Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages", APIKey: "test-key"},
+		},
+		Models: map[string]config.ModelConfig{
+			"test-model": {Provider: "test-openai", Model: "gpt-4"},
+		},
+		Fallback: config.FallbackConfig{Enabled: false},
+	}
+	r, _ := router.NewRouter(cfg)
+	return r
 }
 
 func TestNewServer(t *testing.T) {
@@ -27,22 +43,13 @@ func TestNewServer(t *testing.T) {
 			wantMode: gin.TestMode,
 		},
 		{
-			name: "with non-empty port sets release mode",
-			config: &config.Config{
-				Port: "8080",
-			},
+			name:     "with non-empty port sets release mode",
+			config:   config.NewTestConfig(nil, nil),
 			wantMode: gin.ReleaseMode,
 		},
 		{
-			name: "with all config fields",
-			config: &config.Config{
-				OpenAIUpstreamURL:    "https://api.example.com/v1",
-				OpenAIUpstreamAPIKey: "test-key",
-				AnthropicUpstreamURL: "https://api.anthropic.com/v1",
-				AnthropicAPIKey:      "anthropic-key",
-				Port:                 "9090",
-				SSELogDir:            "/tmp/logs",
-			},
+			name:     "with all config fields",
+			config:   config.NewTestConfigWithBoth("https://api.example.com/v1", "test-key", "https://api.anthropic.com/v1", "anthropic-key"),
 			wantMode: gin.ReleaseMode,
 		},
 	}
@@ -53,7 +60,8 @@ func TestNewServer(t *testing.T) {
 				gin.SetMode(gin.DebugMode)
 			}
 
-			server := NewServer(tt.config)
+			r := newTestRouterForServer()
+			server := NewServer(tt.config, r)
 
 			if server == nil {
 				t.Fatal("NewServer returned nil")
@@ -71,11 +79,11 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestServer_setupRoutes(t *testing.T) {
-	cfg := &config.Config{
-		Port: "",
-	}
+	cfg := config.NewTestConfig(nil, nil)
+	cfg.Port = ""
 
-	server := NewServer(cfg)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	routes := server.router.Routes()
 
@@ -107,11 +115,12 @@ func TestServer_setupRoutes(t *testing.T) {
 
 func TestServer_setupRoutes_RouteCount(t *testing.T) {
 	cfg := &config.Config{}
-	server := NewServer(cfg)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	routes := server.router.Routes()
 
-	expectedCount := 7
+	expectedCount := 8
 	if len(routes) != expectedCount {
 		t.Errorf("expected %d routes, got %d", expectedCount, len(routes))
 	}
@@ -121,7 +130,8 @@ func TestServer_Use(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
-	server := NewServer(cfg)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	var middlewareCalled bool
 	server.Use(func(c *gin.Context) {
@@ -146,7 +156,8 @@ func TestServer_Use_MultipleMiddlewares(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
-	server := NewServer(cfg)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	callOrder := []int{}
 	server.Use(
@@ -179,7 +190,8 @@ func TestServer_Use_MultipleMiddlewares(t *testing.T) {
 
 func TestServer_Routes_HealthCheck(t *testing.T) {
 	cfg := &config.Config{}
-	server := NewServer(cfg)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -191,8 +203,9 @@ func TestServer_Routes_HealthCheck(t *testing.T) {
 }
 
 func TestServer_Routes_Models(t *testing.T) {
-	cfg := &config.Config{}
-	server := NewServer(cfg)
+	cfg := config.NewTestConfig(nil, nil)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -204,10 +217,9 @@ func TestServer_Routes_Models(t *testing.T) {
 }
 
 func TestServer_Routes_Models_WithAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "test-key",
-	}
-	server := NewServer(cfg)
+	cfg := config.NewTestConfigWithOpenAI("https://api.example.com/v1", "test-key")
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -220,8 +232,9 @@ func TestServer_Routes_Models_WithAPIKey(t *testing.T) {
 }
 
 func TestServer_Routes_Completions_InvalidMethod(t *testing.T) {
-	cfg := &config.Config{}
-	server := NewServer(cfg)
+	cfg := config.NewTestConfig(nil, nil)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/chat/completions", nil)
@@ -233,8 +246,9 @@ func TestServer_Routes_Completions_InvalidMethod(t *testing.T) {
 }
 
 func TestServer_Routes_Messages_InvalidMethod(t *testing.T) {
-	cfg := &config.Config{}
-	server := NewServer(cfg)
+	cfg := config.NewTestConfig(nil, nil)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/messages", nil)
@@ -246,8 +260,9 @@ func TestServer_Routes_Messages_InvalidMethod(t *testing.T) {
 }
 
 func TestServer_Routes_Bridge_InvalidMethod(t *testing.T) {
-	cfg := &config.Config{}
-	server := NewServer(cfg)
+	cfg := config.NewTestConfig(nil, nil)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/openai-to-anthropic/messages", nil)
@@ -259,8 +274,9 @@ func TestServer_Routes_Bridge_InvalidMethod(t *testing.T) {
 }
 
 func TestServer_Routes_UnknownPath(t *testing.T) {
-	cfg := &config.Config{}
-	server := NewServer(cfg)
+	cfg := config.NewTestConfig(nil, nil)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/unknown", nil)
@@ -278,12 +294,14 @@ func TestServer_NilConfig(t *testing.T) {
 		}
 	}()
 
-	NewServer(nil)
+	r := newTestRouterForServer()
+	NewServer(nil, r)
 }
 
 func TestServer_Run_InvalidAddress(t *testing.T) {
-	cfg := &config.Config{}
-	server := NewServer(cfg)
+	cfg := config.NewTestConfig(nil, nil)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	err := server.Run(":-1")
 	if err == nil {
@@ -292,8 +310,9 @@ func TestServer_Run_InvalidAddress(t *testing.T) {
 }
 
 func TestServer_Run_ValidAddress(t *testing.T) {
-	cfg := &config.Config{}
-	server := NewServer(cfg)
+	cfg := config.NewTestConfig(nil, nil)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	go func() {
 		_ = server.Run(":0")
@@ -309,20 +328,15 @@ func TestServer_Run_ValidAddress(t *testing.T) {
 }
 
 func TestNewServer_SetsConfigCorrectly(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://upstream.example.com",
-		OpenAIUpstreamAPIKey: "test-api-key",
-		Port:                 "8080",
-	}
+	cfg := config.NewTestConfigWithOpenAI("https://upstream.example.com", "test-api-key")
+	cfg.Port = "8080"
 
-	server := NewServer(cfg)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
-	if server.config.OpenAIUpstreamURL != cfg.OpenAIUpstreamURL {
-		t.Errorf("expected OpenAIUpstreamURL %s, got %s", cfg.OpenAIUpstreamURL, server.config.OpenAIUpstreamURL)
-	}
-
-	if server.config.OpenAIUpstreamAPIKey != cfg.OpenAIUpstreamAPIKey {
-		t.Errorf("expected OpenAIUpstreamAPIKey %s, got %s", cfg.OpenAIUpstreamAPIKey, server.config.OpenAIUpstreamAPIKey)
+	provider, ok := server.config.GetOpenAIProvider()
+	if !ok || provider.BaseURL != "https://upstream.example.com" {
+		t.Errorf("expected OpenAI provider with BaseURL %s", "https://upstream.example.com")
 	}
 
 	if server.config.Port != cfg.Port {
@@ -331,8 +345,9 @@ func TestNewServer_SetsConfigCorrectly(t *testing.T) {
 }
 
 func TestServer_RouterNotNil(t *testing.T) {
-	cfg := &config.Config{}
-	server := NewServer(cfg)
+	cfg := config.NewTestConfig(nil, nil)
+	r := newTestRouterForServer()
+	server := NewServer(cfg, r)
 
 	if server.router == nil {
 		t.Error("router should not be nil")

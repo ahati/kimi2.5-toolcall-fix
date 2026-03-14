@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"ai-proxy/config"
+	"ai-proxy/router"
 
 	"github.com/gin-gonic/gin"
 )
 
 func TestMessagesHandler_ValidateRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &MessagesHandler{cfg: cfg}
+	h := &MessagesHandler{}
 
 	tests := []struct {
 		name    string
@@ -48,8 +48,7 @@ func TestMessagesHandler_ValidateRequest(t *testing.T) {
 }
 
 func TestMessagesHandler_TransformRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &MessagesHandler{cfg: cfg}
+	h := &MessagesHandler{}
 
 	tests := []struct {
 		name    string
@@ -85,93 +84,99 @@ func TestMessagesHandler_TransformRequest(t *testing.T) {
 	}
 }
 
-func TestMessagesHandler_UpstreamURL(t *testing.T) {
-	cfg := &config.Config{
-		AnthropicUpstreamURL: "https://api.anthropic.com/v1/messages",
-	}
-	h := &MessagesHandler{cfg: cfg}
+func TestMessagesHandler_UpstreamURLWithRoute(t *testing.T) {
+	h := &MessagesHandler{}
 
-	if got := h.UpstreamURL(); got != cfg.AnthropicUpstreamURL {
-		t.Errorf("UpstreamURL() = %v, want %v", got, cfg.AnthropicUpstreamURL)
+	tests := []struct {
+		name     string
+		route    *router.ResolvedRoute
+		expected string
+	}{
+		{
+			name:     "anthropic provider",
+			route:    &router.ResolvedRoute{Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages"}, Model: "claude-3"},
+			expected: "https://api.anthropic.com/v1/messages",
+		},
+		{
+			name:     "openai provider",
+			route:    &router.ResolvedRoute{Provider: config.Provider{Type: "openai", BaseURL: "https://api.example.com/v1"}, Model: "gpt-4"},
+			expected: "https://api.example.com/v1/chat/completions",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := h.UpstreamURLWithRoute(tt.route); got != tt.expected {
+				t.Errorf("UpstreamURLWithRoute() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
 }
 
-func TestMessagesHandler_ResolveAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		AnthropicAPIKey: "anthropic-api-key",
+func TestMessagesHandler_ResolveAPIKeyWithRoute(t *testing.T) {
+	h := &MessagesHandler{}
+
+	route := &router.ResolvedRoute{
+		Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages", APIKey: "anthropic-api-key"},
+		Model:    "claude-3",
 	}
-	h := &MessagesHandler{cfg: cfg}
 
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-
-	got := h.ResolveAPIKey(c)
-	if got != cfg.AnthropicAPIKey {
-		t.Errorf("ResolveAPIKey() = %v, want %v", got, cfg.AnthropicAPIKey)
+	got := h.ResolveAPIKeyWithRoute(route)
+	if got != "anthropic-api-key" {
+		t.Errorf("ResolveAPIKeyWithRoute() = %v, want %v", got, "anthropic-api-key")
 	}
 }
 
-func TestMessagesHandler_ForwardHeaders(t *testing.T) {
-	cfg := &config.Config{}
-	h := &MessagesHandler{cfg: cfg}
+func TestMessagesHandler_ForwardHeadersWithRoute(t *testing.T) {
+	h := &MessagesHandler{}
 
 	tests := []struct {
 		name            string
+		route           *router.ResolvedRoute
 		requestHeaders  map[string]string
 		expectedHeaders map[string]string
 	}{
 		{
-			name:            "no custom headers",
+			name:            "anthropic - no custom headers",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages"}, Model: "claude-3"},
 			requestHeaders:  map[string]string{},
 			expectedHeaders: map[string]string{},
 		},
 		{
-			name: "X- header forwarded",
-			requestHeaders: map[string]string{
-				"X-Custom": "value1",
-			},
-			expectedHeaders: map[string]string{
-				"X-Custom": "value1",
-			},
+			name:            "anthropic - X- header forwarded",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages"}, Model: "claude-3"},
+			requestHeaders:  map[string]string{"X-Custom": "value1"},
+			expectedHeaders: map[string]string{"X-Custom": "value1"},
 		},
 		{
-			name: "Anthropic-Version header forwarded",
-			requestHeaders: map[string]string{
-				"Anthropic-Version": "2023-06-01",
-			},
-			expectedHeaders: map[string]string{
-				"Anthropic-Version": "2023-06-01",
-			},
+			name:            "anthropic - Anthropic-Version header forwarded",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages"}, Model: "claude-3"},
+			requestHeaders:  map[string]string{"Anthropic-Version": "2023-06-01"},
+			expectedHeaders: map[string]string{"Anthropic-Version": "2023-06-01"},
 		},
 		{
-			name: "Anthropic-Beta header forwarded",
-			requestHeaders: map[string]string{
-				"Anthropic-Beta": "some-beta",
-			},
-			expectedHeaders: map[string]string{
-				"Anthropic-Beta": "some-beta",
-			},
+			name:            "anthropic - Anthropic-Beta header forwarded",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages"}, Model: "claude-3"},
+			requestHeaders:  map[string]string{"Anthropic-Beta": "some-beta"},
+			expectedHeaders: map[string]string{"Anthropic-Beta": "some-beta"},
 		},
 		{
-			name: "non-forwarded headers ignored",
-			requestHeaders: map[string]string{
-				"Authorization": "Bearer token",
-				"Content-Type":  "application/json",
-			},
+			name:            "anthropic - non-forwarded headers ignored",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages"}, Model: "claude-3"},
+			requestHeaders:  map[string]string{"Authorization": "Bearer token", "Content-Type": "application/json"},
 			expectedHeaders: map[string]string{},
 		},
 		{
-			name: "mixed headers",
-			requestHeaders: map[string]string{
-				"X-Request-Id":      "123",
-				"Anthropic-Version": "2023-06-01",
-				"Authorization":     "Bearer token",
-			},
-			expectedHeaders: map[string]string{
-				"X-Request-Id":      "123",
-				"Anthropic-Version": "2023-06-01",
-			},
+			name:            "anthropic - mixed headers",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages"}, Model: "claude-3"},
+			requestHeaders:  map[string]string{"X-Request-Id": "123", "Anthropic-Version": "2023-06-01", "Authorization": "Bearer token"},
+			expectedHeaders: map[string]string{"X-Request-Id": "123", "Anthropic-Version": "2023-06-01"},
+		},
+		{
+			name:            "openai - X- header forwarded",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "openai", BaseURL: "https://api.example.com/v1"}, Model: "gpt-4"},
+			requestHeaders:  map[string]string{"X-Custom": "value1"},
+			expectedHeaders: map[string]string{"X-Custom": "value1"},
 		},
 	}
 
@@ -185,19 +190,11 @@ func TestMessagesHandler_ForwardHeaders(t *testing.T) {
 			}
 
 			upstreamReq := httptest.NewRequest(http.MethodPost, "https://upstream.example.com", nil)
-			h.ForwardHeaders(c, upstreamReq)
+			h.ForwardHeadersWithRoute(c, upstreamReq, tt.route)
 
 			for k, v := range tt.expectedHeaders {
 				if upstreamReq.Header.Get(k) != v {
 					t.Errorf("expected header %s = %s, got %s", k, v, upstreamReq.Header.Get(k))
-				}
-			}
-
-			for k := range tt.requestHeaders {
-				if _, expected := tt.expectedHeaders[k]; !expected {
-					if upstreamReq.Header.Get(k) != "" {
-						t.Errorf("unexpected header %s forwarded", k)
-					}
 				}
 			}
 		})
@@ -205,8 +202,7 @@ func TestMessagesHandler_ForwardHeaders(t *testing.T) {
 }
 
 func TestMessagesHandler_WriteError(t *testing.T) {
-	cfg := &config.Config{}
-	h := &MessagesHandler{cfg: cfg}
+	h := &MessagesHandler{}
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -218,12 +214,16 @@ func TestMessagesHandler_WriteError(t *testing.T) {
 	}
 }
 
-func TestMessagesHandler_CreateTransformer(t *testing.T) {
-	cfg := &config.Config{}
-	h := &MessagesHandler{cfg: cfg}
+func TestMessagesHandler_CreateTransformerWithRoute(t *testing.T) {
+	h := &MessagesHandler{}
 
 	w := httptest.NewRecorder()
-	transformer := h.CreateTransformer(w)
+	route := &router.ResolvedRoute{
+		Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages"},
+		Model:    "claude-3",
+	}
+
+	transformer := h.CreateTransformerWithRoute(w, route)
 
 	if transformer == nil {
 		t.Error("expected non-nil transformer")

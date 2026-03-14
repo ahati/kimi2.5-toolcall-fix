@@ -12,10 +12,7 @@ import (
 )
 
 func TestModelsHandler_Handle_MissingAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "",
-	}
+	cfg := config.NewTestConfigWithOpenAI("https://api.example.com/v1/chat/completions", "")
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -44,9 +41,7 @@ func TestModelsHandler_Handle_MissingAPIKey(t *testing.T) {
 }
 
 func TestModelsHandler_ResolveAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "default-api-key",
-	}
+	cfg := config.NewTestConfigWithOpenAI("https://api.example.com/v1/chat/completions", "default-api-key")
 	h := &ModelsHandler{cfg: cfg}
 
 	tests := []struct {
@@ -113,9 +108,7 @@ func TestModelsHandler_BuildModelsURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{
-				OpenAIUpstreamURL: tt.upstreamURL,
-			}
+			cfg := config.NewTestConfigWithOpenAI(tt.upstreamURL, "test-key")
 			h := &ModelsHandler{cfg: cfg}
 
 			result := h.buildModelsURL()
@@ -133,10 +126,7 @@ func TestModelsHandler_Handle_UpstreamError(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    upstream.URL + "/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-api-key",
-	}
+	cfg := config.NewTestConfigWithOpenAI(upstream.URL+"/v1/chat/completions", "test-api-key")
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -166,10 +156,7 @@ func TestModelsHandler_Handle_Success(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    upstream.URL + "/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "default-api-key",
-	}
+	cfg := config.NewTestConfigWithOpenAI(upstream.URL+"/v1/chat/completions", "default-api-key")
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

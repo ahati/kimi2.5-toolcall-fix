@@ -8,6 +8,7 @@ import (
 
 	"ai-proxy/capture"
 	"ai-proxy/proxy"
+	"ai-proxy/router"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tmaxmax/go-sse"
@@ -63,6 +64,113 @@ func Handle(h Handler) gin.HandlerFunc {
 		// Step 5: Forward to upstream and stream response
 		proxyRequest(c, h, transformedBody)
 	}
+}
+
+func HandleWithRouter(h RoutingHandler, r router.Router) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			h.WriteError(c, http.StatusBadRequest, "failed to read request body")
+			return
+		}
+
+		capture.RecordDownstreamRequest(c.Request.Context(), c.Request, body)
+
+		model, err := h.ExtractModel(body)
+		if err != nil {
+			h.WriteError(c, http.StatusBadRequest, "failed to extract model")
+			return
+		}
+
+		route, err := r.Resolve(model)
+		if err != nil {
+			h.WriteError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		transformedBody, err := h.TransformRequestWithRoute(body, route)
+		if err != nil {
+			h.WriteError(c, http.StatusInternalServerError, "failed to transform request")
+			return
+		}
+
+		proxyRequestWithRoute(c, h, transformedBody, route)
+	}
+}
+
+func proxyRequestWithRoute(c *gin.Context, h RoutingHandler, body []byte, route *router.ResolvedRoute) {
+	apiKey := h.ResolveAPIKeyWithRoute(route)
+
+	client := proxy.NewClient(h.UpstreamURLWithRoute(route), apiKey)
+	defer client.Close()
+
+	req, err := client.BuildRequest(c.Request.Context(), body)
+	if err != nil {
+		h.WriteError(c, http.StatusInternalServerError, "failed to create upstream request")
+		return
+	}
+
+	client.SetHeaders(req)
+	h.ForwardHeadersWithRoute(c, req, route)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		h.WriteError(c, http.StatusBadGateway, "upstream request failed")
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		handleUpstreamError(c, resp)
+		return
+	}
+
+	cc := capture.GetCaptureContext(c.Request.Context())
+	if cc != nil {
+		streamWithCaptureAndRoute(c, resp.Body, h, cc, route)
+	} else {
+		streamWithoutCaptureAndRoute(c, resp.Body, h, route)
+	}
+}
+
+func streamWithoutCaptureAndRoute(c *gin.Context, body io.Reader, h RoutingHandler, route *router.ResolvedRoute) {
+	setStreamHeaders(c)
+	transformer := h.CreateTransformerWithRoute(c.Writer, route)
+	defer transformer.Close()
+
+	c.Stream(func(w io.Writer) bool {
+		for ev, err := range sse.Read(body, nil) {
+			if err != nil {
+				return false
+			}
+			transformer.Transform(&ev)
+		}
+		return false
+	})
+}
+
+func streamWithCaptureAndRoute(c *gin.Context, body io.Reader, h RoutingHandler, cc *capture.CaptureContext, route *router.ResolvedRoute) {
+	startTime := cc.StartTime
+	downstream := capture.NewCaptureWriter(startTime)
+	upstream := capture.NewCaptureWriter(startTime)
+
+	recorder := NewResponseRecorder(c.Writer, downstream)
+	transformer := h.CreateTransformerWithRoute(recorder, route)
+	defer transformer.Close()
+
+	c.Stream(func(w io.Writer) bool {
+		for ev, err := range sse.Read(body, nil) {
+			if err != nil {
+				return false
+			}
+			if ev.Data != "" {
+				recordUpstreamEvent(upstream, ev)
+			}
+			transformer.Transform(&ev)
+		}
+		return false
+	})
+
+	finalizeCapture(cc, downstream, upstream)
 }
 
 // readBody reads and returns the entire request body.

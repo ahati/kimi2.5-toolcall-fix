@@ -12,6 +12,7 @@ import (
 
 	"ai-proxy/capture"
 	"ai-proxy/config"
+	"ai-proxy/router"
 	"ai-proxy/transform"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,23 @@ import (
 
 func init() {
 	gin.SetMode(gin.TestMode)
+}
+
+func newTestRouter() router.Router {
+	cfg := &config.AppConfig{
+		Providers: []config.Provider{
+			{Name: "test-openai", Type: "openai", BaseURL: "https://api.example.com/v1", APIKey: "test-key"},
+			{Name: "test-anthropic", Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages", APIKey: "test-key"},
+		},
+		Models: map[string]config.ModelConfig{
+			"test-model":               {Provider: "test-openai", Model: "gpt-4"},
+			"claude-3":                 {Provider: "test-anthropic", Model: "claude-3-opus"},
+			"moonshotai/Kimi-K2.5-TEE": {Provider: "test-openai", Model: "kimi-k2.5"},
+		},
+		Fallback: config.FallbackConfig{Enabled: false},
+	}
+	r, _ := router.NewRouter(cfg)
+	return r
 }
 
 type mockResponseWriter struct {
@@ -639,46 +657,34 @@ func TestProxyRequest_BadUpstreamURL(t *testing.T) {
 }
 
 func TestNewCompletionsHandler(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
-	}
+	r := newTestRouter()
 
-	handler := NewCompletionsHandler(cfg)
+	handler := NewCompletionsHandler(r)
 	if handler == nil {
 		t.Error("expected non-nil handler")
 	}
 }
 
 func TestNewMessagesHandler(t *testing.T) {
-	cfg := &config.Config{
-		AnthropicUpstreamURL: "https://api.anthropic.com/v1/messages",
-		AnthropicAPIKey:      "test-key",
-	}
+	r := newTestRouter()
 
-	handler := NewMessagesHandler(cfg)
+	handler := NewMessagesHandler(r)
 	if handler == nil {
 		t.Error("expected non-nil handler")
 	}
 }
 
 func TestNewBridgeHandler(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
-	}
+	r := newTestRouter()
 
-	handler := NewBridgeHandler(cfg)
+	handler := NewBridgeHandler(r)
 	if handler == nil {
 		t.Error("expected non-nil handler")
 	}
 }
 
 func TestNewModelsHandler(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
-	}
+	cfg := config.NewTestConfigWithOpenAI("https://api.example.com/v1/chat/completions", "test-key")
 
 	handler := NewModelsHandler(cfg)
 	if handler == nil {

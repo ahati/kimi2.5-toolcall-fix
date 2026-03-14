@@ -7,14 +7,25 @@ import (
 	"testing"
 
 	"ai-proxy/config"
+	"ai-proxy/router"
 	"ai-proxy/types"
 
 	"github.com/gin-gonic/gin"
 )
 
+func newTestRoute(providerType, baseURL, apiKey, model string) *router.ResolvedRoute {
+	return &router.ResolvedRoute{
+		Provider: config.Provider{
+			Type:    providerType,
+			BaseURL: baseURL,
+			APIKey:  apiKey,
+		},
+		Model: model,
+	}
+}
+
 func TestBridgeHandler_ValidateRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &BridgeHandler{cfg: cfg}
+	h := &BridgeHandler{}
 
 	tests := []struct {
 		name    string
@@ -44,8 +55,7 @@ func TestBridgeHandler_ValidateRequest(t *testing.T) {
 }
 
 func TestBridgeHandler_TransformRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &BridgeHandler{cfg: cfg}
+	h := &BridgeHandler{}
 
 	tests := []struct {
 		name    string
@@ -53,19 +63,14 @@ func TestBridgeHandler_TransformRequest(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "empty body - fails JSON parse",
+			name:    "empty body - passes through",
 			body:    []byte{},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name:    "valid anthropic request",
 			body:    []byte(`{"model": "claude-3", "messages": [{"role": "user", "content": "hello"}], "stream": true}`),
 			wantErr: false,
-		},
-		{
-			name:    "invalid json",
-			body:    []byte(`{invalid}`),
-			wantErr: true,
 		},
 		{
 			name:    "request with tools",
@@ -84,71 +89,83 @@ func TestBridgeHandler_TransformRequest(t *testing.T) {
 	}
 }
 
-func TestBridgeHandler_UpstreamURL(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL: "https://api.example.com/v1/chat/completions",
-	}
-	h := &BridgeHandler{cfg: cfg}
+func TestBridgeHandler_UpstreamURLWithRoute(t *testing.T) {
+	h := &BridgeHandler{}
 
-	if got := h.UpstreamURL(); got != cfg.OpenAIUpstreamURL {
-		t.Errorf("UpstreamURL() = %v, want %v", got, cfg.OpenAIUpstreamURL)
+	tests := []struct {
+		name     string
+		route    *router.ResolvedRoute
+		expected string
+	}{
+		{
+			name:     "openai provider",
+			route:    newTestRoute("openai", "https://api.example.com/v1", "test-key", "gpt-4"),
+			expected: "https://api.example.com/v1/chat/completions",
+		},
+		{
+			name:     "openai provider with chat/completions suffix",
+			route:    newTestRoute("openai", "https://api.example.com/v1/chat/completions", "test-key", "gpt-4"),
+			expected: "https://api.example.com/v1/chat/completions",
+		},
+		{
+			name:     "anthropic provider",
+			route:    newTestRoute("anthropic", "https://api.anthropic.com/v1/messages", "test-key", "claude-3"),
+			expected: "https://api.anthropic.com/v1/messages",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := h.UpstreamURLWithRoute(tt.route)
+			if got != tt.expected {
+				t.Errorf("UpstreamURLWithRoute() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
 }
 
-func TestBridgeHandler_ResolveAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "test-api-key",
-	}
-	h := &BridgeHandler{cfg: cfg}
+func TestBridgeHandler_ResolveAPIKeyWithRoute(t *testing.T) {
+	h := &BridgeHandler{}
 
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	route := newTestRoute("openai", "https://api.example.com/v1", "test-api-key", "gpt-4")
 
-	got := h.ResolveAPIKey(c)
-	if got != cfg.OpenAIUpstreamAPIKey {
-		t.Errorf("ResolveAPIKey() = %v, want %v", got, cfg.OpenAIUpstreamAPIKey)
+	got := h.ResolveAPIKeyWithRoute(route)
+	if got != "test-api-key" {
+		t.Errorf("ResolveAPIKeyWithRoute() = %v, want %v", got, "test-api-key")
 	}
 }
 
-func TestBridgeHandler_ForwardHeaders(t *testing.T) {
-	cfg := &config.Config{}
-	h := &BridgeHandler{cfg: cfg}
+func TestBridgeHandler_ForwardHeadersWithRoute(t *testing.T) {
+	h := &BridgeHandler{}
 
 	tests := []struct {
 		name            string
+		route           *router.ResolvedRoute
 		requestHeaders  map[string]string
 		expectedHeaders map[string]string
 	}{
 		{
-			name:            "no custom headers",
+			name:            "openai - no custom headers",
+			route:           newTestRoute("openai", "https://api.example.com/v1", "test-key", "gpt-4"),
 			requestHeaders:  map[string]string{},
 			expectedHeaders: map[string]string{},
 		},
 		{
-			name: "X- header forwarded",
-			requestHeaders: map[string]string{
-				"X-Custom": "value1",
-			},
-			expectedHeaders: map[string]string{
-				"X-Custom": "value1",
-			},
+			name:            "openai - X- header forwarded",
+			route:           newTestRoute("openai", "https://api.example.com/v1", "test-key", "gpt-4"),
+			requestHeaders:  map[string]string{"X-Custom": "value1"},
+			expectedHeaders: map[string]string{"X-Custom": "value1"},
 		},
 		{
-			name: "Extra header forwarded",
-			requestHeaders: map[string]string{
-				"Extra": "extra-value",
-			},
-			expectedHeaders: map[string]string{
-				"Extra": "extra-value",
-			},
+			name:            "anthropic - X- and Anthropic headers forwarded",
+			route:           newTestRoute("anthropic", "https://api.anthropic.com/v1/messages", "test-key", "claude-3"),
+			requestHeaders:  map[string]string{"X-Custom": "value1", "Anthropic-Version": "2023-06-01"},
+			expectedHeaders: map[string]string{"X-Custom": "value1", "Anthropic-Version": "2023-06-01"},
 		},
 		{
-			name: "non-forwarded headers ignored",
-			requestHeaders: map[string]string{
-				"Authorization": "Bearer token",
-				"Content-Type":  "application/json",
-			},
+			name:            "openai - non-forwarded headers ignored",
+			route:           newTestRoute("openai", "https://api.example.com/v1", "test-key", "gpt-4"),
+			requestHeaders:  map[string]string{"Authorization": "Bearer token", "Content-Type": "application/json"},
 			expectedHeaders: map[string]string{},
 		},
 	}
@@ -163,7 +180,7 @@ func TestBridgeHandler_ForwardHeaders(t *testing.T) {
 			}
 
 			upstreamReq := httptest.NewRequest(http.MethodPost, "https://upstream.example.com", nil)
-			h.ForwardHeaders(c, upstreamReq)
+			h.ForwardHeadersWithRoute(c, upstreamReq, tt.route)
 
 			for k, v := range tt.expectedHeaders {
 				if upstreamReq.Header.Get(k) != v {
@@ -175,8 +192,7 @@ func TestBridgeHandler_ForwardHeaders(t *testing.T) {
 }
 
 func TestBridgeHandler_WriteError(t *testing.T) {
-	cfg := &config.Config{}
-	h := &BridgeHandler{cfg: cfg}
+	h := &BridgeHandler{}
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -188,19 +204,20 @@ func TestBridgeHandler_WriteError(t *testing.T) {
 	}
 }
 
-func TestBridgeHandler_CreateTransformer(t *testing.T) {
-	cfg := &config.Config{}
-	h := &BridgeHandler{cfg: cfg}
+func TestBridgeHandler_CreateTransformerWithRoute(t *testing.T) {
+	h := &BridgeHandler{}
 
 	w := httptest.NewRecorder()
-	transformer := h.CreateTransformer(w)
+	route := newTestRoute("openai", "https://api.example.com/v1", "test-key", "gpt-4")
+
+	transformer := h.CreateTransformerWithRoute(w, route)
 
 	if transformer == nil {
 		t.Error("expected non-nil transformer")
 	}
 }
 
-func TestTransformRequest(t *testing.T) {
+func TestTransformAnthropicToOpenAI(t *testing.T) {
 	tests := []struct {
 		name        string
 		input       []byte
@@ -259,9 +276,9 @@ func TestTransformRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := transformRequest(tt.input)
+			result, err := transformAnthropicToOpenAI(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("transformRequest() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("transformAnthropicToOpenAI() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if tt.wantErr {

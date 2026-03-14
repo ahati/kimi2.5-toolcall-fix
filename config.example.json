@@ -1,0 +1,66 @@
+{
+  "providers": [
+    {
+      "name": "kimi-chutes",
+      "type": "openai",
+      "base_url": "https://llm.chutes.ai/v1",
+      "envApiKey": "CHUTES_API_KEY"
+    },
+    {
+      "name": "anthropic-direct",
+      "type": "anthropic",
+      "base_url": "https://api.anthropic.com/v1",
+      "envApiKey": "ANTHROPIC_API_KEY"
+    },
+    {
+      "name": "alibaba-anthropic",
+      "type": "anthropic",
+      "base_url": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+      "envApiKey": "ALIBABA_ANTHROPIC_API_KEY"
+    },
+    {
+      "name": "openai-direct",
+      "type": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "envApiKey": "OPENAI_API_KEY"
+    }
+  ],
+  "models": {
+    "kimi-k2.5": {
+      "provider": "kimi-chutes",
+      "model": "moonshotai/Kimi-K2.5-TEE",
+      "tool_call_transform": true
+    },
+    "claude-3-opus": {
+      "provider": "anthropic-direct",
+      "model": "claude-3-opus-20240229",
+      "tool_call_transform": false
+    },
+    "claude-3-sonnet": {
+      "provider": "anthropic-direct",
+      "model": "claude-3-sonnet-20240229",
+      "tool_call_transform": false
+    },
+    "qwen-coder": {
+      "provider": "alibaba-anthropic",
+      "model": "qwen-coder-plus-latest",
+      "tool_call_transform": false
+    },
+    "gpt-4-turbo": {
+      "provider": "openai-direct",
+      "model": "gpt-4-turbo-preview",
+      "tool_call_transform": false
+    },
+    "gpt-3.5-turbo": {
+      "provider": "openai-direct",
+      "model": "gpt-3.5-turbo",
+      "tool_call_transform": false
+    }
+  },
+  "fallback": {
+    "enabled": true,
+    "provider": "kimi-chutes",
+    "model": "{model}",
+    "tool_call_transform": true
+  }
+}

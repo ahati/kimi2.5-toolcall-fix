@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"ai-proxy/config"
+	"ai-proxy/router"
 
 	"github.com/gin-gonic/gin"
 )
 
 func TestCompletionsHandler_ValidateRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &CompletionsHandler{cfg: cfg}
+	h := &CompletionsHandler{}
 
 	tests := []struct {
 		name    string
@@ -48,8 +48,7 @@ func TestCompletionsHandler_ValidateRequest(t *testing.T) {
 }
 
 func TestCompletionsHandler_TransformRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &CompletionsHandler{cfg: cfg}
+	h := &CompletionsHandler{}
 
 	tests := []struct {
 		name    string
@@ -85,82 +84,92 @@ func TestCompletionsHandler_TransformRequest(t *testing.T) {
 	}
 }
 
-func TestCompletionsHandler_UpstreamURL(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL: "https://api.example.com/v1/chat/completions",
-	}
-	h := &CompletionsHandler{cfg: cfg}
+func TestCompletionsHandler_UpstreamURLWithRoute(t *testing.T) {
+	h := &CompletionsHandler{}
 
-	if got := h.UpstreamURL(); got != cfg.OpenAIUpstreamURL {
-		t.Errorf("UpstreamURL() = %v, want %v", got, cfg.OpenAIUpstreamURL)
+	tests := []struct {
+		name     string
+		route    *router.ResolvedRoute
+		expected string
+	}{
+		{
+			name:     "openai provider",
+			route:    &router.ResolvedRoute{Provider: config.Provider{Type: "openai", BaseURL: "https://api.example.com/v1"}, Model: "gpt-4"},
+			expected: "https://api.example.com/v1/chat/completions",
+		},
+		{
+			name:     "openai provider with chat/completions suffix",
+			route:    &router.ResolvedRoute{Provider: config.Provider{Type: "openai", BaseURL: "https://api.example.com/v1/chat/completions"}, Model: "gpt-4"},
+			expected: "https://api.example.com/v1/chat/completions",
+		},
+		{
+			name:     "anthropic provider",
+			route:    &router.ResolvedRoute{Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages"}, Model: "claude-3"},
+			expected: "https://api.anthropic.com/v1/messages",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := h.UpstreamURLWithRoute(tt.route); got != tt.expected {
+				t.Errorf("UpstreamURLWithRoute() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
 }
 
-func TestCompletionsHandler_ResolveAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "test-api-key",
+func TestCompletionsHandler_ResolveAPIKeyWithRoute(t *testing.T) {
+	h := &CompletionsHandler{}
+
+	route := &router.ResolvedRoute{
+		Provider: config.Provider{Type: "openai", BaseURL: "https://api.example.com/v1", APIKey: "test-api-key"},
+		Model:    "gpt-4",
 	}
-	h := &CompletionsHandler{cfg: cfg}
 
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-
-	got := h.ResolveAPIKey(c)
-	if got != cfg.OpenAIUpstreamAPIKey {
-		t.Errorf("ResolveAPIKey() = %v, want %v", got, cfg.OpenAIUpstreamAPIKey)
+	got := h.ResolveAPIKeyWithRoute(route)
+	if got != "test-api-key" {
+		t.Errorf("ResolveAPIKeyWithRoute() = %v, want %v", got, "test-api-key")
 	}
 }
 
-func TestCompletionsHandler_ForwardHeaders(t *testing.T) {
-	cfg := &config.Config{}
-	h := &CompletionsHandler{cfg: cfg}
+func TestCompletionsHandler_ForwardHeadersWithRoute(t *testing.T) {
+	h := &CompletionsHandler{}
 
 	tests := []struct {
 		name            string
+		route           *router.ResolvedRoute
 		requestHeaders  map[string]string
 		expectedHeaders map[string]string
 	}{
 		{
-			name:            "no custom headers",
+			name:            "openai - no custom headers",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "openai", BaseURL: "https://api.example.com/v1"}, Model: "gpt-4"},
 			requestHeaders:  map[string]string{},
 			expectedHeaders: map[string]string{},
 		},
 		{
-			name: "X-Custom header forwarded",
-			requestHeaders: map[string]string{
-				"X-Custom": "value1",
-			},
-			expectedHeaders: map[string]string{
-				"X-Custom": "value1",
-			},
+			name:            "openai - X-Custom header forwarded",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "openai", BaseURL: "https://api.example.com/v1"}, Model: "gpt-4"},
+			requestHeaders:  map[string]string{"X-Custom": "value1"},
+			expectedHeaders: map[string]string{"X-Custom": "value1"},
 		},
 		{
-			name: "multiple X- headers forwarded",
-			requestHeaders: map[string]string{
-				"X-Request-Id": "123",
-				"X-Trace-Id":   "abc",
-			},
-			expectedHeaders: map[string]string{
-				"X-Request-Id": "123",
-				"X-Trace-Id":   "abc",
-			},
+			name:            "openai - multiple X- headers forwarded",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "openai", BaseURL: "https://api.example.com/v1"}, Model: "gpt-4"},
+			requestHeaders:  map[string]string{"X-Request-Id": "123", "X-Trace-Id": "abc"},
+			expectedHeaders: map[string]string{"X-Request-Id": "123", "X-Trace-Id": "abc"},
 		},
 		{
-			name: "non-X header not forwarded",
-			requestHeaders: map[string]string{
-				"Authorization": "Bearer token",
-			},
+			name:            "openai - non-X header not forwarded",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "openai", BaseURL: "https://api.example.com/v1"}, Model: "gpt-4"},
+			requestHeaders:  map[string]string{"Authorization": "Bearer token"},
 			expectedHeaders: map[string]string{},
 		},
 		{
-			name: "Extra header forwarded",
-			requestHeaders: map[string]string{
-				"Extra": "extra-value",
-			},
-			expectedHeaders: map[string]string{
-				"Extra": "extra-value",
-			},
+			name:            "anthropic - X- and Anthropic headers forwarded",
+			route:           &router.ResolvedRoute{Provider: config.Provider{Type: "anthropic", BaseURL: "https://api.anthropic.com/v1/messages"}, Model: "claude-3"},
+			requestHeaders:  map[string]string{"X-Custom": "value1", "Anthropic-Version": "2023-06-01"},
+			expectedHeaders: map[string]string{"X-Custom": "value1", "Anthropic-Version": "2023-06-01"},
 		},
 	}
 
@@ -174,7 +183,7 @@ func TestCompletionsHandler_ForwardHeaders(t *testing.T) {
 			}
 
 			upstreamReq := httptest.NewRequest(http.MethodPost, "https://upstream.example.com", nil)
-			h.ForwardHeaders(c, upstreamReq)
+			h.ForwardHeadersWithRoute(c, upstreamReq, tt.route)
 
 			for k, v := range tt.expectedHeaders {
 				if upstreamReq.Header.Get(k) != v {
@@ -186,8 +195,7 @@ func TestCompletionsHandler_ForwardHeaders(t *testing.T) {
 }
 
 func TestCompletionsHandler_WriteError(t *testing.T) {
-	cfg := &config.Config{}
-	h := &CompletionsHandler{cfg: cfg}
+	h := &CompletionsHandler{}
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -199,12 +207,16 @@ func TestCompletionsHandler_WriteError(t *testing.T) {
 	}
 }
 
-func TestCompletionsHandler_CreateTransformer(t *testing.T) {
-	cfg := &config.Config{}
-	h := &CompletionsHandler{cfg: cfg}
+func TestCompletionsHandler_CreateTransformerWithRoute(t *testing.T) {
+	h := &CompletionsHandler{}
 
 	w := httptest.NewRecorder()
-	transformer := h.CreateTransformer(w)
+	route := &router.ResolvedRoute{
+		Provider: config.Provider{Type: "openai", BaseURL: "https://api.example.com/v1"},
+		Model:    "gpt-4",
+	}
+
+	transformer := h.CreateTransformerWithRoute(w, route)
 
 	if transformer == nil {
 		t.Error("expected non-nil transformer")
@@ -225,34 +237,20 @@ func TestForwardCustomHeaders(t *testing.T) {
 			expectedHeaders: map[string]string{},
 		},
 		{
-			name: "single X- header",
-			requestHeaders: map[string]string{
-				"X-Custom": "value",
-			},
-			prefixes: []string{"X-"},
-			expectedHeaders: map[string]string{
-				"X-Custom": "value",
-			},
+			name:            "single X- header",
+			requestHeaders:  map[string]string{"X-Custom": "value"},
+			prefixes:        []string{"X-"},
+			expectedHeaders: map[string]string{"X-Custom": "value"},
 		},
 		{
-			name: "multiple prefixes",
-			requestHeaders: map[string]string{
-				"X-Custom": "x-value",
-				"Y-Custom": "y-value",
-				"Other":    "other-value",
-			},
-			prefixes: []string{"X-", "Y-"},
-			expectedHeaders: map[string]string{
-				"X-Custom": "x-value",
-				"Y-Custom": "y-value",
-			},
+			name:            "multiple prefixes",
+			requestHeaders:  map[string]string{"X-Custom": "x-value", "Y-Custom": "y-value", "Other": "other-value"},
+			prefixes:        []string{"X-", "Y-"},
+			expectedHeaders: map[string]string{"X-Custom": "x-value", "Y-Custom": "y-value"},
 		},
 		{
-			name: "no matching prefix",
-			requestHeaders: map[string]string{
-				"Authorization": "Bearer token",
-				"Content-Type":  "application/json",
-			},
+			name:            "no matching prefix",
+			requestHeaders:  map[string]string{"Authorization": "Bearer token", "Content-Type": "application/json"},
 			prefixes:        []string{"X-"},
 			expectedHeaders: map[string]string{},
 		},

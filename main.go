@@ -1,31 +1,51 @@
-// Package main is the entry point for the ai-proxy HTTP server.
-// It initializes configuration, logging, and starts the proxy server.
 package main
 
 import (
+	"flag"
+	"fmt"
 	"os"
 
 	"ai-proxy/api"
 	"ai-proxy/config"
 	"ai-proxy/logging"
+	"ai-proxy/router"
 )
 
-// main loads configuration, initializes logging and storage, then starts the HTTP server.
-// This is the application entry point and orchestrates all startup tasks.
-//
-// @pre Environment variables and command-line flags are available for configuration
-// @post Server is running and listening on the configured port
-// @post All capture middleware is initialized if SSELogDir is configured
-// @note Exits with code 1 if server fails to start
-// @note Blocks until server is stopped (SIGINT, SIGTERM, or fatal error)
-func main() {
-	// Load configuration from flags, environment variables, and defaults
-	cfg := config.Load()
+var configFile string
 
-	// Initialize logging early so subsequent messages are captured
+func init() {
+	flag.StringVar(&configFile, "config-file", "", "Path to JSON configuration file")
+}
+
+func resolveConfigPath() (string, error) {
+	if configFile != "" {
+		return configFile, nil
+	}
+	if envPath := os.Getenv("CONFIG_FILE"); envPath != "" {
+		return envPath, nil
+	}
+	return "", fmt.Errorf("config file required: use --config-file flag or CONFIG_FILE environment variable")
+}
+
+func main() {
+	flag.Parse()
+
+	path, err := resolveConfigPath()
+	if err != nil {
+		logging.ErrorMsg("Config error: %v", err)
+		os.Exit(1)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		logging.ErrorMsg("Failed to load config: %v", err)
+		os.Exit(1)
+	}
+
+	logging.InfoMsg("Config file: %s", path)
+
 	logging.Init()
 
-	// Initialize storage for request capture if logging is enabled
 	storage := api.InitStorage(cfg.SSELogDir)
 	if storage != nil {
 		logging.InfoMsg("SSE capture enabled, logging to: %s", cfg.SSELogDir)
@@ -33,17 +53,19 @@ func main() {
 		logging.InfoMsg("SSE capture disabled (use --sse-log-dir to enable)")
 	}
 
-	// Create server with loaded configuration
-	// Middleware is added first so it applies to all routes
-	server := api.NewServer(cfg, api.NewCaptureMiddleware(storage).Handler())
+	appRouter, err := router.NewRouter(cfg.AppConfig)
+	if err != nil {
+		logging.ErrorMsg("Failed to create router: %v", err)
+		os.Exit(1)
+	}
 
-	// Build listen address from configured port
+	server := api.NewServer(cfg, appRouter, api.NewCaptureMiddleware(storage).Handler())
+
 	addr := ":" + cfg.Port
 	logging.InfoMsg("ai-proxy server starting on %s", addr)
 
-	// Start server; this blocks until server stops
 	if err := server.Run(addr); err != nil {
 		logging.ErrorMsg("Failed to start server: %v", err)
-		os.Exit(1) // Exit with error code if server fails to start
+		os.Exit(1)
 	}
 }
