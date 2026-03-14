@@ -116,7 +116,7 @@ func (h *ResponsesHandler) TransformRequest(body []byte) ([]byte, error) {
 		return converter.Convert(updatedBody)
 	case "anthropic":
 		// Convert ResponsesRequest to Anthropic MessageRequest
-		return transformResponsesRequest(updatedBody)
+		return convert.TransformResponsesToAnthropic(updatedBody)
 	default:
 		// Unknown provider type - pass through as-is
 		return updatedBody, nil
@@ -255,7 +255,7 @@ func (h *ResponsesHandlerNoRouter) ValidateRequest(body []byte) error {
 func (h *ResponsesHandlerNoRouter) TransformRequest(body []byte) ([]byte, error) {
 	// Check for Anthropic provider first (for backwards compatibility)
 	if h.cfg.GetAnthropicUpstreamURL() != "" {
-		return transformResponsesRequest(body)
+		return convert.TransformResponsesToAnthropic(body)
 	}
 	// Fall back to OpenAI provider
 	if h.cfg.GetOpenAIUpstreamURL() != "" {

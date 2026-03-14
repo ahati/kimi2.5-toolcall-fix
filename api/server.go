@@ -93,26 +93,19 @@ func (s *Server) setupRoutes() {
 	// Supports OpenAI-compatible response format.
 	s.router.GET("/v1/models", handlers.NewModelsHandler(s.config))
 
-	// Chat completions endpoint - primary OpenAI-compatible endpoint
-	// for streaming chat completions with tool call support.
+	// Chat completions endpoint - unified OpenAI Chat format endpoint
+	// Routes to the appropriate provider based on model configuration.
+	// Supports OpenAI and Anthropic providers with automatic format conversion.
 	s.router.POST("/v1/chat/completions", handlers.NewCompletionsHandler(s.config, s.modelRouter))
 
-	// Messages endpoint - native Anthropic API format endpoint
-	// for streaming messages with tool call support.
-	s.router.POST("/v1/messages", handlers.NewMessagesHandler(s.config))
+	// Messages endpoint - unified Anthropic Messages format endpoint
+	// Routes to the appropriate provider based on model configuration.
+	// Supports Anthropic and OpenAI providers with automatic format conversion.
+	s.router.POST("/v1/messages", handlers.NewMessagesHandler(s.config, s.modelRouter))
 
 	// Messages count tokens endpoint - Anthropic API format endpoint
 	// for counting tokens in messages before sending to upstream.
 	s.router.POST("/v1/messages/count_tokens", handlers.NewCountTokensHandler(s.config))
-
-	// Bridge endpoint - converts Anthropic format requests to OpenAI format
-	// before forwarding to upstream, then converts responses back to Anthropic format.
-	s.router.POST("/v1/openai-to-anthropic/messages", handlers.NewBridgeHandler(s.config, s.modelRouter))
-
-	// Anthropic-to-OpenAI Responses endpoint - converts OpenAI Responses API format requests
-	// to Anthropic format before forwarding to upstream, then converts responses back to
-	// OpenAI Responses API format.
-	s.router.POST("/v1/anthropic-to-openai/responses", handlers.NewAnthropicToOpenAIHandler(s.config))
 
 	// Responses endpoint - unified OpenAI Responses API endpoint that routes to the
 	// appropriate provider based on model configuration.

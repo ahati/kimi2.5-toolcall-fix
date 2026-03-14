@@ -672,27 +672,7 @@ func TestNewMessagesHandler(t *testing.T) {
 		},
 	}
 
-	handler := NewMessagesHandler(cfg)
-	if handler == nil {
-		t.Error("expected non-nil handler")
-	}
-}
-
-func TestNewBridgeHandler(t *testing.T) {
-	cfg := &config.Config{
-		AppConfig: &config.Schema{
-			Providers: []config.Provider{
-				{
-					Name:    "openai",
-					Type:    "openai",
-					BaseURL: "https://api.example.com/v1/chat/completions",
-					APIKey:  "test-key",
-				},
-			},
-		},
-	}
-
-	handler := NewBridgeHandler(cfg, nil)
+	handler := NewMessagesHandler(cfg, nil)
 	if handler == nil {
 		t.Error("expected non-nil handler")
 	}

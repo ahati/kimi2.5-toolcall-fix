@@ -408,3 +408,25 @@ func sendAnthropicError(c *gin.Context, status int, msg string) {
 		},
 	})
 }
+
+// sendOpenAIResponsesError sends an error response in OpenAI Responses API format.
+// OpenAI Responses API uses SSE format for errors.
+//
+// @param c - Gin context for writing the response.
+// @param status - HTTP status code for the error.
+// @param msg - Human-readable error message.
+//
+// @pre c != nil and response has not been written.
+// @post SSE error response is written and flushed.
+func sendOpenAIResponsesError(c *gin.Context, status int, msg string) {
+	event := map[string]interface{}{
+		"type": "error",
+		"error": map[string]interface{}{
+			"code":    "invalid_request_error",
+			"message": msg,
+		},
+	}
+	c.Header("Content-Type", "text/event-stream")
+	data, _ := json.Marshal(event)
+	c.String(status, "data: "+string(data)+"\n\n")
+}
