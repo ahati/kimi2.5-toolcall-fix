@@ -382,7 +382,7 @@ func (m *mockHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 	}
 }
 
-func (m *mockHandler) CreateTransformer(w io.Writer) transform.SSETransformer {
+func (m *mockHandler) CreateTransformer(w io.Writer, model string) transform.SSETransformer {
 	return &mockTransformer{w: w}
 }
 

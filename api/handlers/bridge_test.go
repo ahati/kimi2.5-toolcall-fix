@@ -193,7 +193,7 @@ func TestBridgeHandler_CreateTransformer(t *testing.T) {
 	h := &BridgeHandler{cfg: cfg}
 
 	w := httptest.NewRecorder()
-	transformer := h.CreateTransformer(w)
+	transformer := h.CreateTransformer(w, "test-model")
 
 	if transformer == nil {
 		t.Error("expected non-nil transformer")

@@ -83,11 +83,12 @@ type Handler interface {
 	// The transformer handles format conversion and SSE event processing.
 	//
 	// @param w - Writer to receive transformed output (typically response writer).
+	// @param model - The model name from the request, used to determine if tool call transformation is needed.
 	// @return Transformer instance for processing SSE events.
 	//
 	// @pre w != nil and is ready to receive writes.
 	// @post Caller must call Close() on returned transformer when done.
-	CreateTransformer(w io.Writer) transform.SSETransformer
+	CreateTransformer(w io.Writer, model string) transform.SSETransformer
 
 	// WriteError sends an error response to the client in the appropriate format.
 	// The format should match the API style (OpenAI vs Anthropic) for consistency.

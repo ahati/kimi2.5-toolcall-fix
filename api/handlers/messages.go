@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -27,6 +28,8 @@ type MessagesHandler struct {
 	// cfg contains the application configuration including upstream URL and API key.
 	// Must not be nil after construction.
 	cfg *config.Config
+	// model stores the model name from the request for use in CreateTransformer.
+	model string
 }
 
 // NewMessagesHandler creates a Gin handler for the /v1/messages endpoint.
@@ -64,6 +67,13 @@ func (h *MessagesHandler) ValidateRequest(body []byte) error {
 //
 // @post Returned body is identical to input body.
 func (h *MessagesHandler) TransformRequest(body []byte) ([]byte, error) {
+	// Extract model from request body for later use in CreateTransformer
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err == nil {
+		h.model = req.Model
+	}
 	// Pass through without transformation - upstream is Anthropic-native
 	return body, nil
 }
@@ -130,8 +140,9 @@ func (h *MessagesHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 //
 //	<|tool_calls_section_begin|><|tool_call_begin|>name<|tool_call_argument_begin|>args<|tool_call_end|>
 //	This transformer converts that markup to proper Anthropic tool_use content blocks.
-func (h *MessagesHandler) CreateTransformer(w io.Writer) transform.SSETransformer {
-	return toolcall.NewAnthropicTransformer(w)
+func (h *MessagesHandler) CreateTransformer(w io.Writer, model string) transform.SSETransformer {
+	// Use the model from the request body (set during TransformRequest)
+	return toolcall.NewAnthropicTransformer(w, h.model)
 }
 
 // WriteError sends an error response in Anthropic format.

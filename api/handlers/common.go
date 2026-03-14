@@ -177,7 +177,7 @@ func streamResponse(c *gin.Context, body io.Reader, h Handler) {
 	setStreamHeaders(c)
 
 	// Create transformer to convert upstream format to downstream format
-	transformer := h.CreateTransformer(c.Writer)
+	transformer := h.CreateTransformer(c.Writer, "")
 	// Ensure transformer resources are cleaned up
 	defer transformer.Close()
 
@@ -238,7 +238,7 @@ func streamWithCapture(c *gin.Context, body io.Reader, h Handler, cc *capture.Ca
 	// Wrap the response writer to capture downstream events
 	recorder := NewResponseRecorder(c.Writer, downstream)
 	// Create transformer that writes through the recorder
-	transformer := h.CreateTransformer(recorder)
+	transformer := h.CreateTransformer(recorder, "")
 	defer transformer.Close()
 
 	// Stream events with capture
@@ -278,7 +278,7 @@ func streamWithoutCapture(c *gin.Context, body io.Reader, h Handler) {
 	setStreamHeaders(c)
 
 	// Create transformer without capture wrapper
-	transformer := h.CreateTransformer(c.Writer)
+	transformer := h.CreateTransformer(c.Writer, "")
 	defer transformer.Close()
 
 	// Stream events without capture overhead

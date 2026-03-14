@@ -21,6 +21,8 @@ type AnthropicTransformer struct {
 	blockIndex int
 	currentID  string
 	messageID  string
+	model      string
+	isKimiModel bool
 
 	inThinking       bool
 	inText           bool
@@ -41,11 +43,13 @@ const (
 	anthropicStateTrailing
 )
 
-func NewAnthropicTransformer(output io.Writer) *AnthropicTransformer {
+func NewAnthropicTransformer(output io.Writer, model string) *AnthropicTransformer {
 	return &AnthropicTransformer{
-		output:    output,
-		formatter: NewAnthropicFormatter("", ""),
-		state:     anthropicStateIdle,
+		output:      output,
+		formatter:   NewAnthropicFormatter("", ""),
+		state:       anthropicStateIdle,
+		model:       model,
+		isKimiModel: isKimiModel(model),
 	}
 }
 
@@ -295,6 +299,11 @@ func (t *AnthropicTransformer) handleMessageDelta(event types.Event, rawJSON []b
 }
 
 func (t *AnthropicTransformer) processThinking(text string, index int) [][]byte {
+	// Only parse tool calls for Kimi K2.5 models
+	if !t.isKimiModel {
+		return [][]byte{t.makeThinkingDelta(index, text)}
+	}
+
 	t.buf += text
 	var out [][]byte
 
@@ -390,6 +399,11 @@ func (t *AnthropicTransformer) processThinking(text string, index int) [][]byte 
 }
 
 func (t *AnthropicTransformer) processText(text string, index int) [][]byte {
+	// Only parse tool calls for Kimi K2.5 models
+	if !t.isKimiModel {
+		return [][]byte{t.makeTextDelta(index, text)}
+	}
+
 	t.buf += text
 	var out [][]byte
 

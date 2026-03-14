@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -27,6 +28,8 @@ type CompletionsHandler struct {
 	// cfg contains the application configuration including upstream URL and API key.
 	// Must not be nil after construction.
 	cfg *config.Config
+	// model stores the model name from the request for use in CreateTransformer.
+	model string
 }
 
 // NewCompletionsHandler creates a Gin handler for the /v1/chat/completions endpoint.
@@ -64,6 +67,13 @@ func (h *CompletionsHandler) ValidateRequest(body []byte) error {
 //
 // @post Returned body is identical to input body.
 func (h *CompletionsHandler) TransformRequest(body []byte) ([]byte, error) {
+	// Extract model from request body for later use in CreateTransformer
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err == nil {
+		h.model = req.Model
+	}
 	// Pass through without transformation - upstream is OpenAI-compatible
 	return body, nil
 }
@@ -111,6 +121,7 @@ func (h *CompletionsHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 // The transformer converts embedded tool call markup to proper tool_calls format.
 //
 // @param w - Writer to receive transformed output.
+// @param model - The model name from the request.
 // @return Transformer for processing SSE events with tool call conversion.
 //
 // @pre w != nil and ready to receive writes.
@@ -120,8 +131,9 @@ func (h *CompletionsHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 //
 //	using proprietary markup: <|tool_calls_section_begin|>...
 //	This transformer converts that markup to proper OpenAI tool_calls format.
-func (h *CompletionsHandler) CreateTransformer(w io.Writer) transform.SSETransformer {
-	return toolcall.NewOpenAITransformer(w)
+func (h *CompletionsHandler) CreateTransformer(w io.Writer, model string) transform.SSETransformer {
+	// Use the model from the request body (set during TransformRequest)
+	return toolcall.NewOpenAITransformer(w, h.model)
 }
 
 // WriteError sends an error response in OpenAI format.

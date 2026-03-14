@@ -13,7 +13,7 @@ import (
 
 func TestNewOpenAITransformer(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "kimi-k2.5")
 
 	if tr == nil {
 		t.Fatal("expected transformer to be non-nil")
@@ -24,11 +24,14 @@ func TestNewOpenAITransformer(t *testing.T) {
 	if tr.formatter == nil {
 		t.Error("expected formatter to be non-nil")
 	}
+	if !tr.isKimiModel {
+		t.Error("expected isKimiModel to be true for kimi-k2.5")
+	}
 }
 
 func TestNewAnthropicTransformer(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf)
+	tr := NewAnthropicTransformer(buf, "kimi-k2.5")
 
 	if tr == nil {
 		t.Fatal("expected transformer to be non-nil")
@@ -36,11 +39,14 @@ func TestNewAnthropicTransformer(t *testing.T) {
 	if tr.formatter == nil {
 		t.Error("expected formatter to be non-nil")
 	}
+	if !tr.isKimiModel {
+		t.Error("expected isKimiModel to be true for kimi-k2.5")
+	}
 }
 
 func TestTransformer_Transform_SimpleContent(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "gpt-4")
 
 	chunk := types.Chunk{
 		ID:      "msg-123",
@@ -63,7 +69,7 @@ func TestTransformer_Transform_SimpleContent(t *testing.T) {
 
 func TestTransformer_Transform_DoneMarker(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "gpt-4")
 
 	event := &sse.Event{Data: "[DONE]"}
 	if err := tr.Transform(event); err != nil {
@@ -79,7 +85,7 @@ func TestTransformer_Transform_DoneMarker(t *testing.T) {
 
 func TestTransformer_Transform_InvalidJSON(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "gpt-4")
 
 	event := &sse.Event{Data: "not valid json"}
 	if err := tr.Transform(event); err != nil {
@@ -94,7 +100,7 @@ func TestTransformer_Transform_InvalidJSON(t *testing.T) {
 
 func TestTransformer_Transform_ExtractsMessageID(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "gpt-4")
 
 	chunk := types.Chunk{
 		ID:      "extracted-id",
@@ -115,7 +121,7 @@ func TestTransformer_Transform_ExtractsMessageID(t *testing.T) {
 
 func TestTransformer_Transform_NoChoices(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "gpt-4")
 
 	chunk := types.Chunk{
 		ID:      "msg-123",
@@ -140,7 +146,7 @@ func TestTransformer_Transform_NoChoices(t *testing.T) {
 
 func TestTransformer_Transform_WithToolCalls(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "kimi-k2.5")
 
 	input := "Before" +
 		"<|tool_calls_section_begin|>" +
@@ -183,7 +189,7 @@ func TestTransformer_Transform_WithToolCalls(t *testing.T) {
 
 func TestTransformer_Transform_MultipleToolCalls(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "kimi-k2.5")
 
 	input := "<|tool_calls_section_begin|>" +
 		"<|tool_call_begin|>read<|tool_call_argument_begin|>{\"file\":\"test.txt\"}<|tool_call_end|>" +
@@ -218,7 +224,7 @@ func TestTransformer_Transform_MultipleToolCalls(t *testing.T) {
 
 func TestTransformer_Transform_StreamingToolCalls(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "kimi-k2.5")
 
 	chunks := []string{
 		"Start",
@@ -260,7 +266,7 @@ func TestTransformer_Transform_StreamingToolCalls(t *testing.T) {
 
 func TestTransformer_OpenAI_EndToEnd(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "kimi-k2.5")
 
 	chunks := []string{
 		"Start",
@@ -302,7 +308,7 @@ func TestTransformer_OpenAI_EndToEnd(t *testing.T) {
 
 func TestTransformer_Anthropic_EndToEnd(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf)
+	tr := NewAnthropicTransformer(buf, "kimi-k2.5")
 
 	events := []types.Event{
 		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-123", Model: "kimi-k2.5"}},
@@ -344,7 +350,7 @@ func TestTransformer_Anthropic_EndToEnd(t *testing.T) {
 
 func TestTransformer_AnthropicPassthrough(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf)
+	tr := NewAnthropicTransformer(buf, "kimi-k2.5")
 
 	event := types.Event{
 		Type:  "content_block_delta",
@@ -372,7 +378,7 @@ func TestTransformer_AnthropicPassthrough(t *testing.T) {
 
 func TestTransformer_AnthropicToolCallMarkup(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf)
+	tr := NewAnthropicTransformer(buf, "kimi-k2.5")
 
 	delta := map[string]interface{}{
 		"type": "text_delta",
@@ -404,7 +410,7 @@ func TestTransformer_AnthropicToolCallMarkup(t *testing.T) {
 
 func TestTransformer_OpenAIPassthrough(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "gpt-4")
 
 	chunk := types.Chunk{
 		ID:    "test-id",
@@ -428,7 +434,7 @@ func TestTransformer_OpenAIPassthrough(t *testing.T) {
 
 func TestTransformer_OpenAIToolCallFromReasoning(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewOpenAITransformer(buf)
+	tr := NewOpenAITransformer(buf, "kimi-k2.5")
 
 	chunk := types.Chunk{
 		ID:    "test-id",
@@ -460,7 +466,7 @@ func TestTransformer_OpenAIToolCallFromReasoning(t *testing.T) {
 
 func TestTransformer_Anthropic_ToolCallsInThinking(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf)
+	tr := NewAnthropicTransformer(buf, "kimi-k2.5")
 
 	events := []types.Event{
 		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-123", Model: "kimi-k2.5"}},
@@ -502,7 +508,7 @@ func TestTransformer_Anthropic_ToolCallsInThinking(t *testing.T) {
 
 func TestTransformer_Anthropic_ToolCallsInText(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf)
+	tr := NewAnthropicTransformer(buf, "kimi-k2.5")
 
 	events := []types.Event{
 		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-456", Model: "kimi-k2.5"}},
@@ -541,7 +547,7 @@ func TestTransformer_Anthropic_ToolCallsInText(t *testing.T) {
 
 func TestTransformer_Anthropic_TextPassthrough(t *testing.T) {
 	buf := &bytes.Buffer{}
-	tr := NewAnthropicTransformer(buf)
+	tr := NewAnthropicTransformer(buf, "kimi-k2.5")
 
 	events := []types.Event{
 		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-789", Model: "kimi-k2.5"}},

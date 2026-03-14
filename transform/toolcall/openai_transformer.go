@@ -3,6 +3,7 @@ package toolcall
 import (
 	"encoding/json"
 	"io"
+	"strings"
 
 	"ai-proxy/logging"
 	"ai-proxy/types"
@@ -11,19 +12,28 @@ import (
 )
 
 type OpenAITransformer struct {
-	output    io.Writer
-	formatter *OpenAIFormatter
-	parser    *Parser
-	messageID string
-	model     string
+	output       io.Writer
+	formatter    *OpenAIFormatter
+	parser       *Parser
+	messageID    string
+	model        string
+	isKimiModel  bool
 }
 
-func NewOpenAITransformer(output io.Writer) *OpenAITransformer {
+func NewOpenAITransformer(output io.Writer, model string) *OpenAITransformer {
 	return &OpenAITransformer{
-		output:    output,
-		formatter: NewOpenAIFormatter("", ""),
-		parser:    NewParser(DefaultTokens),
+		output:      output,
+		formatter:   NewOpenAIFormatter("", ""),
+		parser:      NewParser(DefaultTokens),
+		model:       model,
+		isKimiModel: isKimiModel(model),
 	}
+}
+
+// isKimiModel checks if the model name indicates it's a Kimi K2.5 model
+func isKimiModel(model string) bool {
+	lower := strings.ToLower(model)
+	return strings.Contains(lower, "kimi") && strings.Contains(lower, "k2.5")
 }
 
 func (t *OpenAITransformer) Transform(event *sse.Event) error {
@@ -78,6 +88,11 @@ func (t *OpenAITransformer) handleChunk(chunk types.Chunk, rawData string) error
 }
 
 func (t *OpenAITransformer) processText(text string) error {
+	// Only parse tool calls for Kimi K2.5 models
+	if !t.isKimiModel {
+		return t.write(t.formatter.FormatContent(text))
+	}
+
 	if !t.parser.IsIdle() || t.parser.tokens.ContainsAny(text) {
 		logging.InfoMsg("[%s] Tool call markup detected in reasoning content, transforming to tool_calls format", t.messageID)
 		events := t.parser.Parse(text)

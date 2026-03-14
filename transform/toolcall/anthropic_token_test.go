@@ -60,7 +60,7 @@ func TestAnthropicTransformer_TokenAccounting_MessageStart(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			tr := NewAnthropicTransformer(&buf)
+			tr := NewAnthropicTransformer(&buf, "kimi-k2.5")
 
 			event := &sse.Event{
 				Data: tt.inputJSON,
@@ -152,7 +152,7 @@ func TestAnthropicTransformer_TokenAccounting_MessageDelta(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			tr := NewAnthropicTransformer(&buf)
+			tr := NewAnthropicTransformer(&buf, "kimi-k2.5")
 			tr.toolsEmitted = tt.toolsEmitted
 
 			event := &sse.Event{
@@ -324,7 +324,7 @@ func TestAnthropicTransformer_MultiTurn_TokenAccounting(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			tr := NewAnthropicTransformer(&buf)
+			tr := NewAnthropicTransformer(&buf, "kimi-k2.5")
 
 			if len(tt.events) != len(tt.eventChecks) {
 				t.Fatalf("Number of events (%d) must match number of eventChecks (%d)", len(tt.events), len(tt.eventChecks))
@@ -390,7 +390,7 @@ func TestAnthropicTransformer_TokenAccounting_EdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			tr := NewAnthropicTransformer(&buf)
+			tr := NewAnthropicTransformer(&buf, "kimi-k2.5")
 
 			event := &sse.Event{
 				Data: tt.inputJSON,
@@ -462,7 +462,7 @@ func TestAnthropicTransformer_TokenAccounting_ToolCalls(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			tr := NewAnthropicTransformer(&buf)
+			tr := NewAnthropicTransformer(&buf, "kimi-k2.5")
 
 			var allOutput strings.Builder
 
@@ -497,7 +497,7 @@ func TestAnthropicTransformer_TokenAccounting_ConsistencyAcrossTurns(t *testing.
 	// or stay the same within a single message stream (not decrease)
 
 	var buf bytes.Buffer
-	tr := NewAnthropicTransformer(&buf)
+	tr := NewAnthropicTransformer(&buf, "kimi-k2.5")
 
 	// Simulate a single message stream with multiple message_delta events
 	events := []*sse.Event{

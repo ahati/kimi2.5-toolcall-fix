@@ -29,6 +29,8 @@ type BridgeHandler struct {
 	// cfg contains the application configuration including upstream URL and API key.
 	// Must not be nil after construction.
 	cfg *config.Config
+	// model stores the model name from the request for use in CreateTransformer.
+	model string
 }
 
 // NewBridgeHandler creates a Gin handler for the /v1/openai-to-anthropic/messages endpoint.
@@ -65,6 +67,13 @@ func (h *BridgeHandler) ValidateRequest(body []byte) error {
 // @pre body is valid JSON.
 // @post Returned body is valid OpenAI ChatCompletion format.
 func (h *BridgeHandler) TransformRequest(body []byte) ([]byte, error) {
+	// Extract model from request body for later use in CreateTransformer
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err == nil {
+		h.model = req.Model
+	}
 	return transformRequest(body)
 }
 
@@ -120,8 +129,9 @@ func (h *BridgeHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 //
 // @pre w != nil and ready to receive writes.
 // @post Caller must call Close() on returned transformer.
-func (h *BridgeHandler) CreateTransformer(w io.Writer) transform.SSETransformer {
-	return toolcall.NewAnthropicTransformer(w)
+func (h *BridgeHandler) CreateTransformer(w io.Writer, model string) transform.SSETransformer {
+	// Use the model from the request body (set during TransformRequest)
+	return toolcall.NewAnthropicTransformer(w, h.model)
 }
 
 // WriteError sends an error response in Anthropic format.
