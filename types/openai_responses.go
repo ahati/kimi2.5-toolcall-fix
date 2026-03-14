@@ -188,7 +188,7 @@ type IncompleteDetails struct {
 // OutputItem represents an output item in the response.
 type OutputItem struct {
 	// Type identifies the output type.
-	// Values: "message", "file_search_call", "web_search_call", "computer_use_call"
+	// Values: "message", "file_search_call", "web_search_call", "computer_use_call", "function_call", "reasoning"
 	Type string `json:"type"`
 	// ID is the unique identifier for this output item.
 	ID string `json:"id,omitempty"`
@@ -201,6 +201,12 @@ type OutputItem struct {
 	Content []OutputContent `json:"content,omitempty"`
 	// CallID for tool calls.
 	CallID string `json:"call_id,omitempty"`
+	// Name is the function name for function_call type.
+	Name string `json:"name,omitempty"`
+	// Arguments are the function arguments for function_call type.
+	Arguments string `json:"arguments,omitempty"`
+	// Summary contains reasoning summary for reasoning type.
+	Summary string `json:"summary,omitempty"`
 	// Action for computer_use_call.
 	Action interface{} `json:"action,omitempty"`
 	// PendingSafetyChecks for computer_use_call.

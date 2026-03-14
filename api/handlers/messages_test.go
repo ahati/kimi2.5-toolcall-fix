@@ -87,18 +87,35 @@ func TestMessagesHandler_TransformRequest(t *testing.T) {
 
 func TestMessagesHandler_UpstreamURL(t *testing.T) {
 	cfg := &config.Config{
-		AnthropicUpstreamURL: "https://api.anthropic.com/v1/messages",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "anthropic",
+					Type:    "anthropic",
+					BaseURL: "https://api.anthropic.com/v1/messages",
+				},
+			},
+		},
 	}
 	h := &MessagesHandler{cfg: cfg}
 
-	if got := h.UpstreamURL(); got != cfg.AnthropicUpstreamURL {
-		t.Errorf("UpstreamURL() = %v, want %v", got, cfg.AnthropicUpstreamURL)
+	expectedURL := "https://api.anthropic.com/v1/messages"
+	if got := h.UpstreamURL(); got != expectedURL {
+		t.Errorf("UpstreamURL() = %v, want %v", got, expectedURL)
 	}
 }
 
 func TestMessagesHandler_ResolveAPIKey(t *testing.T) {
 	cfg := &config.Config{
-		AnthropicAPIKey: "anthropic-api-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:   "anthropic",
+					Type:   "anthropic",
+					APIKey: "anthropic-api-key",
+				},
+			},
+		},
 	}
 	h := &MessagesHandler{cfg: cfg}
 
@@ -107,8 +124,8 @@ func TestMessagesHandler_ResolveAPIKey(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 
 	got := h.ResolveAPIKey(c)
-	if got != cfg.AnthropicAPIKey {
-		t.Errorf("ResolveAPIKey() = %v, want %v", got, cfg.AnthropicAPIKey)
+	if got != "anthropic-api-key" {
+		t.Errorf("ResolveAPIKey() = %v, want %v", got, "anthropic-api-key")
 	}
 }
 

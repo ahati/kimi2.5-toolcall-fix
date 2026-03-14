@@ -1,0 +1,34 @@
+{
+  "providers": [
+    {
+      "name": "chutes",
+      "type": "openai",
+      "base_url": "https://llm.chutes.ai/v1/chat/completions",
+      "envApiKey": "CHUTES_API_KEY"
+    },
+    {
+      "name": "alibaba",
+      "type": "anthropic",
+      "base_url": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages",
+      "envApiKey": "ALIBABA_API_KEY"
+    }
+  ],
+  "models": {
+    "kimi-k2.5": {
+      "provider": "chutes",
+      "model": "moonshotai/Kimi-K2.5-TEE",
+      "tool_call_transform": true
+    },
+    "glm-5": {
+      "provider": "alibaba",
+      "model": "glm-5",
+      "tool_call_transform": false
+    }
+  },
+  "fallback": {
+    "enabled": true,
+    "provider": "chutes",
+    "model": "{model}",
+    "tool_call_transform": true
+  }
+}

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"ai-proxy/api"
@@ -16,11 +17,19 @@ import (
 // @pre Environment variables and command-line flags are available for configuration
 // @post Server is running and listening on the configured port
 // @post All capture middleware is initialized if SSELogDir is configured
-// @note Exits with code 1 if server fails to start
+// @note Exits with code 1 if config file is missing or server fails to start
 // @note Blocks until server is stopped (SIGINT, SIGTERM, or fatal error)
 func main() {
-	// Load configuration from flags, environment variables, and defaults
+	// Load configuration from config file, flags, environment variables, and defaults.
+	// config.Load() internally parses CLI flags and loads the JSON config file.
 	cfg := config.Load()
+
+	// Verify config was loaded successfully (AppConfig is nil if loading failed)
+	if cfg.AppConfig == nil {
+		fmt.Fprintln(os.Stderr, "Error: Failed to load configuration")
+		fmt.Fprintln(os.Stderr, "A config file is required. Use --config-file flag or CONFIG_FILE environment variable.")
+		os.Exit(1)
+	}
 
 	// Initialize logging early so subsequent messages are captured
 	logging.Init()

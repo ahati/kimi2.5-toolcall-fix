@@ -3,29 +3,12 @@
 package config
 
 import (
-	"flag"
 	"os"
 )
 
 // Config holds all configuration settings for the proxy server.
 // All settings are loaded at startup and remain immutable during runtime.
 type Config struct {
-	// OpenAIUpstreamURL is the base URL for OpenAI-compatible API requests.
-	// Default: "https://llm.chutes.ai/v1/chat/completions"
-	// Must be a valid HTTPS URL for secure communication.
-	OpenAIUpstreamURL string
-	// OpenAIUpstreamAPIKey is the API key for authenticating with the OpenAI-compatible API.
-	// Must be set via UPSTREAM_API_KEY environment variable or --upstream-api-key flag.
-	// Empty string results in authentication errors from the upstream API.
-	OpenAIUpstreamAPIKey string
-	// AnthropicUpstreamURL is the base URL for Anthropic-compatible API requests.
-	// Default: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages"
-	// Must be a valid HTTPS URL for secure communication.
-	AnthropicUpstreamURL string
-	// AnthropicAPIKey is the API key for authenticating with the Anthropic-compatible API.
-	// Must be set via ALIBABA_ANTHROPIC_API_KEY environment variable or --anthropic-api-key flag.
-	// Empty string results in authentication errors from the upstream API.
-	AnthropicAPIKey string
 	// Port is the TCP port on which the proxy server listens.
 	// Default: "8080". Must be a valid port number (1-65535).
 	// Ports below 1024 may require elevated privileges.
@@ -34,37 +17,126 @@ type Config struct {
 	// Default: "" (disabled). When set, all requests are logged to JSON files.
 	// Directory must exist and be writable; subdirectories are created per date.
 	SSELogDir string
+	// ConfigFile is the path to the JSON configuration file.
+	// Set via --config-file flag or CONFIG_FILE environment variable.
+	ConfigFile string
+	// AppConfig holds the loaded JSON configuration schema.
+	// Contains provider definitions, model mappings, and fallback settings.
+	AppConfig *Schema
 }
 
-// Load reads configuration from command-line flags and environment variables.
-// Flags take precedence over environment variables, which take precedence over defaults.
+// Load reads configuration from command-line flags, environment variables, and JSON config file.
+// Flags take precedence over environment variables for Port and SSELogDir.
+// JSON config file is required and loaded via --config-file flag or CONFIG_FILE env var.
 //
 // @return *Config - a fully initialized Config instance
 // @post All configuration values are populated with resolved values
 // @post Flag.Parse() has been called, consuming command-line arguments
-// @note Environment variables: UPSTREAM_URL, UPSTREAM_API_KEY, ANTHROPIC_UPSTREAM_URL,
-//
-//	ALIBABA_ANTHROPIC_API_KEY, PORT, SSELOG_DIR
+// @note Environment variables: PORT, SSELOG_DIR, CONFIG_FILE
 func Load() *Config {
-	// Define command-line flags with empty defaults to allow env var fallback
-	upstreamURL := flag.String("upstream-url", "", "Upstream URL (default: https://llm.chutes.ai/v1/chat/completions)")
-	upstreamAPIKey := flag.String("upstream-api-key", "", "Upstream API Key")
-	anthropicUpstreamURL := flag.String("anthropic-upstream-url", "", "Anthropic Upstream URL (default: https://api.anthropic.com/v1/messages)")
-	anthropicAPIKey := flag.String("anthropic-api-key", "", "Anthropic Upstream API Key")
-	port := flag.String("port", "", "Server port (default: 8080)")
-	sseLogDir := flag.String("sse-log-dir", "", "Directory to log SSE responses")
+	// Parse CLI flags to get config file path
+	configFile, err := ParseFlags()
+	if err != nil {
+		// If config file is required but not provided, return config with error info
+		// The caller should check AppConfig == nil
+		return &Config{
+			Port:      getEnvOrFlag("PORT", "", "8080"),
+			SSELogDir: getEnvOrFlag("SSELOG_DIR", "", ""),
+		}
+	}
 
-	flag.Parse()
+	// Load JSON config file
+	loader := NewLoader()
+	appConfig, err := loader.Load(configFile)
+	if err != nil {
+		// Return config with nil AppConfig, caller should handle error
+		return &Config{
+			Port:       getEnvOrFlag("PORT", "", "8080"),
+			SSELogDir:  getEnvOrFlag("SSELOG_DIR", "", ""),
+			ConfigFile: configFile,
+		}
+	}
 
 	// Build config with precedence: flag > env var > default
 	return &Config{
-		OpenAIUpstreamURL:    getEnvOrFlag("UPSTREAM_URL", *upstreamURL, "https://llm.chutes.ai/v1/chat/completions"),
-		OpenAIUpstreamAPIKey: getEnvOrFlag("UPSTREAM_API_KEY", *upstreamAPIKey, ""),
-		AnthropicUpstreamURL: getEnvOrFlag("ANTHROPIC_UPSTREAM_URL", *anthropicUpstreamURL, "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages"),
-		AnthropicAPIKey:      getEnvOrFlag("ALIBABA_ANTHROPIC_API_KEY", *anthropicAPIKey, ""),
-		Port:                 getEnvOrFlag("PORT", *port, "8080"),
-		SSELogDir:            getEnvOrFlag("SSELOG_DIR", *sseLogDir, ""),
+		Port:       getEnvOrFlag("PORT", "", "8080"),
+		SSELogDir:  getEnvOrFlag("SSELOG_DIR", "", ""),
+		ConfigFile: configFile,
+		AppConfig:  appConfig,
 	}
+}
+
+// GetSchema returns the loaded configuration schema.
+// Returns nil if the config file was not loaded successfully.
+//
+// @return *Schema - the loaded schema, or nil if not loaded
+func (c *Config) GetSchema() *Schema {
+	return c.AppConfig
+}
+
+// GetAnthropicUpstreamURL returns the base URL for the first Anthropic-type provider.
+// Returns empty string if no Anthropic provider is configured.
+//
+// @return string - the base URL for Anthropic API, or empty if not found
+func (c *Config) GetAnthropicUpstreamURL() string {
+	provider := c.getProviderByType("anthropic")
+	if provider != nil {
+		return provider.BaseURL
+	}
+	return ""
+}
+
+// GetAnthropicAPIKey returns the API key for the first Anthropic-type provider.
+// Returns empty string if no Anthropic provider is configured.
+//
+// @return string - the API key for Anthropic API, or empty if not found
+func (c *Config) GetAnthropicAPIKey() string {
+	provider := c.getProviderByType("anthropic")
+	if provider != nil {
+		return provider.GetAPIKey()
+	}
+	return ""
+}
+
+// GetOpenAIUpstreamURL returns the base URL for the first OpenAI-type provider.
+// Returns empty string if no OpenAI provider is configured.
+//
+// @return string - the base URL for OpenAI API, or empty if not found
+func (c *Config) GetOpenAIUpstreamURL() string {
+	provider := c.getProviderByType("openai")
+	if provider != nil {
+		return provider.BaseURL
+	}
+	return ""
+}
+
+// GetOpenAIUpstreamAPIKey returns the API key for the first OpenAI-type provider.
+// Returns empty string if no OpenAI provider is configured.
+//
+// @return string - the API key for OpenAI API, or empty if not found
+func (c *Config) GetOpenAIUpstreamAPIKey() string {
+	provider := c.getProviderByType("openai")
+	if provider != nil {
+		return provider.GetAPIKey()
+	}
+	return ""
+}
+
+// getProviderByType returns the first provider matching the given type.
+// Returns nil if no matching provider is found or if AppConfig is nil.
+//
+// @param providerType - the type to match (e.g., "anthropic", "openai")
+// @return *Provider - the matching provider, or nil if not found
+func (c *Config) getProviderByType(providerType string) *Provider {
+	if c.AppConfig == nil {
+		return nil
+	}
+	for i := range c.AppConfig.Providers {
+		if c.AppConfig.Providers[i].Type == providerType {
+			return &c.AppConfig.Providers[i]
+		}
+	}
+	return nil
 }
 
 // getEnvOrFlag returns the flag value if non-empty, otherwise the environment variable if set, otherwise the default value.

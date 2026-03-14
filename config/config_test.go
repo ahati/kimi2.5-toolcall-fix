@@ -7,12 +7,9 @@ import (
 )
 
 func cleanupEnv() {
-	os.Unsetenv("UPSTREAM_URL")
-	os.Unsetenv("UPSTREAM_API_KEY")
-	os.Unsetenv("ANTHROPIC_UPSTREAM_URL")
-	os.Unsetenv("ALIBABA_ANTHROPIC_API_KEY")
 	os.Unsetenv("PORT")
 	os.Unsetenv("SSELOG_DIR")
+	os.Unsetenv("CONFIG_FILE")
 }
 
 func TestGetEnvOrFlag(t *testing.T) {
@@ -193,57 +190,36 @@ func TestGetEnvOrFlag_AllCombinations(t *testing.T) {
 
 func TestLoad_DefaultValues(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+	os.Args = []string{"test"}
+	defer func() { os.Args = []string{"test"} }()
 	cleanupEnv()
 
 	cfg := Load()
 
-	if cfg.OpenAIUpstreamURL != "https://llm.chutes.ai/v1/chat/completions" {
-		t.Errorf("OpenAIUpstreamURL = %q, want default", cfg.OpenAIUpstreamURL)
-	}
-	if cfg.OpenAIUpstreamAPIKey != "" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want empty", cfg.OpenAIUpstreamAPIKey)
-	}
-	if cfg.AnthropicUpstreamURL != "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages" {
-		t.Errorf("AnthropicUpstreamURL = %q, want default", cfg.AnthropicUpstreamURL)
-	}
-	if cfg.AnthropicAPIKey != "" {
-		t.Errorf("AnthropicAPIKey = %q, want empty", cfg.AnthropicAPIKey)
-	}
 	if cfg.Port != "8080" {
 		t.Errorf("Port = %q, want 8080", cfg.Port)
 	}
 	if cfg.SSELogDir != "" {
 		t.Errorf("SSELogDir = %q, want empty", cfg.SSELogDir)
 	}
+	// Without a config file, AppConfig should be nil
+	if cfg.AppConfig != nil {
+		t.Errorf("AppConfig should be nil when no config file is provided")
+	}
 }
 
 func TestLoad_EnvironmentVariables(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+	os.Args = []string{"test"}
+	defer func() { os.Args = []string{"test"} }()
 	cleanupEnv()
 
-	os.Setenv("UPSTREAM_URL", "https://custom.upstream.com/v1")
-	os.Setenv("UPSTREAM_API_KEY", "custom-api-key-123")
-	os.Setenv("ANTHROPIC_UPSTREAM_URL", "https://custom.anthropic.com/v1")
-	os.Setenv("ALIBABA_ANTHROPIC_API_KEY", "anthropic-key-456")
 	os.Setenv("PORT", "9090")
 	os.Setenv("SSELOG_DIR", "/var/log/sse")
-
 	defer cleanupEnv()
 
 	cfg := Load()
 
-	if cfg.OpenAIUpstreamURL != "https://custom.upstream.com/v1" {
-		t.Errorf("OpenAIUpstreamURL = %q, want custom URL", cfg.OpenAIUpstreamURL)
-	}
-	if cfg.OpenAIUpstreamAPIKey != "custom-api-key-123" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want custom key", cfg.OpenAIUpstreamAPIKey)
-	}
-	if cfg.AnthropicUpstreamURL != "https://custom.anthropic.com/v1" {
-		t.Errorf("AnthropicUpstreamURL = %q, want custom URL", cfg.AnthropicUpstreamURL)
-	}
-	if cfg.AnthropicAPIKey != "anthropic-key-456" {
-		t.Errorf("AnthropicAPIKey = %q, want custom key", cfg.AnthropicAPIKey)
-	}
 	if cfg.Port != "9090" {
 		t.Errorf("Port = %q, want 9090", cfg.Port)
 	}
@@ -254,139 +230,201 @@ func TestLoad_EnvironmentVariables(t *testing.T) {
 
 func TestLoad_PartialEnvironmentVariables(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+	os.Args = []string{"test"}
+	defer func() { os.Args = []string{"test"} }()
 	cleanupEnv()
 
 	os.Setenv("PORT", "3000")
-	os.Setenv("SSELOG_DIR", "./logs")
-
 	defer cleanupEnv()
 
 	cfg := Load()
 
-	if cfg.OpenAIUpstreamURL != "https://llm.chutes.ai/v1/chat/completions" {
-		t.Errorf("OpenAIUpstreamURL = %q, want default", cfg.OpenAIUpstreamURL)
-	}
-	if cfg.OpenAIUpstreamAPIKey != "" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want empty", cfg.OpenAIUpstreamAPIKey)
-	}
 	if cfg.Port != "3000" {
 		t.Errorf("Port = %q, want 3000", cfg.Port)
 	}
-	if cfg.SSELogDir != "./logs" {
-		t.Errorf("SSELogDir = %q, want ./logs", cfg.SSELogDir)
+	if cfg.SSELogDir != "" {
+		t.Errorf("SSELogDir = %q, want empty", cfg.SSELogDir)
 	}
 }
 
-func TestLoad_WithFlags(t *testing.T) {
+func TestLoad_ConfigFile(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
-	os.Args = []string{
-		"test",
-		"-upstream-url=https://flag.upstream.com/v1",
-		"-upstream-api-key=flag-api-key",
-		"-anthropic-upstream-url=https://flag.anthropic.com/v1",
-		"-anthropic-api-key=flag-anthropic-key",
-		"-port=7070",
-		"-sse-log-dir=/flag/log/dir",
-	}
-	defer func() { os.Args = []string{"test"} }()
 
+	// Create a temporary config file
+	tmpFile, err := os.CreateTemp("", "config-*.json")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	configContent := `{
+		"providers": [
+			{
+				"name": "test-provider",
+				"type": "openai",
+				"base_url": "https://api.example.com/v1",
+				"apiKey": "test-key"
+			}
+		],
+		"models": {
+			"test-model": {
+				"provider": "test-provider",
+				"model": "gpt-4"
+			}
+		},
+		"fallback": {
+			"enabled": false
+		}
+	}`
+
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	tmpFile.Close()
+
+	os.Args = []string{"test", "-config-file=" + tmpFile.Name()}
+	defer func() { os.Args = []string{"test"} }()
 	cleanupEnv()
 
 	cfg := Load()
 
-	if cfg.OpenAIUpstreamURL != "https://flag.upstream.com/v1" {
-		t.Errorf("OpenAIUpstreamURL = %q, want flag value", cfg.OpenAIUpstreamURL)
+	if cfg.ConfigFile != tmpFile.Name() {
+		t.Errorf("ConfigFile = %q, want %q", cfg.ConfigFile, tmpFile.Name())
 	}
-	if cfg.OpenAIUpstreamAPIKey != "flag-api-key" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want flag value", cfg.OpenAIUpstreamAPIKey)
+	if cfg.AppConfig == nil {
+		t.Fatal("AppConfig should not be nil")
 	}
-	if cfg.AnthropicUpstreamURL != "https://flag.anthropic.com/v1" {
-		t.Errorf("AnthropicUpstreamURL = %q, want flag value", cfg.AnthropicUpstreamURL)
+	if len(cfg.AppConfig.Providers) != 1 {
+		t.Errorf("Providers count = %d, want 1", len(cfg.AppConfig.Providers))
 	}
-	if cfg.AnthropicAPIKey != "flag-anthropic-key" {
-		t.Errorf("AnthropicAPIKey = %q, want flag value", cfg.AnthropicAPIKey)
+	if cfg.AppConfig.Providers[0].Name != "test-provider" {
+		t.Errorf("Provider name = %q, want test-provider", cfg.AppConfig.Providers[0].Name)
 	}
+	if _, ok := cfg.AppConfig.Models["test-model"]; !ok {
+		t.Error("Expected test-model in models map")
+	}
+}
+
+func TestLoad_ConfigFileFromEnv(t *testing.T) {
+	// Create a temporary config file
+	tmpFile, err := os.CreateTemp("", "config-*.json")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	configContent := `{
+		"providers": [
+			{
+				"name": "env-provider",
+				"type": "anthropic",
+				"base_url": "https://api.anthropic.com",
+				"apiKey": "test-api-key"
+			}
+		],
+		"models": {},
+		"fallback": {}
+	}`
+
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	tmpFile.Close()
+
+	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+	originalArgs := os.Args
+	os.Args = []string{"test"}
+	defer func() { os.Args = originalArgs }()
+
+	os.Unsetenv("PORT")
+	os.Unsetenv("SSELOG_DIR")
+	os.Setenv("CONFIG_FILE", tmpFile.Name())
+	defer os.Unsetenv("CONFIG_FILE")
+
+	cfg := Load()
+
+	if cfg.ConfigFile != tmpFile.Name() {
+		t.Errorf("ConfigFile = %q, want %q", cfg.ConfigFile, tmpFile.Name())
+	}
+	if cfg.AppConfig == nil {
+		t.Fatal("AppConfig should not be nil")
+	}
+	if cfg.AppConfig.Providers[0].Name != "env-provider" {
+		t.Errorf("Provider name = %q, want env-provider", cfg.AppConfig.Providers[0].Name)
+	}
+}
+
+func TestLoad_NonexistentConfigFile(t *testing.T) {
+	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+	os.Args = []string{"test", "-config-file=/nonexistent/path/config.json"}
+	defer func() { os.Args = []string{"test"} }()
+	cleanupEnv()
+
+	cfg := Load()
+
+	// Should have nil AppConfig when file doesn't exist
+	if cfg.AppConfig != nil {
+		t.Error("AppConfig should be nil for nonexistent file")
+	}
+}
+
+func TestGetSchema(t *testing.T) {
+	// Test with nil AppConfig
+	cfg := &Config{AppConfig: nil}
+	if cfg.GetSchema() != nil {
+		t.Error("GetSchema() should return nil when AppConfig is nil")
+	}
+
+	// Test with valid AppConfig
+	schema := &Schema{
+		Providers: []Provider{{Name: "test", Type: "openai", BaseURL: "https://example.com"}},
+	}
+	cfg = &Config{AppConfig: schema}
+	if cfg.GetSchema() != schema {
+		t.Error("GetSchema() should return the AppConfig")
+	}
+}
+
+func TestLoad_PortAndSSELogDirWithConfigFile(t *testing.T) {
+	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+
+	// Create a temporary config file
+	tmpFile, err := os.CreateTemp("", "config-*.json")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	configContent := `{
+		"providers": [
+			{
+				"name": "test-provider",
+				"type": "openai",
+				"base_url": "https://api.example.com",
+				"apiKey": "test-key"
+			}
+		],
+		"models": {},
+		"fallback": {}
+	}`
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	tmpFile.Close()
+
+	os.Args = []string{"test", "-config-file=" + tmpFile.Name()}
+	defer func() { os.Args = []string{"test"} }()
+	cleanupEnv()
+	os.Setenv("PORT", "7070")
+	os.Setenv("SSELOG_DIR", "/var/log/test")
+	defer cleanupEnv()
+
+	cfg := Load()
+
 	if cfg.Port != "7070" {
 		t.Errorf("Port = %q, want 7070", cfg.Port)
 	}
-	if cfg.SSELogDir != "/flag/log/dir" {
-		t.Errorf("SSELogDir = %q, want /flag/log/dir", cfg.SSELogDir)
-	}
-}
-
-func TestLoad_FlagOverridesEnv(t *testing.T) {
-	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
-	os.Args = []string{"test", "-port=8888"}
-	defer func() { os.Args = []string{"test"} }()
-
-	os.Setenv("PORT", "9999")
-	defer cleanupEnv()
-
-	cfg := Load()
-
-	if cfg.Port != "8888" {
-		t.Errorf("Port = %q, want 8888 (flag should override env)", cfg.Port)
-	}
-}
-
-func TestLoad_FlagOverridesAllEnv(t *testing.T) {
-	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
-	os.Args = []string{
-		"test",
-		"-upstream-url=https://flag.override/v1",
-		"-upstream-api-key=flag-key-override",
-		"-port=5555",
-	}
-	defer func() { os.Args = []string{"test"} }()
-
-	os.Setenv("UPSTREAM_URL", "https://env.override/v1")
-	os.Setenv("UPSTREAM_API_KEY", "env-key-override")
-	os.Setenv("PORT", "6666")
-	defer cleanupEnv()
-
-	cfg := Load()
-
-	if cfg.OpenAIUpstreamURL != "https://flag.override/v1" {
-		t.Errorf("OpenAIUpstreamURL = %q, want flag value", cfg.OpenAIUpstreamURL)
-	}
-	if cfg.OpenAIUpstreamAPIKey != "flag-key-override" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want flag value", cfg.OpenAIUpstreamAPIKey)
-	}
-	if cfg.Port != "5555" {
-		t.Errorf("Port = %q, want 5555 (flag should override env)", cfg.Port)
-	}
-}
-
-func TestConfig_AllFieldsSetFromEnv(t *testing.T) {
-	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
-	cleanupEnv()
-
-	os.Setenv("UPSTREAM_URL", "https://test1.com/v1")
-	os.Setenv("UPSTREAM_API_KEY", "key1")
-	os.Setenv("ANTHROPIC_UPSTREAM_URL", "https://test2.com/v1")
-	os.Setenv("ALIBABA_ANTHROPIC_API_KEY", "key2")
-	os.Setenv("PORT", "1234")
-	os.Setenv("SSELOG_DIR", "/test/logs")
-	defer cleanupEnv()
-
-	cfg := Load()
-
-	if cfg.OpenAIUpstreamURL != "https://test1.com/v1" {
-		t.Errorf("OpenAIUpstreamURL = %q, want https://test1.com/v1", cfg.OpenAIUpstreamURL)
-	}
-	if cfg.OpenAIUpstreamAPIKey != "key1" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want key1", cfg.OpenAIUpstreamAPIKey)
-	}
-	if cfg.AnthropicUpstreamURL != "https://test2.com/v1" {
-		t.Errorf("AnthropicUpstreamURL = %q, want https://test2.com/v1", cfg.AnthropicUpstreamURL)
-	}
-	if cfg.AnthropicAPIKey != "key2" {
-		t.Errorf("AnthropicAPIKey = %q, want key2", cfg.AnthropicAPIKey)
-	}
-	if cfg.Port != "1234" {
-		t.Errorf("Port = %q, want 1234", cfg.Port)
-	}
-	if cfg.SSELogDir != "/test/logs" {
-		t.Errorf("SSELogDir = %q, want /test/logs", cfg.SSELogDir)
+	if cfg.SSELogDir != "/var/log/test" {
+		t.Errorf("SSELogDir = %q, want /var/log/test", cfg.SSELogDir)
 	}
 }

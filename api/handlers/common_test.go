@@ -640,11 +640,19 @@ func TestProxyRequest_BadUpstreamURL(t *testing.T) {
 
 func TestNewCompletionsHandler(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "openai",
+					Type:    "openai",
+					BaseURL: "https://api.example.com/v1/chat/completions",
+					APIKey:  "test-key",
+				},
+			},
+		},
 	}
 
-	handler := NewCompletionsHandler(cfg)
+	handler := NewCompletionsHandler(cfg, nil)
 	if handler == nil {
 		t.Error("expected non-nil handler")
 	}
@@ -652,23 +660,19 @@ func TestNewCompletionsHandler(t *testing.T) {
 
 func TestNewMessagesHandler(t *testing.T) {
 	cfg := &config.Config{
-		AnthropicUpstreamURL: "https://api.anthropic.com/v1/messages",
-		AnthropicAPIKey:      "test-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "anthropic",
+					Type:    "anthropic",
+					BaseURL: "https://api.anthropic.com/v1/messages",
+					APIKey:  "test-key",
+				},
+			},
+		},
 	}
 
-	handler := NewMessagesHandler(cfg)
-	if handler == nil {
-		t.Error("expected non-nil handler")
-	}
-}
-
-func TestNewBridgeHandler(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
-	}
-
-	handler := NewBridgeHandler(cfg)
+	handler := NewMessagesHandler(cfg, nil)
 	if handler == nil {
 		t.Error("expected non-nil handler")
 	}
@@ -676,8 +680,16 @@ func TestNewBridgeHandler(t *testing.T) {
 
 func TestNewModelsHandler(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "openai",
+					Type:    "openai",
+					BaseURL: "https://api.example.com/v1/chat/completions",
+					APIKey:  "test-key",
+				},
+			},
+		},
 	}
 
 	handler := NewModelsHandler(cfg)
