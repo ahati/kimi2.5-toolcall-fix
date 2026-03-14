@@ -75,7 +75,7 @@ func (h *MessagesHandler) TransformRequest(body []byte) ([]byte, error) {
 // @pre h.cfg != nil
 // @post URL includes the full path to the messages endpoint.
 func (h *MessagesHandler) UpstreamURL() string {
-	return h.cfg.AnthropicUpstreamURL
+	return h.cfg.AnthropicUpstreamURL()
 }
 
 // ResolveAPIKey returns the configured Anthropic API key.
@@ -87,7 +87,7 @@ func (h *MessagesHandler) UpstreamURL() string {
 // @pre h.cfg != nil
 // @note This implementation uses configured key, not per-request key.
 func (h *MessagesHandler) ResolveAPIKey(c *gin.Context) string {
-	return h.cfg.AnthropicAPIKey
+	return h.cfg.AnthropicAPIKey()
 }
 
 // ForwardHeaders copies X-*, Anthropic-Version, and Anthropic-Beta headers

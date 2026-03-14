@@ -639,10 +639,16 @@ func TestProxyRequest_BadUpstreamURL(t *testing.T) {
 }
 
 func TestNewCompletionsHandler(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{
+				Name:    "test-openai",
+				Type:    "openai",
+				BaseURL: "https://api.example.com/v1/chat/completions",
+				APIKey:  "test-key",
+			},
+		},
+	})
 
 	handler := NewCompletionsHandler(cfg)
 	if handler == nil {
@@ -651,10 +657,16 @@ func TestNewCompletionsHandler(t *testing.T) {
 }
 
 func TestNewMessagesHandler(t *testing.T) {
-	cfg := &config.Config{
-		AnthropicUpstreamURL: "https://api.anthropic.com/v1/messages",
-		AnthropicAPIKey:      "test-key",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{
+				Name:    "test-anthropic",
+				Type:    "anthropic",
+				BaseURL: "https://api.anthropic.com/v1/messages",
+				APIKey:  "test-key",
+			},
+		},
+	})
 
 	handler := NewMessagesHandler(cfg)
 	if handler == nil {
@@ -663,10 +675,16 @@ func TestNewMessagesHandler(t *testing.T) {
 }
 
 func TestNewBridgeHandler(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{
+				Name:    "test-openai",
+				Type:    "openai",
+				BaseURL: "https://api.example.com/v1/chat/completions",
+				APIKey:  "test-key",
+			},
+		},
+	})
 
 	handler := NewBridgeHandler(cfg)
 	if handler == nil {
@@ -675,10 +693,16 @@ func TestNewBridgeHandler(t *testing.T) {
 }
 
 func TestNewModelsHandler(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{
+				Name:    "test-openai",
+				Type:    "openai",
+				BaseURL: "https://api.example.com/v1/chat/completions",
+				APIKey:  "test-key",
+			},
+		},
+	})
 
 	handler := NewModelsHandler(cfg)
 	if handler == nil {

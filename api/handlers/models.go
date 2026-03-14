@@ -111,7 +111,7 @@ func (h *ModelsHandler) resolveAPIKey(c *gin.Context) string {
 		return strings.TrimPrefix(auth, "Bearer ")
 	}
 	// Fall back to configured API key
-	return h.cfg.OpenAIUpstreamAPIKey
+	return h.cfg.OpenAIUpstreamAPIKey()
 }
 
 // buildModelsURL constructs the models endpoint URL from the configured upstream URL.
@@ -122,7 +122,7 @@ func (h *ModelsHandler) resolveAPIKey(c *gin.Context) string {
 // @pre h.cfg.OpenAIUpstreamURL ends with "chat/completions" or similar path.
 // @post Returned URL ends with "models" path.
 func (h *ModelsHandler) buildModelsURL() string {
-	url := h.cfg.OpenAIUpstreamURL
+	url := h.cfg.OpenAIUpstreamURL()
 	// Replace chat/completions path with models
 	// This assumes upstream URL is configured to the completions endpoint
 	return strings.TrimSuffix(url, "chat/completions") + "models"

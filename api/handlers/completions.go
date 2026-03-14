@@ -75,7 +75,7 @@ func (h *CompletionsHandler) TransformRequest(body []byte) ([]byte, error) {
 // @pre h.cfg != nil
 // @post URL includes the full path to the chat completions endpoint.
 func (h *CompletionsHandler) UpstreamURL() string {
-	return h.cfg.OpenAIUpstreamURL
+	return h.cfg.OpenAIUpstreamURL()
 }
 
 // ResolveAPIKey returns the configured OpenAI upstream API key.
@@ -87,7 +87,7 @@ func (h *CompletionsHandler) UpstreamURL() string {
 // @pre h.cfg != nil
 // @note This implementation uses configured key, not per-request key.
 func (h *CompletionsHandler) ResolveAPIKey(c *gin.Context) string {
-	return h.cfg.OpenAIUpstreamAPIKey
+	return h.cfg.OpenAIUpstreamAPIKey()
 }
 
 // ForwardHeaders copies custom headers (X-*) and the Extra header to the upstream request.

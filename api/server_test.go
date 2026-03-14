@@ -35,14 +35,12 @@ func TestNewServer(t *testing.T) {
 		},
 		{
 			name: "with all config fields",
-			config: &config.Config{
-				OpenAIUpstreamURL:    "https://api.example.com/v1",
-				OpenAIUpstreamAPIKey: "test-key",
-				AnthropicUpstreamURL: "https://api.anthropic.com/v1",
-				AnthropicAPIKey:      "anthropic-key",
-				Port:                 "9090",
-				SSELogDir:            "/tmp/logs",
-			},
+			config: config.LoadConfig(&config.SchemaConfig{
+				Providers: []config.Provider{
+					{Name: "openai", Type: "openai", BaseURL: "https://api.example.com/v1", APIKey: "test-key"},
+					{Name: "anthropic", Type: "anthropic", BaseURL: "https://api.anthropic.com/v1", APIKey: "anthropic-key"},
+				},
+			}),
 			wantMode: gin.ReleaseMode,
 		},
 	}
@@ -204,9 +202,11 @@ func TestServer_Routes_Models(t *testing.T) {
 }
 
 func TestServer_Routes_Models_WithAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "test-key",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{Name: "openai", Type: "openai", BaseURL: "https://api.example.com/v1", APIKey: "test-key"},
+		},
+	})
 	server := NewServer(cfg)
 
 	w := httptest.NewRecorder()
@@ -309,20 +309,21 @@ func TestServer_Run_ValidAddress(t *testing.T) {
 }
 
 func TestNewServer_SetsConfigCorrectly(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://upstream.example.com",
-		OpenAIUpstreamAPIKey: "test-api-key",
-		Port:                 "8080",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{Name: "openai", Type: "openai", BaseURL: "https://upstream.example.com", APIKey: "test-api-key"},
+		},
+	})
+	cfg.Port = "8080"
 
 	server := NewServer(cfg)
 
-	if server.config.OpenAIUpstreamURL != cfg.OpenAIUpstreamURL {
-		t.Errorf("expected OpenAIUpstreamURL %s, got %s", cfg.OpenAIUpstreamURL, server.config.OpenAIUpstreamURL)
+	if server.config.OpenAIUpstreamURL() != cfg.OpenAIUpstreamURL() {
+		t.Errorf("expected OpenAIUpstreamURL %s, got %s", cfg.OpenAIUpstreamURL(), server.config.OpenAIUpstreamURL())
 	}
 
-	if server.config.OpenAIUpstreamAPIKey != cfg.OpenAIUpstreamAPIKey {
-		t.Errorf("expected OpenAIUpstreamAPIKey %s, got %s", cfg.OpenAIUpstreamAPIKey, server.config.OpenAIUpstreamAPIKey)
+	if server.config.OpenAIUpstreamAPIKey() != cfg.OpenAIUpstreamAPIKey() {
+		t.Errorf("expected OpenAIUpstreamAPIKey %s, got %s", cfg.OpenAIUpstreamAPIKey(), server.config.OpenAIUpstreamAPIKey())
 	}
 
 	if server.config.Port != cfg.Port {

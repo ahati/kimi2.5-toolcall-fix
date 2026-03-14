@@ -195,25 +195,12 @@ func TestLoad_DefaultValues(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
 	cleanupEnv()
 
-	cfg := Load()
-
-	if cfg.OpenAIUpstreamURL != "https://llm.chutes.ai/v1/chat/completions" {
-		t.Errorf("OpenAIUpstreamURL = %q, want default", cfg.OpenAIUpstreamURL)
+	cfg, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error when --config-file not provided")
 	}
-	if cfg.OpenAIUpstreamAPIKey != "" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want empty", cfg.OpenAIUpstreamAPIKey)
-	}
-	if cfg.AnthropicUpstreamURL != "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages" {
-		t.Errorf("AnthropicUpstreamURL = %q, want default", cfg.AnthropicUpstreamURL)
-	}
-	if cfg.AnthropicAPIKey != "" {
-		t.Errorf("AnthropicAPIKey = %q, want empty", cfg.AnthropicAPIKey)
-	}
-	if cfg.Port != "8080" {
-		t.Errorf("Port = %q, want 8080", cfg.Port)
-	}
-	if cfg.SSELogDir != "" {
-		t.Errorf("SSELogDir = %q, want empty", cfg.SSELogDir)
+	if cfg != nil {
+		t.Errorf("Load() returned non-nil config on error: %v", cfg)
 	}
 }
 
@@ -230,25 +217,12 @@ func TestLoad_EnvironmentVariables(t *testing.T) {
 
 	defer cleanupEnv()
 
-	cfg := Load()
-
-	if cfg.OpenAIUpstreamURL != "https://custom.upstream.com/v1" {
-		t.Errorf("OpenAIUpstreamURL = %q, want custom URL", cfg.OpenAIUpstreamURL)
+	cfg, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error when --config-file not provided")
 	}
-	if cfg.OpenAIUpstreamAPIKey != "custom-api-key-123" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want custom key", cfg.OpenAIUpstreamAPIKey)
-	}
-	if cfg.AnthropicUpstreamURL != "https://custom.anthropic.com/v1" {
-		t.Errorf("AnthropicUpstreamURL = %q, want custom URL", cfg.AnthropicUpstreamURL)
-	}
-	if cfg.AnthropicAPIKey != "anthropic-key-456" {
-		t.Errorf("AnthropicAPIKey = %q, want custom key", cfg.AnthropicAPIKey)
-	}
-	if cfg.Port != "9090" {
-		t.Errorf("Port = %q, want 9090", cfg.Port)
-	}
-	if cfg.SSELogDir != "/var/log/sse" {
-		t.Errorf("SSELogDir = %q, want /var/log/sse", cfg.SSELogDir)
+	if cfg != nil {
+		t.Errorf("Load() returned non-nil config on error: %v", cfg)
 	}
 }
 
@@ -261,19 +235,12 @@ func TestLoad_PartialEnvironmentVariables(t *testing.T) {
 
 	defer cleanupEnv()
 
-	cfg := Load()
-
-	if cfg.OpenAIUpstreamURL != "https://llm.chutes.ai/v1/chat/completions" {
-		t.Errorf("OpenAIUpstreamURL = %q, want default", cfg.OpenAIUpstreamURL)
+	cfg, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error when --config-file not provided")
 	}
-	if cfg.OpenAIUpstreamAPIKey != "" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want empty", cfg.OpenAIUpstreamAPIKey)
-	}
-	if cfg.Port != "3000" {
-		t.Errorf("Port = %q, want 3000", cfg.Port)
-	}
-	if cfg.SSELogDir != "./logs" {
-		t.Errorf("SSELogDir = %q, want ./logs", cfg.SSELogDir)
+	if cfg != nil {
+		t.Errorf("Load() returned non-nil config on error: %v", cfg)
 	}
 }
 
@@ -292,25 +259,12 @@ func TestLoad_WithFlags(t *testing.T) {
 
 	cleanupEnv()
 
-	cfg := Load()
-
-	if cfg.OpenAIUpstreamURL != "https://flag.upstream.com/v1" {
-		t.Errorf("OpenAIUpstreamURL = %q, want flag value", cfg.OpenAIUpstreamURL)
+	cfg, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error when --config-file not provided")
 	}
-	if cfg.OpenAIUpstreamAPIKey != "flag-api-key" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want flag value", cfg.OpenAIUpstreamAPIKey)
-	}
-	if cfg.AnthropicUpstreamURL != "https://flag.anthropic.com/v1" {
-		t.Errorf("AnthropicUpstreamURL = %q, want flag value", cfg.AnthropicUpstreamURL)
-	}
-	if cfg.AnthropicAPIKey != "flag-anthropic-key" {
-		t.Errorf("AnthropicAPIKey = %q, want flag value", cfg.AnthropicAPIKey)
-	}
-	if cfg.Port != "7070" {
-		t.Errorf("Port = %q, want 7070", cfg.Port)
-	}
-	if cfg.SSELogDir != "/flag/log/dir" {
-		t.Errorf("SSELogDir = %q, want /flag/log/dir", cfg.SSELogDir)
+	if cfg != nil {
+		t.Errorf("Load() returned non-nil config on error: %v", cfg)
 	}
 }
 
@@ -322,10 +276,12 @@ func TestLoad_FlagOverridesEnv(t *testing.T) {
 	os.Setenv("PORT", "9999")
 	defer cleanupEnv()
 
-	cfg := Load()
-
-	if cfg.Port != "8888" {
-		t.Errorf("Port = %q, want 8888 (flag should override env)", cfg.Port)
+	cfg, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error when --config-file not provided")
+	}
+	if cfg != nil {
+		t.Errorf("Load() returned non-nil config on error: %v", cfg)
 	}
 }
 
@@ -344,16 +300,12 @@ func TestLoad_FlagOverridesAllEnv(t *testing.T) {
 	os.Setenv("PORT", "6666")
 	defer cleanupEnv()
 
-	cfg := Load()
-
-	if cfg.OpenAIUpstreamURL != "https://flag.override/v1" {
-		t.Errorf("OpenAIUpstreamURL = %q, want flag value", cfg.OpenAIUpstreamURL)
+	cfg, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error when --config-file not provided")
 	}
-	if cfg.OpenAIUpstreamAPIKey != "flag-key-override" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want flag value", cfg.OpenAIUpstreamAPIKey)
-	}
-	if cfg.Port != "5555" {
-		t.Errorf("Port = %q, want 5555 (flag should override env)", cfg.Port)
+	if cfg != nil {
+		t.Errorf("Load() returned non-nil config on error: %v", cfg)
 	}
 }
 
@@ -369,24 +321,11 @@ func TestConfig_AllFieldsSetFromEnv(t *testing.T) {
 	os.Setenv("SSELOG_DIR", "/test/logs")
 	defer cleanupEnv()
 
-	cfg := Load()
-
-	if cfg.OpenAIUpstreamURL != "https://test1.com/v1" {
-		t.Errorf("OpenAIUpstreamURL = %q, want https://test1.com/v1", cfg.OpenAIUpstreamURL)
+	cfg, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error when --config-file not provided")
 	}
-	if cfg.OpenAIUpstreamAPIKey != "key1" {
-		t.Errorf("OpenAIUpstreamAPIKey = %q, want key1", cfg.OpenAIUpstreamAPIKey)
-	}
-	if cfg.AnthropicUpstreamURL != "https://test2.com/v1" {
-		t.Errorf("AnthropicUpstreamURL = %q, want https://test2.com/v1", cfg.AnthropicUpstreamURL)
-	}
-	if cfg.AnthropicAPIKey != "key2" {
-		t.Errorf("AnthropicAPIKey = %q, want key2", cfg.AnthropicAPIKey)
-	}
-	if cfg.Port != "1234" {
-		t.Errorf("Port = %q, want 1234", cfg.Port)
-	}
-	if cfg.SSELogDir != "/test/logs" {
-		t.Errorf("SSELogDir = %q, want /test/logs", cfg.SSELogDir)
+	if cfg != nil {
+		t.Errorf("Load() returned non-nil config on error: %v", cfg)
 	}
 }

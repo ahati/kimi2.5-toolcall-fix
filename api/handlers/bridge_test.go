@@ -85,20 +85,35 @@ func TestBridgeHandler_TransformRequest(t *testing.T) {
 }
 
 func TestBridgeHandler_UpstreamURL(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL: "https://api.example.com/v1/chat/completions",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{
+				Name:    "test-openai",
+				Type:    "openai",
+				BaseURL: "https://api.example.com/v1/chat/completions",
+				APIKey:  "test-key",
+			},
+		},
+	})
 	h := &BridgeHandler{cfg: cfg}
 
-	if got := h.UpstreamURL(); got != cfg.OpenAIUpstreamURL {
-		t.Errorf("UpstreamURL() = %v, want %v", got, cfg.OpenAIUpstreamURL)
+	want := "https://api.example.com/v1/chat/completions"
+	if got := h.UpstreamURL(); got != want {
+		t.Errorf("UpstreamURL() = %v, want %v", got, want)
 	}
 }
 
 func TestBridgeHandler_ResolveAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "test-api-key",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{
+				Name:    "test-openai",
+				Type:    "openai",
+				BaseURL: "https://api.example.com/v1/chat/completions",
+				APIKey:  "test-api-key",
+			},
+		},
+	})
 	h := &BridgeHandler{cfg: cfg}
 
 	w := httptest.NewRecorder()
@@ -106,8 +121,8 @@ func TestBridgeHandler_ResolveAPIKey(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 
 	got := h.ResolveAPIKey(c)
-	if got != cfg.OpenAIUpstreamAPIKey {
-		t.Errorf("ResolveAPIKey() = %v, want %v", got, cfg.OpenAIUpstreamAPIKey)
+	if got != "test-api-key" {
+		t.Errorf("ResolveAPIKey() = %v, want %v", got, "test-api-key")
 	}
 }
 
