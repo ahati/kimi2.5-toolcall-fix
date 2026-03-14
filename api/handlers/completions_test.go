@@ -12,8 +12,8 @@ import (
 )
 
 func TestCompletionsHandler_ValidateRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &CompletionsHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &CompletionsHandler{router: r}
 
 	tests := []struct {
 		name    string
@@ -48,8 +48,17 @@ func TestCompletionsHandler_ValidateRequest(t *testing.T) {
 }
 
 func TestCompletionsHandler_TransformRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &CompletionsHandler{cfg: cfg}
+	r := &mockRouter{
+		providers: []config.Provider{
+			{
+				Name:    "test-provider",
+				Type:    "openai",
+				BaseURL: "https://api.example.com",
+				APIKey:  "test-key",
+			},
+		},
+	}
+	h := &CompletionsHandler{router: r}
 
 	tests := []struct {
 		name    string
@@ -86,35 +95,56 @@ func TestCompletionsHandler_TransformRequest(t *testing.T) {
 }
 
 func TestCompletionsHandler_UpstreamURL(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL: "https://api.example.com/v1/chat/completions",
+	r := &mockRouter{
+		providers: []config.Provider{
+			{
+				Name:    "test-openai",
+				Type:    "openai",
+				BaseURL: "https://api.example.com/v1/chat/completions",
+				APIKey:  "test-key",
+			},
+		},
 	}
-	h := &CompletionsHandler{cfg: cfg}
+	h := &CompletionsHandler{router: r}
 
-	if got := h.UpstreamURL(); got != cfg.OpenAIUpstreamURL {
-		t.Errorf("UpstreamURL() = %v, want %v", got, cfg.OpenAIUpstreamURL)
+	body := []byte(`{"model": "test-model"}`)
+	h.TransformRequest(body)
+
+	want := "https://api.example.com/v1/chat/completions"
+	if got := h.UpstreamURL(); got != want {
+		t.Errorf("UpstreamURL() = %v, want %v", got, want)
 	}
 }
 
 func TestCompletionsHandler_ResolveAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "test-api-key",
+	r := &mockRouter{
+		providers: []config.Provider{
+			{
+				Name:    "test-openai",
+				Type:    "openai",
+				BaseURL: "https://api.example.com/v1/chat/completions",
+				APIKey:  "test-api-key",
+			},
+		},
 	}
-	h := &CompletionsHandler{cfg: cfg}
+	h := &CompletionsHandler{router: r}
+
+	body := []byte(`{"model": "test-model"}`)
+	h.TransformRequest(body)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 
 	got := h.ResolveAPIKey(c)
-	if got != cfg.OpenAIUpstreamAPIKey {
-		t.Errorf("ResolveAPIKey() = %v, want %v", got, cfg.OpenAIUpstreamAPIKey)
+	if got != "test-api-key" {
+		t.Errorf("ResolveAPIKey() = %v, want %v", got, "test-api-key")
 	}
 }
 
 func TestCompletionsHandler_ForwardHeaders(t *testing.T) {
-	cfg := &config.Config{}
-	h := &CompletionsHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &CompletionsHandler{router: r}
 
 	tests := []struct {
 		name            string
@@ -186,8 +216,8 @@ func TestCompletionsHandler_ForwardHeaders(t *testing.T) {
 }
 
 func TestCompletionsHandler_WriteError(t *testing.T) {
-	cfg := &config.Config{}
-	h := &CompletionsHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &CompletionsHandler{router: r}
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -200,81 +230,13 @@ func TestCompletionsHandler_WriteError(t *testing.T) {
 }
 
 func TestCompletionsHandler_CreateTransformer(t *testing.T) {
-	cfg := &config.Config{}
-	h := &CompletionsHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &CompletionsHandler{router: r}
 
 	w := httptest.NewRecorder()
 	transformer := h.CreateTransformer(w)
 
 	if transformer == nil {
 		t.Error("expected non-nil transformer")
-	}
-}
-
-func TestForwardCustomHeaders(t *testing.T) {
-	tests := []struct {
-		name            string
-		requestHeaders  map[string]string
-		prefixes        []string
-		expectedHeaders map[string]string
-	}{
-		{
-			name:            "empty headers",
-			requestHeaders:  map[string]string{},
-			prefixes:        []string{"X-"},
-			expectedHeaders: map[string]string{},
-		},
-		{
-			name: "single X- header",
-			requestHeaders: map[string]string{
-				"X-Custom": "value",
-			},
-			prefixes: []string{"X-"},
-			expectedHeaders: map[string]string{
-				"X-Custom": "value",
-			},
-		},
-		{
-			name: "multiple prefixes",
-			requestHeaders: map[string]string{
-				"X-Custom": "x-value",
-				"Y-Custom": "y-value",
-				"Other":    "other-value",
-			},
-			prefixes: []string{"X-", "Y-"},
-			expectedHeaders: map[string]string{
-				"X-Custom": "x-value",
-				"Y-Custom": "y-value",
-			},
-		},
-		{
-			name: "no matching prefix",
-			requestHeaders: map[string]string{
-				"Authorization": "Bearer token",
-				"Content-Type":  "application/json",
-			},
-			prefixes:        []string{"X-"},
-			expectedHeaders: map[string]string{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
-			c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-			for k, v := range tt.requestHeaders {
-				c.Request.Header.Set(k, v)
-			}
-
-			upstreamReq := httptest.NewRequest(http.MethodPost, "https://upstream.example.com", nil)
-			forwardCustomHeaders(c, upstreamReq, tt.prefixes...)
-
-			for k, v := range tt.expectedHeaders {
-				if upstreamReq.Header.Get(k) != v {
-					t.Errorf("expected header %s = %s, got %s", k, v, upstreamReq.Header.Get(k))
-				}
-			}
-		})
 	}
 }

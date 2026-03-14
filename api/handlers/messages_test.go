@@ -12,8 +12,8 @@ import (
 )
 
 func TestMessagesHandler_ValidateRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &MessagesHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &MessagesHandler{router: r}
 
 	tests := []struct {
 		name    string
@@ -48,8 +48,17 @@ func TestMessagesHandler_ValidateRequest(t *testing.T) {
 }
 
 func TestMessagesHandler_TransformRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &MessagesHandler{cfg: cfg}
+	r := &mockRouter{
+		providers: []config.Provider{
+			{
+				Name:    "test-provider",
+				Type:    "anthropic",
+				BaseURL: "https://api.anthropic.com",
+				APIKey:  "test-key",
+			},
+		},
+	}
+	h := &MessagesHandler{router: r}
 
 	tests := []struct {
 		name    string
@@ -86,35 +95,56 @@ func TestMessagesHandler_TransformRequest(t *testing.T) {
 }
 
 func TestMessagesHandler_UpstreamURL(t *testing.T) {
-	cfg := &config.Config{
-		AnthropicUpstreamURL: "https://api.anthropic.com/v1/messages",
+	r := &mockRouter{
+		providers: []config.Provider{
+			{
+				Name:    "test-anthropic",
+				Type:    "anthropic",
+				BaseURL: "https://api.anthropic.com/v1/messages",
+				APIKey:  "test-key",
+			},
+		},
 	}
-	h := &MessagesHandler{cfg: cfg}
+	h := &MessagesHandler{router: r}
 
-	if got := h.UpstreamURL(); got != cfg.AnthropicUpstreamURL {
-		t.Errorf("UpstreamURL() = %v, want %v", got, cfg.AnthropicUpstreamURL)
+	body := []byte(`{"model": "test-model"}`)
+	h.TransformRequest(body)
+
+	want := "https://api.anthropic.com/v1/messages"
+	if got := h.UpstreamURL(); got != want {
+		t.Errorf("UpstreamURL() = %v, want %v", got, want)
 	}
 }
 
 func TestMessagesHandler_ResolveAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		AnthropicAPIKey: "anthropic-api-key",
+	r := &mockRouter{
+		providers: []config.Provider{
+			{
+				Name:    "test-anthropic",
+				Type:    "anthropic",
+				BaseURL: "https://api.anthropic.com/v1/messages",
+				APIKey:  "anthropic-api-key",
+			},
+		},
 	}
-	h := &MessagesHandler{cfg: cfg}
+	h := &MessagesHandler{router: r}
+
+	body := []byte(`{"model": "test-model"}`)
+	h.TransformRequest(body)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 
 	got := h.ResolveAPIKey(c)
-	if got != cfg.AnthropicAPIKey {
-		t.Errorf("ResolveAPIKey() = %v, want %v", got, cfg.AnthropicAPIKey)
+	if got != "anthropic-api-key" {
+		t.Errorf("ResolveAPIKey() = %v, want %v", got, "anthropic-api-key")
 	}
 }
 
 func TestMessagesHandler_ForwardHeaders(t *testing.T) {
-	cfg := &config.Config{}
-	h := &MessagesHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &MessagesHandler{router: r}
 
 	tests := []struct {
 		name            string
@@ -205,8 +235,8 @@ func TestMessagesHandler_ForwardHeaders(t *testing.T) {
 }
 
 func TestMessagesHandler_WriteError(t *testing.T) {
-	cfg := &config.Config{}
-	h := &MessagesHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &MessagesHandler{router: r}
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -219,8 +249,8 @@ func TestMessagesHandler_WriteError(t *testing.T) {
 }
 
 func TestMessagesHandler_CreateTransformer(t *testing.T) {
-	cfg := &config.Config{}
-	h := &MessagesHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &MessagesHandler{router: r}
 
 	w := httptest.NewRecorder()
 	transformer := h.CreateTransformer(w)

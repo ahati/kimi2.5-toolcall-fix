@@ -1,49 +1,46 @@
-// Package main is the entry point for the ai-proxy HTTP server.
-// It initializes configuration, logging, and starts the proxy server.
 package main
 
 import (
+	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"ai-proxy/api"
 	"ai-proxy/config"
-	"ai-proxy/logging"
 )
 
-// main loads configuration, initializes logging and storage, then starts the HTTP server.
-// This is the application entry point and orchestrates all startup tasks.
-//
-// @pre Environment variables and command-line flags are available for configuration
-// @post Server is running and listening on the configured port
-// @post All capture middleware is initialized if SSELogDir is configured
-// @note Exits with code 1 if server fails to start
-// @note Blocks until server is stopped (SIGINT, SIGTERM, or fatal error)
 func main() {
-	// Load configuration from flags, environment variables, and defaults
-	cfg := config.Load()
-
-	// Initialize logging early so subsequent messages are captured
-	logging.Init()
-
-	// Initialize storage for request capture if logging is enabled
-	storage := api.InitStorage(cfg.SSELogDir)
-	if storage != nil {
-		logging.InfoMsg("SSE capture enabled, logging to: %s", cfg.SSELogDir)
-	} else {
-		logging.InfoMsg("SSE capture disabled (use --sse-log-dir to enable)")
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Create server with loaded configuration
-	// Middleware is added first so it applies to all routes
-	server := api.NewServer(cfg, api.NewCaptureMiddleware(storage).Handler())
+	log.Printf("Starting AI Proxy server on port %s", cfg.Port)
+	log.Printf("Loaded configuration from: %s", cfg.ConfigFile)
 
-	// Build listen address from configured port
+	// Log provider information
+	for _, provider := range cfg.AppConfig.Providers {
+		log.Printf("Configured provider: %s (type: %s, baseURL: %s)", provider.Name, provider.Type, provider.BaseURL)
+	}
+
+	// Create and configure server
+	server := api.NewServer(cfg)
+
+	// Setup graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		log.Println("Shutting down server...")
+		os.Exit(0)
+	}()
+
+	// Start server
 	addr := ":" + cfg.Port
-	logging.InfoMsg("ai-proxy server starting on %s", addr)
-
-	// Start server; this blocks until server stops
+	log.Printf("Server ready to accept connections on %s", addr)
 	if err := server.Run(addr); err != nil {
-		logging.ErrorMsg("Failed to start server: %v", err)
-		os.Exit(1) // Exit with error code if server fails to start
+		log.Fatalf("Server error: %v", err)
 	}
 }

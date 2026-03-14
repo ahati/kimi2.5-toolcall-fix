@@ -13,6 +13,14 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+func testConfig() *config.Config {
+	return config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{Name: "test", Type: "openai", BaseURL: "https://api.example.com", APIKey: "test"},
+		},
+	})
+}
+
 func TestNewServer(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -21,28 +29,34 @@ func TestNewServer(t *testing.T) {
 	}{
 		{
 			name: "with empty port defaults to test mode",
-			config: &config.Config{
-				Port: "",
-			},
+			config: config.LoadConfig(&config.SchemaConfig{
+				Providers: []config.Provider{
+					{Name: "test", Type: "openai", BaseURL: "https://api.example.com", APIKey: "test"},
+				},
+			}),
 			wantMode: gin.TestMode,
 		},
 		{
 			name: "with non-empty port sets release mode",
-			config: &config.Config{
-				Port: "8080",
-			},
+			config: func() *config.Config {
+				cfg := config.LoadConfig(&config.SchemaConfig{
+					Providers: []config.Provider{
+						{Name: "test", Type: "openai", BaseURL: "https://api.example.com", APIKey: "test"},
+					},
+				})
+				cfg.Port = "8080"
+				return cfg
+			}(),
 			wantMode: gin.ReleaseMode,
 		},
 		{
 			name: "with all config fields",
-			config: &config.Config{
-				OpenAIUpstreamURL:    "https://api.example.com/v1",
-				OpenAIUpstreamAPIKey: "test-key",
-				AnthropicUpstreamURL: "https://api.anthropic.com/v1",
-				AnthropicAPIKey:      "anthropic-key",
-				Port:                 "9090",
-				SSELogDir:            "/tmp/logs",
-			},
+			config: config.LoadConfig(&config.SchemaConfig{
+				Providers: []config.Provider{
+					{Name: "openai", Type: "openai", BaseURL: "https://api.example.com/v1", APIKey: "test-key"},
+					{Name: "anthropic", Type: "anthropic", BaseURL: "https://api.anthropic.com/v1", APIKey: "anthropic-key"},
+				},
+			}),
 			wantMode: gin.ReleaseMode,
 		},
 	}
@@ -71,9 +85,12 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestServer_setupRoutes(t *testing.T) {
-	cfg := &config.Config{
-		Port: "",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{Name: "test", Type: "openai", BaseURL: "https://api.example.com", APIKey: "test"},
+		},
+	})
+	cfg.Port = ""
 
 	server := NewServer(cfg)
 
@@ -106,12 +123,16 @@ func TestServer_setupRoutes(t *testing.T) {
 }
 
 func TestServer_setupRoutes_RouteCount(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{Name: "test", Type: "openai", BaseURL: "https://api.example.com", APIKey: "test"},
+		},
+	})
 	server := NewServer(cfg)
 
 	routes := server.router.Routes()
 
-	expectedCount := 7
+	expectedCount := 8 // Updated to include /v1/responses
 	if len(routes) != expectedCount {
 		t.Errorf("expected %d routes, got %d", expectedCount, len(routes))
 	}
@@ -120,7 +141,11 @@ func TestServer_setupRoutes_RouteCount(t *testing.T) {
 func TestServer_Use(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	cfg := &config.Config{}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{Name: "test", Type: "openai", BaseURL: "https://api.example.com", APIKey: "test"},
+		},
+	})
 	server := NewServer(cfg)
 
 	var middlewareCalled bool
@@ -145,7 +170,11 @@ func TestServer_Use(t *testing.T) {
 func TestServer_Use_MultipleMiddlewares(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	cfg := &config.Config{}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{Name: "test", Type: "openai", BaseURL: "https://api.example.com", APIKey: "test"},
+		},
+	})
 	server := NewServer(cfg)
 
 	callOrder := []int{}
@@ -178,7 +207,7 @@ func TestServer_Use_MultipleMiddlewares(t *testing.T) {
 }
 
 func TestServer_Routes_HealthCheck(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := testConfig()
 	server := NewServer(cfg)
 
 	w := httptest.NewRecorder()
@@ -191,7 +220,11 @@ func TestServer_Routes_HealthCheck(t *testing.T) {
 }
 
 func TestServer_Routes_Models(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{Name: "test", Type: "openai", BaseURL: "https://api.example.com", APIKey: ""},
+		},
+	})
 	server := NewServer(cfg)
 
 	w := httptest.NewRecorder()
@@ -204,9 +237,11 @@ func TestServer_Routes_Models(t *testing.T) {
 }
 
 func TestServer_Routes_Models_WithAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "test-key",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{Name: "openai", Type: "openai", BaseURL: "https://api.example.com/v1", APIKey: "test-key"},
+		},
+	})
 	server := NewServer(cfg)
 
 	w := httptest.NewRecorder()
@@ -220,7 +255,7 @@ func TestServer_Routes_Models_WithAPIKey(t *testing.T) {
 }
 
 func TestServer_Routes_Completions_InvalidMethod(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := testConfig()
 	server := NewServer(cfg)
 
 	w := httptest.NewRecorder()
@@ -233,7 +268,7 @@ func TestServer_Routes_Completions_InvalidMethod(t *testing.T) {
 }
 
 func TestServer_Routes_Messages_InvalidMethod(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := testConfig()
 	server := NewServer(cfg)
 
 	w := httptest.NewRecorder()
@@ -246,7 +281,7 @@ func TestServer_Routes_Messages_InvalidMethod(t *testing.T) {
 }
 
 func TestServer_Routes_Bridge_InvalidMethod(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := testConfig()
 	server := NewServer(cfg)
 
 	w := httptest.NewRecorder()
@@ -259,7 +294,7 @@ func TestServer_Routes_Bridge_InvalidMethod(t *testing.T) {
 }
 
 func TestServer_Routes_UnknownPath(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := testConfig()
 	server := NewServer(cfg)
 
 	w := httptest.NewRecorder()
@@ -282,7 +317,7 @@ func TestServer_NilConfig(t *testing.T) {
 }
 
 func TestServer_Run_InvalidAddress(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := testConfig()
 	server := NewServer(cfg)
 
 	err := server.Run(":-1")
@@ -292,7 +327,7 @@ func TestServer_Run_InvalidAddress(t *testing.T) {
 }
 
 func TestServer_Run_ValidAddress(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := testConfig()
 	server := NewServer(cfg)
 
 	go func() {
@@ -309,20 +344,21 @@ func TestServer_Run_ValidAddress(t *testing.T) {
 }
 
 func TestNewServer_SetsConfigCorrectly(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://upstream.example.com",
-		OpenAIUpstreamAPIKey: "test-api-key",
-		Port:                 "8080",
-	}
+	cfg := config.LoadConfig(&config.SchemaConfig{
+		Providers: []config.Provider{
+			{Name: "openai", Type: "openai", BaseURL: "https://upstream.example.com", APIKey: "test-api-key"},
+		},
+	})
+	cfg.Port = "8080"
 
 	server := NewServer(cfg)
 
-	if server.config.OpenAIUpstreamURL != cfg.OpenAIUpstreamURL {
-		t.Errorf("expected OpenAIUpstreamURL %s, got %s", cfg.OpenAIUpstreamURL, server.config.OpenAIUpstreamURL)
+	if server.config.OpenAIUpstreamURL() != cfg.OpenAIUpstreamURL() {
+		t.Errorf("expected OpenAIUpstreamURL %s, got %s", cfg.OpenAIUpstreamURL(), server.config.OpenAIUpstreamURL())
 	}
 
-	if server.config.OpenAIUpstreamAPIKey != cfg.OpenAIUpstreamAPIKey {
-		t.Errorf("expected OpenAIUpstreamAPIKey %s, got %s", cfg.OpenAIUpstreamAPIKey, server.config.OpenAIUpstreamAPIKey)
+	if server.config.OpenAIUpstreamAPIKey() != cfg.OpenAIUpstreamAPIKey() {
+		t.Errorf("expected OpenAIUpstreamAPIKey %s, got %s", cfg.OpenAIUpstreamAPIKey(), server.config.OpenAIUpstreamAPIKey())
 	}
 
 	if server.config.Port != cfg.Port {
@@ -331,7 +367,7 @@ func TestNewServer_SetsConfigCorrectly(t *testing.T) {
 }
 
 func TestServer_RouterNotNil(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := testConfig()
 	server := NewServer(cfg)
 
 	if server.router == nil {

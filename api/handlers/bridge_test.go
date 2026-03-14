@@ -7,14 +7,45 @@ import (
 	"testing"
 
 	"ai-proxy/config"
+	"ai-proxy/router"
 	"ai-proxy/types"
 
 	"github.com/gin-gonic/gin"
 )
 
+// mockRouter is a simple router implementation for testing
+type mockRouter struct {
+	providers []config.Provider
+}
+
+func (m *mockRouter) Resolve(modelName string) (*router.ResolvedRoute, error) {
+	for _, p := range m.providers {
+		return &router.ResolvedRoute{
+			Provider:          &p,
+			Model:             modelName,
+			OutputProtocol:    p.Type,
+			ToolCallTransform: false,
+		}, nil
+	}
+	return nil, router.ErrModelNotFound
+}
+
+func (m *mockRouter) GetProvider(name string) (*config.Provider, bool) {
+	for _, p := range m.providers {
+		if p.Name == name {
+			return &p, true
+		}
+	}
+	return nil, false
+}
+
+func (m *mockRouter) ListModels() []string {
+	return []string{"test-model"}
+}
+
 func TestBridgeHandler_ValidateRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &BridgeHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &BridgeHandler{router: r}
 
 	tests := []struct {
 		name    string
@@ -44,8 +75,8 @@ func TestBridgeHandler_ValidateRequest(t *testing.T) {
 }
 
 func TestBridgeHandler_TransformRequest(t *testing.T) {
-	cfg := &config.Config{}
-	h := &BridgeHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &BridgeHandler{router: r}
 
 	tests := []struct {
 		name    string
@@ -53,9 +84,9 @@ func TestBridgeHandler_TransformRequest(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "empty body - fails JSON parse",
+			name:    "empty body - returns as is",
 			body:    []byte{},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name:    "valid anthropic request",
@@ -63,9 +94,9 @@ func TestBridgeHandler_TransformRequest(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "invalid json",
+			name:    "invalid json - returns as is",
 			body:    []byte(`{invalid}`),
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name:    "request with tools",
@@ -85,35 +116,58 @@ func TestBridgeHandler_TransformRequest(t *testing.T) {
 }
 
 func TestBridgeHandler_UpstreamURL(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL: "https://api.example.com/v1/chat/completions",
+	r := &mockRouter{
+		providers: []config.Provider{
+			{
+				Name:    "test-openai",
+				Type:    "openai",
+				BaseURL: "https://api.example.com/v1/chat/completions",
+				APIKey:  "test-key",
+			},
+		},
 	}
-	h := &BridgeHandler{cfg: cfg}
+	h := &BridgeHandler{router: r}
 
-	if got := h.UpstreamURL(); got != cfg.OpenAIUpstreamURL {
-		t.Errorf("UpstreamURL() = %v, want %v", got, cfg.OpenAIUpstreamURL)
+	// First call TransformRequest to set the resolved route
+	body := []byte(`{"model": "test-model"}`)
+	h.TransformRequest(body)
+
+	want := "https://api.example.com/v1/chat/completions"
+	if got := h.UpstreamURL(); got != want {
+		t.Errorf("UpstreamURL() = %v, want %v", got, want)
 	}
 }
 
 func TestBridgeHandler_ResolveAPIKey(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "test-api-key",
+	r := &mockRouter{
+		providers: []config.Provider{
+			{
+				Name:    "test-openai",
+				Type:    "openai",
+				BaseURL: "https://api.example.com/v1/chat/completions",
+				APIKey:  "test-api-key",
+			},
+		},
 	}
-	h := &BridgeHandler{cfg: cfg}
+	h := &BridgeHandler{router: r}
+
+	// First call TransformRequest to set the resolved route
+	body := []byte(`{"model": "test-model"}`)
+	h.TransformRequest(body)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 
 	got := h.ResolveAPIKey(c)
-	if got != cfg.OpenAIUpstreamAPIKey {
-		t.Errorf("ResolveAPIKey() = %v, want %v", got, cfg.OpenAIUpstreamAPIKey)
+	if got != "test-api-key" {
+		t.Errorf("ResolveAPIKey() = %v, want %v", got, "test-api-key")
 	}
 }
 
 func TestBridgeHandler_ForwardHeaders(t *testing.T) {
-	cfg := &config.Config{}
-	h := &BridgeHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &BridgeHandler{router: r}
 
 	tests := []struct {
 		name            string
@@ -175,8 +229,8 @@ func TestBridgeHandler_ForwardHeaders(t *testing.T) {
 }
 
 func TestBridgeHandler_WriteError(t *testing.T) {
-	cfg := &config.Config{}
-	h := &BridgeHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &BridgeHandler{router: r}
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -189,8 +243,8 @@ func TestBridgeHandler_WriteError(t *testing.T) {
 }
 
 func TestBridgeHandler_CreateTransformer(t *testing.T) {
-	cfg := &config.Config{}
-	h := &BridgeHandler{cfg: cfg}
+	r := &mockRouter{providers: []config.Provider{}}
+	h := &BridgeHandler{router: r}
 
 	w := httptest.NewRecorder()
 	transformer := h.CreateTransformer(w)

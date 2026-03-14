@@ -1,0 +1,51 @@
+{
+  "providers": [
+    {
+      "name": "openai",
+      "type": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "envApiKey": "OPENAI_API_KEY"
+    },
+    {
+      "name": "anthropic",
+      "type": "anthropic",
+      "base_url": "https://api.anthropic.com/v1",
+      "envApiKey": "ANTHROPIC_API_KEY"
+    }
+  ],
+  "models": {
+    "gpt-4o": {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "output_protocol": "openai_chat"
+    },
+    "gpt-4o-mini": {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "output_protocol": "openai_chat"
+    },
+    "claude-3-5-sonnet": {
+      "provider": "anthropic",
+      "model": "claude-3-5-sonnet-20241022",
+      "output_protocol": "anthropic",
+      "tool_call_transform": true
+    },
+    "claude-3-opus": {
+      "provider": "anthropic",
+      "model": "claude-3-opus-20240229",
+      "output_protocol": "anthropic",
+      "tool_call_transform": true
+    },
+    "kimi-k2.5": {
+      "provider": "openai",
+      "model": "kimi-k2.5",
+      "output_protocol": "openai_chat",
+      "tool_call_transform": true
+    }
+  },
+  "fallback": {
+    "enabled": true,
+    "provider": "openai",
+    "model": "gpt-4o-mini"
+  }
+}

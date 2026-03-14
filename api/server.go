@@ -6,27 +6,16 @@ package api
 import (
 	"ai-proxy/api/handlers"
 	"ai-proxy/config"
+	"ai-proxy/router"
 
 	"github.com/gin-gonic/gin"
 )
 
 // Server represents the HTTP server that handles all API routes.
-// It encapsulates the Gin router and configuration for the proxy service.
-// The Server is responsible for:
-//   - Managing the HTTP listener lifecycle
-//   - Routing requests to appropriate handlers
-//   - Applying middleware to request processing pipeline
-//
-// @invariant s.router != nil (router is always initialized)
-// @invariant s.config != nil (config is always initialized)
 type Server struct {
-	// router is the underlying Gin engine that handles HTTP routing.
-	// Must not be nil after initialization via NewServer.
 	router *gin.Engine
-
-	// config holds the application configuration including upstream URLs,
-	// API keys, and other runtime settings. Must not be nil after initialization.
 	config *config.Config
+	rtr    router.Router
 }
 
 // NewServer creates and initializes a new Server instance with the given configuration.
@@ -44,23 +33,25 @@ type Server struct {
 // @post Returned Server has all routes registered and is ready to accept connections.
 // @post Gin is set to ReleaseMode if cfg.Port is non-empty (production mode).
 func NewServer(cfg *config.Config, middleware ...gin.HandlerFunc) *Server {
-	// Set Gin to release mode for production when port is configured
-	// to reduce console noise and improve performance
 	if cfg.Port != "" {
 		gin.SetMode(gin.ReleaseMode)
+	}
+
+	rtr, err := router.NewRouter(cfg.AppConfig)
+	if err != nil {
+		panic(err)
 	}
 
 	s := &Server{
 		router: gin.Default(),
 		config: cfg,
+		rtr:    rtr,
 	}
 
-	// Apply middleware first so it runs before routes
 	for _, m := range middleware {
 		s.router.Use(m)
 	}
 
-	// Register all API routes after middleware is set up
 	s.setupRoutes()
 
 	return s
@@ -73,34 +64,14 @@ func NewServer(cfg *config.Config, middleware ...gin.HandlerFunc) *Server {
 // @pre s.config != nil
 // @post All endpoints are registered and accessible through the router.
 func (s *Server) setupRoutes() {
-	// Health check endpoint - used by load balancers and monitoring systems
-	// to verify service availability. Does not require authentication.
 	s.router.GET("/health", handlers.HealthCheck)
-
-	// Models endpoint - returns list of available models from upstream API
-	// Supports OpenAI-compatible response format.
 	s.router.GET("/v1/models", handlers.NewModelsHandler(s.config))
-
-	// Chat completions endpoint - primary OpenAI-compatible endpoint
-	// for streaming chat completions with tool call support.
-	s.router.POST("/v1/chat/completions", handlers.NewCompletionsHandler(s.config))
-
-	// Messages endpoint - native Anthropic API format endpoint
-	// for streaming messages with tool call support.
-	s.router.POST("/v1/messages", handlers.NewMessagesHandler(s.config))
-
-	// Messages count tokens endpoint - Anthropic API format endpoint
-	// for counting tokens in messages before sending to upstream.
+	s.router.POST("/v1/chat/completions", handlers.NewCompletionsHandler(s.rtr))
+	s.router.POST("/v1/messages", handlers.NewMessagesHandler(s.rtr))
 	s.router.POST("/v1/messages/count_tokens", handlers.NewCountTokensHandler(s.config))
-
-	// Bridge endpoint - converts Anthropic format requests to OpenAI format
-	// before forwarding to upstream, then converts responses back to Anthropic format.
-	s.router.POST("/v1/openai-to-anthropic/messages", handlers.NewBridgeHandler(s.config))
-
-	// Anthropic-to-OpenAI Responses endpoint - converts OpenAI Responses API format requests
-	// to Anthropic format before forwarding to upstream, then converts responses back to
-	// OpenAI Responses API format.
+	s.router.POST("/v1/openai-to-anthropic/messages", handlers.NewBridgeHandler(s.rtr))
 	s.router.POST("/v1/anthropic-to-openai/responses", handlers.NewAnthropicToOpenAIHandler(s.config))
+	s.router.POST("/v1/responses", handlers.NewResponsesHandler(s.rtr))
 }
 
 // Use adds middleware to the server's router chain.
