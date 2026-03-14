@@ -15,7 +15,7 @@ import (
 func TestResponsesFormatter_FormatResponseCreated(t *testing.T) {
 	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
 
-	result := formatter.FormatResponseCreated()
+	result := formatter.FormatResponseCreated(1)
 	resultStr := string(result)
 
 	if !strings.HasPrefix(resultStr, "data: ") {
@@ -33,6 +33,10 @@ func TestResponsesFormatter_FormatResponseCreated(t *testing.T) {
 	if !strings.Contains(resultStr, `"model":"gpt-4o"`) {
 		t.Error("Result should contain model")
 	}
+
+	if !strings.Contains(resultStr, `"sequence_number":1`) {
+		t.Error("Result should contain sequence_number")
+	}
 }
 
 // TestResponsesFormatter_FormatContentPartAdded tests content part added event.
@@ -40,7 +44,7 @@ func TestResponsesFormatter_FormatContentPartAdded(t *testing.T) {
 	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
 	formatter.SetResponseID("resp_123")
 
-	result := formatter.FormatContentPartAdded(0, "output_text")
+	result := formatter.FormatContentPartAdded("msg_123", 0, "output_text", 1, 2)
 	resultStr := string(result)
 
 	if !strings.Contains(resultStr, `"type":"response.content_part.added"`) {
@@ -54,6 +58,14 @@ func TestResponsesFormatter_FormatContentPartAdded(t *testing.T) {
 	if !strings.Contains(resultStr, `"type":"output_text"`) {
 		t.Error("Result should contain output_text type")
 	}
+
+	if !strings.Contains(resultStr, `"output_index":1`) {
+		t.Error("Result should contain output_index")
+	}
+
+	if !strings.Contains(resultStr, `"sequence_number":2`) {
+		t.Error("Result should contain sequence_number")
+	}
 }
 
 // TestResponsesFormatter_FormatOutputTextDelta tests text delta formatting.
@@ -61,7 +73,7 @@ func TestResponsesFormatter_FormatOutputTextDelta(t *testing.T) {
 	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
 	formatter.SetResponseID("resp_123")
 
-	result := formatter.FormatOutputTextDelta(0, "Hello world")
+	result := formatter.FormatOutputTextDelta("msg_123", 0, "Hello world", 1, 2)
 	resultStr := string(result)
 
 	if !strings.Contains(resultStr, `"type":"response.output_text.delta"`) {
@@ -71,6 +83,14 @@ func TestResponsesFormatter_FormatOutputTextDelta(t *testing.T) {
 	if !strings.Contains(resultStr, `"delta":"Hello world"`) {
 		t.Error("Result should contain delta with text")
 	}
+
+	if !strings.Contains(resultStr, `"output_index":1`) {
+		t.Error("Result should contain output_index")
+	}
+
+	if !strings.Contains(resultStr, `"sequence_number":2`) {
+		t.Error("Result should contain sequence_number")
+	}
 }
 
 // TestResponsesFormatter_FormatFunctionCallItemAdded tests function call item added event.
@@ -78,7 +98,7 @@ func TestResponsesFormatter_FormatFunctionCallItemAdded(t *testing.T) {
 	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
 	formatter.SetResponseID("resp_123")
 
-	result := formatter.FormatFunctionCallItemAdded("toolu_abc", "get_weather", 1)
+	result := formatter.FormatFunctionCallItemAdded("toolu_abc", "get_weather", 1, 2)
 	resultStr := string(result)
 
 	if !strings.Contains(resultStr, `"type":"response.output_item.added"`) {
@@ -100,6 +120,10 @@ func TestResponsesFormatter_FormatFunctionCallItemAdded(t *testing.T) {
 	if !strings.Contains(resultStr, `"output_index":1`) {
 		t.Error("Result should contain output_index")
 	}
+
+	if !strings.Contains(resultStr, `"sequence_number":2`) {
+		t.Error("Result should contain sequence_number")
+	}
 }
 
 // TestResponsesFormatter_FormatFunctionCallArgsDelta tests function args delta.
@@ -107,7 +131,7 @@ func TestResponsesFormatter_FormatFunctionCallArgsDelta(t *testing.T) {
 	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
 	formatter.SetResponseID("resp_123")
 
-	result := formatter.FormatFunctionCallArgsDelta("toolu_abc", "toolu_abc", `{"locat`)
+	result := formatter.FormatFunctionCallArgsDelta("toolu_abc", "toolu_abc", `{"locat`, 1, 2)
 	resultStr := string(result)
 
 	if !strings.Contains(resultStr, `"type":"response.function_call_arguments.delta"`) {
@@ -122,6 +146,14 @@ func TestResponsesFormatter_FormatFunctionCallArgsDelta(t *testing.T) {
 	if !strings.Contains(resultStr, `"delta":"{\"locat"`) {
 		t.Errorf("Result should contain escaped delta - got: %s", resultStr)
 	}
+
+	if !strings.Contains(resultStr, `"output_index":1`) {
+		t.Error("Result should contain output_index")
+	}
+
+	if !strings.Contains(resultStr, `"sequence_number":2`) {
+		t.Error("Result should contain sequence_number")
+	}
 }
 
 // TestResponsesFormatter_FormatContentPartDone tests content part done event.
@@ -130,7 +162,7 @@ func TestResponsesFormatter_FormatContentPartDone(t *testing.T) {
 	formatter.SetResponseID("resp_123")
 
 	// Test with output_text type
-	result := formatter.FormatContentPartDone(0, "output_text", "Hello world")
+	result := formatter.FormatContentPartDone("msg_123", 0, "output_text", "Hello world", 1, 2)
 	resultStr := string(result)
 
 	if !strings.Contains(resultStr, `"type":"response.content_part.done"`) {
@@ -141,8 +173,16 @@ func TestResponsesFormatter_FormatContentPartDone(t *testing.T) {
 		t.Error("Result should contain text content")
 	}
 
+	if !strings.Contains(resultStr, `"output_index":1`) {
+		t.Error("Result should contain output_index")
+	}
+
+	if !strings.Contains(resultStr, `"sequence_number":2`) {
+		t.Error("Result should contain sequence_number")
+	}
+
 	// Test with other type (no content)
-	result2 := formatter.FormatContentPartDone(1, "function_call", "")
+	result2 := formatter.FormatContentPartDone("msg_123", 1, "function_call", "", 1, 3)
 	resultStr2 := string(result2)
 
 	if !strings.Contains(resultStr2, `"type":"function_call"`) {
@@ -166,7 +206,7 @@ func TestResponsesFormatter_FormatOutputItemDone(t *testing.T) {
 		}},
 	}
 
-	result := formatter.FormatOutputItemDone("msg_456", item, 0)
+	result := formatter.FormatOutputItemDone("msg_456", item, 0, 1)
 	resultStr := string(result)
 
 	if !strings.Contains(resultStr, `"type":"response.output_item.done"`) {
@@ -179,6 +219,10 @@ func TestResponsesFormatter_FormatOutputItemDone(t *testing.T) {
 
 	if !strings.Contains(resultStr, `"status":"completed"`) {
 		t.Error("Result should contain completed status")
+	}
+
+	if !strings.Contains(resultStr, `"sequence_number":1`) {
+		t.Error("Result should contain sequence_number")
 	}
 }
 
@@ -199,7 +243,7 @@ func TestResponsesFormatter_FormatResponseCompleted(t *testing.T) {
 		}},
 	}}
 
-	result := formatter.FormatResponseCompleted(outputItems)
+	result := formatter.FormatResponseCompleted(outputItems, nil, 1)
 	resultStr := string(result)
 
 	if !strings.Contains(resultStr, `"type":"response.completed"`) {
@@ -209,13 +253,17 @@ func TestResponsesFormatter_FormatResponseCompleted(t *testing.T) {
 	if !strings.Contains(resultStr, `"status":"completed"`) {
 		t.Error("Result should contain completed status")
 	}
+
+	if !strings.Contains(resultStr, `"sequence_number":1`) {
+		t.Error("Result should contain sequence_number")
+	}
 }
 
 // TestResponsesFormatter_FormatReasoningItemAdded tests reasoning item added event.
 func TestResponsesFormatter_FormatReasoningItemAdded(t *testing.T) {
 	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
 
-	result := formatter.FormatReasoningItemAdded("rs_abc", 0)
+	result := formatter.FormatReasoningItemAdded("rs_abc", 0, 1)
 	resultStr := string(result)
 
 	if !strings.Contains(resultStr, `"type":"response.output_item.added"`) {
@@ -233,13 +281,45 @@ func TestResponsesFormatter_FormatReasoningItemAdded(t *testing.T) {
 	if !strings.Contains(resultStr, `"output_index":0`) {
 		t.Error("Result should contain output_index")
 	}
+
+	if !strings.Contains(resultStr, `"sequence_number":1`) {
+		t.Error("Result should contain sequence_number")
+	}
+}
+
+// TestResponsesFormatter_FormatReasoningSummaryPartAdded tests reasoning summary part added event.
+func TestResponsesFormatter_FormatReasoningSummaryPartAdded(t *testing.T) {
+	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
+
+	result := formatter.FormatReasoningSummaryPartAdded("rs_abc", 0, 0, 1)
+	resultStr := string(result)
+
+	if !strings.Contains(resultStr, `"type":"response.reasoning_summary_part.added"`) {
+		t.Error("Result should contain response.reasoning_summary_part.added type")
+	}
+
+	if !strings.Contains(resultStr, `"item_id":"rs_abc"`) {
+		t.Error("Result should contain item_id")
+	}
+
+	if !strings.Contains(resultStr, `"output_index":0`) {
+		t.Error("Result should contain output_index")
+	}
+
+	if !strings.Contains(resultStr, `"summary_index":0`) {
+		t.Error("Result should contain summary_index")
+	}
+
+	if !strings.Contains(resultStr, `"sequence_number":1`) {
+		t.Error("Result should contain sequence_number")
+	}
 }
 
 // TestResponsesFormatter_FormatReasoningSummaryDelta tests reasoning summary delta.
 func TestResponsesFormatter_FormatReasoningSummaryDelta(t *testing.T) {
 	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
 
-	result := formatter.FormatReasoningSummaryDelta("rs_abc", "Analyzing...")
+	result := formatter.FormatReasoningSummaryDelta("rs_abc", "Analyzing...", 0, 0, 1)
 	resultStr := string(result)
 
 	if !strings.Contains(resultStr, `"type":"response.reasoning_summary_text.delta"`) {
@@ -249,13 +329,85 @@ func TestResponsesFormatter_FormatReasoningSummaryDelta(t *testing.T) {
 	if !strings.Contains(resultStr, `"delta":"Analyzing..."`) {
 		t.Error("Result should contain delta")
 	}
+
+	if !strings.Contains(resultStr, `"output_index":0`) {
+		t.Error("Result should contain output_index")
+	}
+
+	if !strings.Contains(resultStr, `"summary_index":0`) {
+		t.Error("Result should contain summary_index")
+	}
+
+	if !strings.Contains(resultStr, `"sequence_number":1`) {
+		t.Error("Result should contain sequence_number")
+	}
+}
+
+// TestResponsesFormatter_FormatReasoningSummaryTextDone tests reasoning summary text done event.
+func TestResponsesFormatter_FormatReasoningSummaryTextDone(t *testing.T) {
+	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
+
+	result := formatter.FormatReasoningSummaryTextDone("rs_abc", "Full reasoning text", 0, 0, 1)
+	resultStr := string(result)
+
+	if !strings.Contains(resultStr, `"type":"response.reasoning_summary_text.done"`) {
+		t.Error("Result should contain response.reasoning_summary_text.done type")
+	}
+
+	if !strings.Contains(resultStr, `"text":"Full reasoning text"`) {
+		t.Error("Result should contain text")
+	}
+
+	if !strings.Contains(resultStr, `"output_index":0`) {
+		t.Error("Result should contain output_index")
+	}
+
+	if !strings.Contains(resultStr, `"summary_index":0`) {
+		t.Error("Result should contain summary_index")
+	}
+
+	if !strings.Contains(resultStr, `"sequence_number":1`) {
+		t.Error("Result should contain sequence_number")
+	}
+}
+
+// TestResponsesFormatter_FormatReasoningSummaryPartDone tests reasoning summary part done event.
+func TestResponsesFormatter_FormatReasoningSummaryPartDone(t *testing.T) {
+	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
+
+	result := formatter.FormatReasoningSummaryPartDone("rs_abc", "Full reasoning text", 0, 0, 1)
+	resultStr := string(result)
+
+	if !strings.Contains(resultStr, `"type":"response.reasoning_summary_part.done"`) {
+		t.Error("Result should contain response.reasoning_summary_part.done type")
+	}
+
+	if !strings.Contains(resultStr, `"type":"summary_text"`) {
+		t.Error("Result should contain summary_text type")
+	}
+
+	if !strings.Contains(resultStr, `"text":"Full reasoning text"`) {
+		t.Error("Result should contain summary text")
+	}
+
+	if !strings.Contains(resultStr, `"output_index":0`) {
+		t.Error("Result should contain output_index")
+	}
+
+	if !strings.Contains(resultStr, `"summary_index":0`) {
+		t.Error("Result should contain summary_index")
+	}
+
+	if !strings.Contains(resultStr, `"sequence_number":1`) {
+		t.Error("Result should contain sequence_number")
+	}
 }
 
 // TestResponsesFormatter_FormatReasoningItemDone tests reasoning item done event.
 func TestResponsesFormatter_FormatReasoningItemDone(t *testing.T) {
 	formatter := NewResponsesFormatter("resp_123", "gpt-4o")
 
-	result := formatter.FormatReasoningItemDone("rs_abc", "Full reasoning text", 0)
+	result := formatter.FormatReasoningItemDone("rs_abc", "Full reasoning text", 0, 1)
 	resultStr := string(result)
 
 	if !strings.Contains(resultStr, `"type":"response.output_item.done"`) {
@@ -272,6 +424,10 @@ func TestResponsesFormatter_FormatReasoningItemDone(t *testing.T) {
 
 	if !strings.Contains(resultStr, `"output_index":0`) {
 		t.Error("Result should contain output_index")
+	}
+
+	if !strings.Contains(resultStr, `"sequence_number":1`) {
+		t.Error("Result should contain sequence_number")
 	}
 }
 
@@ -462,6 +618,7 @@ func TestResponsesTransformer_HandleContentBlockStart_Thinking(t *testing.T) {
 	}
 
 	result := buf.String()
+	// Should contain response.output_item.added for reasoning
 	if !strings.Contains(result, `"type":"response.output_item.added"`) {
 		t.Error("Result should contain response.output_item.added type")
 	}
@@ -472,6 +629,11 @@ func TestResponsesTransformer_HandleContentBlockStart_Thinking(t *testing.T) {
 
 	if !strings.Contains(result, `"id":"rs_abc"`) {
 		t.Error("Result should contain reasoning ID")
+	}
+
+	// Should also contain response.reasoning_summary_part.added
+	if !strings.Contains(result, `"type":"response.reasoning_summary_part.added"`) {
+		t.Error("Result should contain response.reasoning_summary_part.added type")
 	}
 }
 
@@ -626,6 +788,19 @@ func TestResponsesTransformer_HandleContentBlockDelta_Thinking(t *testing.T) {
 
 	if !strings.Contains(result, `"delta":"Analyzing..."`) {
 		t.Error("Result should contain thinking delta")
+	}
+
+	// Check for required fields
+	if !strings.Contains(result, `"output_index":0`) {
+		t.Error("Result should contain output_index")
+	}
+
+	if !strings.Contains(result, `"summary_index":0`) {
+		t.Error("Result should contain summary_index")
+	}
+
+	if !strings.Contains(result, `"sequence_number"`) {
+		t.Error("Result should contain sequence_number")
 	}
 }
 

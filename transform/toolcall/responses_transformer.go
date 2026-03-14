@@ -11,6 +11,12 @@ import (
 	"github.com/tmaxmax/go-sse"
 )
 
+// Usage tracks token usage from Anthropic API.
+type Usage struct {
+	InputTokens  int
+	OutputTokens int
+}
+
 // ResponsesTransformer converts Anthropic SSE events to OpenAI Responses API format.
 type ResponsesTransformer struct {
 	output     io.Writer
@@ -38,10 +44,31 @@ type ResponsesTransformer struct {
 	reasoningID     string // Cached reasoning item ID
 	currentToolName string // Current tool name for function_call output item
 
+	// Sequence tracking for streaming events
+	sequenceNumber int // Global sequence number counter
+
+	// Reasoning summary tracking
+	summaryIndex int // Index of current summary part within reasoning
+
+	// Current reasoning output index (cached when reasoning starts)
+	reasoningOutputIndex int
+
+	// Current tool call output index (cached when tool_use starts)
+	toolCallOutputIndex int
+
+	// Message output index (cached when message is emitted)
+	messageOutputIndex int
+
 	// Output items for final response
 	outputItems []map[string]interface{}
 	currentItem map[string]interface{}
 	itemAdded   bool
+
+	// Token usage tracking
+	usage *Usage
+
+	// Message item emitted flag
+	messageItemEmitted bool
 }
 
 // ResponsesFormatter formats events in OpenAI Responses API format.
@@ -86,8 +113,29 @@ func (t *ResponsesTransformer) getReasoningID() string {
 // and tool calls have already emitted their output_item.added events.
 // Returns nil if the message was already emitted or there's no message.
 func (t *ResponsesTransformer) emitMessageItemAdded() error {
-	// Check if we've already set up the message item - we emit it lazily
-	// The actual emission happens in handleMessageStop after all output items are known
+	if t.messageItemEmitted || t.currentItem == nil {
+		return nil
+	}
+
+	// Calculate output index for message (after all reasoning and tool calls)
+	outputIdx := t.outputIndex
+	t.messageOutputIndex = outputIdx
+
+	// Get the message item ID from currentItem
+	messageItemID, _ := t.currentItem["id"].(string)
+	if messageItemID == "" {
+		messageItemID = t.messageID
+	}
+
+	// Emit response.output_item.added for the message
+	seqNum := t.nextSequenceNumber()
+	if err := t.write(t.formatter.FormatOutputItemAdded(messageItemID, outputIdx, seqNum)); err != nil {
+		return err
+	}
+
+	t.messageItemEmitted = true
+	t.outputIndex++ // Increment output index after emitting message item
+
 	return nil
 }
 
@@ -116,9 +164,10 @@ func (t *ResponsesTransformer) getOutputIndexForToolCall() int {
 }
 
 // FormatResponseCreated formats a response.created event.
-func (f *ResponsesFormatter) FormatResponseCreated() []byte {
+func (f *ResponsesFormatter) FormatResponseCreated(sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type": "response.created",
+		"type":            "response.created",
+		"sequence_number": sequenceNumber,
 		"response": map[string]interface{}{
 			"id":         f.responseID,
 			"object":     "response",
@@ -134,11 +183,12 @@ func (f *ResponsesFormatter) FormatResponseCreated() []byte {
 
 // FormatOutputItemAdded formats a response.output_item.added event for message.
 // The outputIndex is the 0-indexed position in the output array.
-func (f *ResponsesFormatter) FormatOutputItemAdded(itemID string, outputIndex int) []byte {
+func (f *ResponsesFormatter) FormatOutputItemAdded(itemID string, outputIndex int, sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type":         "response.output_item.added",
-		"item_id":      itemID,
-		"output_index": outputIndex,
+		"type":            "response.output_item.added",
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"sequence_number": sequenceNumber,
 		"item": map[string]interface{}{
 			"type":    "message",
 			"id":      itemID,
@@ -152,11 +202,13 @@ func (f *ResponsesFormatter) FormatOutputItemAdded(itemID string, outputIndex in
 }
 
 // FormatContentPartAdded formats a response.content_part.added event for text.
-func (f *ResponsesFormatter) FormatContentPartAdded(contentIndex int, partType string) []byte {
+func (f *ResponsesFormatter) FormatContentPartAdded(itemID string, contentIndex int, partType string, outputIndex int, sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type":          "response.content_part.added",
-		"item_id":       f.responseID,
-		"content_index": contentIndex,
+		"type":            "response.content_part.added",
+		"item_id":         itemID,
+		"content_index":   contentIndex,
+		"output_index":    outputIndex,
+		"sequence_number": sequenceNumber,
 		"part": map[string]interface{}{
 			"type": partType,
 		},
@@ -172,12 +224,14 @@ func (f *ResponsesFormatter) FormatContentPartAdded(contentIndex int, partType s
 }
 
 // FormatOutputTextDelta formats a response.output_text.delta event.
-func (f *ResponsesFormatter) FormatOutputTextDelta(contentIndex int, delta string) []byte {
+func (f *ResponsesFormatter) FormatOutputTextDelta(itemID string, contentIndex int, delta string, outputIndex int, sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type":          "response.output_text.delta",
-		"item_id":       f.responseID,
-		"content_index": contentIndex,
-		"delta":         delta,
+		"type":            "response.output_text.delta",
+		"item_id":         itemID,
+		"content_index":   contentIndex,
+		"output_index":    outputIndex,
+		"sequence_number": sequenceNumber,
+		"delta":           delta,
 	}
 	data, _ := json.Marshal(event)
 	return []byte("data: " + string(data) + "\n\n")
@@ -186,11 +240,12 @@ func (f *ResponsesFormatter) FormatOutputTextDelta(contentIndex int, delta strin
 // FormatFunctionCallItemAdded emits a response.output_item.added event for a function_call item.
 // Function calls are separate output items in the Responses API, not content parts.
 // The outputIndex is the 0-indexed position in the output array.
-func (f *ResponsesFormatter) FormatFunctionCallItemAdded(itemID, name string, outputIndex int) []byte {
+func (f *ResponsesFormatter) FormatFunctionCallItemAdded(itemID, name string, outputIndex int, sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type":         "response.output_item.added",
-		"item_id":      itemID,
-		"output_index": outputIndex,
+		"type":            "response.output_item.added",
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"sequence_number": sequenceNumber,
 		"item": map[string]interface{}{
 			"type":      "function_call",
 			"id":        itemID,
@@ -205,11 +260,12 @@ func (f *ResponsesFormatter) FormatFunctionCallItemAdded(itemID, name string, ou
 
 // FormatFunctionCallItemDone emits a response.output_item.done event for a function_call item.
 // This signals the completion of a function call output item with the full arguments.
-func (f *ResponsesFormatter) FormatFunctionCallItemDone(itemID, name, arguments string, outputIndex int) []byte {
+func (f *ResponsesFormatter) FormatFunctionCallItemDone(itemID, name, arguments string, outputIndex int, sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type":         "response.output_item.done",
-		"item_id":      itemID,
-		"output_index": outputIndex,
+		"type":            "response.output_item.done",
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"sequence_number": sequenceNumber,
 		"item": map[string]interface{}{
 			"type":      "function_call",
 			"id":        itemID,
@@ -224,19 +280,21 @@ func (f *ResponsesFormatter) FormatFunctionCallItemDone(itemID, name, arguments 
 
 // FormatFunctionCallArgsDelta emits a response.function_call_arguments.delta event.
 // The itemID is the function_call item ID, and callID is used for the call_id field.
-func (f *ResponsesFormatter) FormatFunctionCallArgsDelta(itemID, callID, delta string) []byte {
+func (f *ResponsesFormatter) FormatFunctionCallArgsDelta(itemID, callID, delta string, outputIndex int, sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type":    "response.function_call_arguments.delta",
-		"item_id": itemID,
-		"call_id": callID,
-		"delta":   delta,
+		"type":            "response.function_call_arguments.delta",
+		"item_id":         itemID,
+		"call_id":         callID,
+		"output_index":    outputIndex,
+		"sequence_number": sequenceNumber,
+		"delta":           delta,
 	}
 	data, _ := json.Marshal(event)
 	return []byte("data: " + string(data) + "\n\n")
 }
 
 // FormatContentPartDone formats a response.content_part.done event.
-func (f *ResponsesFormatter) FormatContentPartDone(contentIndex int, partType string, content string) []byte {
+func (f *ResponsesFormatter) FormatContentPartDone(itemID string, contentIndex int, partType string, content string, outputIndex int, sequenceNumber int) []byte {
 	part := map[string]interface{}{
 		"type": partType,
 	}
@@ -244,10 +302,12 @@ func (f *ResponsesFormatter) FormatContentPartDone(contentIndex int, partType st
 		part["text"] = content
 	}
 	event := map[string]interface{}{
-		"type":          "response.content_part.done",
-		"item_id":       f.responseID,
-		"content_index": contentIndex,
-		"part":          part,
+		"type":            "response.content_part.done",
+		"item_id":         itemID,
+		"content_index":   contentIndex,
+		"output_index":    outputIndex,
+		"sequence_number": sequenceNumber,
+		"part":            part,
 	}
 	data, _ := json.Marshal(event)
 	return []byte("data: " + string(data) + "\n\n")
@@ -255,35 +315,47 @@ func (f *ResponsesFormatter) FormatContentPartDone(contentIndex int, partType st
 
 // FormatOutputItemDone formats a response.output_item.done event.
 // The outputIndex is the 0-indexed position in the output array.
-func (f *ResponsesFormatter) FormatOutputItemDone(itemID string, item map[string]interface{}, outputIndex int) []byte {
+func (f *ResponsesFormatter) FormatOutputItemDone(itemID string, item map[string]interface{}, outputIndex int, sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type":         "response.output_item.done",
-		"item_id":      itemID,
-		"output_index": outputIndex,
-		"item":         item,
+		"type":            "response.output_item.done",
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"sequence_number": sequenceNumber,
+		"item":            item,
 	}
 	data, _ := json.Marshal(event)
 	return []byte("data: " + string(data) + "\n\n")
 }
 
 // FormatResponseCompleted formats a response.completed event.
-func (f *ResponsesFormatter) FormatResponseCompleted(outputItems []map[string]interface{}) []byte {
-	// Build output with the message item
+func (f *ResponsesFormatter) FormatResponseCompleted(outputItems []map[string]interface{}, usage *Usage, sequenceNumber int) []byte {
 	output := []interface{}{}
 	if len(outputItems) > 0 {
 		for _, item := range outputItems {
 			output = append(output, item)
 		}
 	}
+	response := map[string]interface{}{
+		"id":     f.responseID,
+		"object": "response",
+		"model":  f.model,
+		"status": "completed",
+		"output": output,
+	}
+
+	// Add usage if available
+	if usage != nil {
+		response["usage"] = map[string]interface{}{
+			"input_tokens":  usage.InputTokens,
+			"output_tokens": usage.OutputTokens,
+			"total_tokens":  usage.InputTokens + usage.OutputTokens,
+		}
+	}
+
 	event := map[string]interface{}{
-		"type": "response.completed",
-		"response": map[string]interface{}{
-			"id":     f.responseID,
-			"object": "response",
-			"model":  f.model,
-			"status": "completed",
-			"output": output,
-		},
+		"type":            "response.completed",
+		"sequence_number": sequenceNumber,
+		"response":        response,
 	}
 	data, _ := json.Marshal(event)
 	return []byte("data: " + string(data) + "\n\n")
@@ -292,11 +364,12 @@ func (f *ResponsesFormatter) FormatResponseCompleted(outputItems []map[string]in
 // FormatReasoningItemAdded emits a response.output_item.added event for a reasoning item.
 // This signals the start of a reasoning output item in the streaming response.
 // The outputIndex is the 0-indexed position in the output array (always 0 for reasoning).
-func (f *ResponsesFormatter) FormatReasoningItemAdded(itemID string, outputIndex int) []byte {
+func (f *ResponsesFormatter) FormatReasoningItemAdded(itemID string, outputIndex int, sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type":         "response.output_item.added",
-		"item_id":      itemID,
-		"output_index": outputIndex,
+		"type":            "response.output_item.added",
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"sequence_number": sequenceNumber,
 		"item": map[string]interface{}{
 			"type":    "reasoning",
 			"id":      itemID,
@@ -307,13 +380,67 @@ func (f *ResponsesFormatter) FormatReasoningItemAdded(itemID string, outputIndex
 	return []byte("data: " + string(data) + "\n\n")
 }
 
+// FormatReasoningSummaryPartAdded emits a response.reasoning_summary_part.added event.
+// This signals the start of a new summary part within the reasoning item.
+func (f *ResponsesFormatter) FormatReasoningSummaryPartAdded(itemID string, outputIndex int, summaryIndex int, sequenceNumber int) []byte {
+	event := map[string]interface{}{
+		"type":            "response.reasoning_summary_part.added",
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"summary_index":   summaryIndex,
+		"sequence_number": sequenceNumber,
+		"part": map[string]interface{}{
+			"type": "summary_text",
+			"text": "",
+		},
+	}
+	data, _ := json.Marshal(event)
+	return []byte("data: " + string(data) + "\n\n")
+}
+
 // FormatReasoningSummaryDelta emits a response.reasoning_summary_text.delta event.
 // This streams incremental reasoning summary text to the client.
-func (f *ResponsesFormatter) FormatReasoningSummaryDelta(itemID, delta string) []byte {
+func (f *ResponsesFormatter) FormatReasoningSummaryDelta(itemID string, delta string, outputIndex int, summaryIndex int, sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type":    "response.reasoning_summary_text.delta",
-		"item_id": itemID,
-		"delta":   delta,
+		"type":            "response.reasoning_summary_text.delta",
+		"item_id":         itemID,
+		"delta":           delta,
+		"output_index":    outputIndex,
+		"summary_index":   summaryIndex,
+		"sequence_number": sequenceNumber,
+	}
+	data, _ := json.Marshal(event)
+	return []byte("data: " + string(data) + "\n\n")
+}
+
+// FormatReasoningSummaryTextDone emits a response.reasoning_summary_text.done event.
+// This signals the completion of a reasoning summary text.
+func (f *ResponsesFormatter) FormatReasoningSummaryTextDone(itemID string, text string, outputIndex int, summaryIndex int, sequenceNumber int) []byte {
+	event := map[string]interface{}{
+		"type":            "response.reasoning_summary_text.done",
+		"item_id":         itemID,
+		"text":            text,
+		"output_index":    outputIndex,
+		"summary_index":   summaryIndex,
+		"sequence_number": sequenceNumber,
+	}
+	data, _ := json.Marshal(event)
+	return []byte("data: " + string(data) + "\n\n")
+}
+
+// FormatReasoningSummaryPartDone emits a response.reasoning_summary_part.done event.
+// This signals the completion of a reasoning summary part.
+func (f *ResponsesFormatter) FormatReasoningSummaryPartDone(itemID string, text string, outputIndex int, summaryIndex int, sequenceNumber int) []byte {
+	event := map[string]interface{}{
+		"type":            "response.reasoning_summary_part.done",
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"summary_index":   summaryIndex,
+		"sequence_number": sequenceNumber,
+		"part": map[string]interface{}{
+			"type": "summary_text",
+			"text": text,
+		},
 	}
 	data, _ := json.Marshal(event)
 	return []byte("data: " + string(data) + "\n\n")
@@ -322,11 +449,12 @@ func (f *ResponsesFormatter) FormatReasoningSummaryDelta(itemID, delta string) [
 // FormatReasoningItemDone emits a response.output_item.done event with the full summary.
 // This signals the completion of a reasoning output item.
 // The outputIndex is the 0-indexed position in the output array.
-func (f *ResponsesFormatter) FormatReasoningItemDone(itemID, summaryText string, outputIndex int) []byte {
+func (f *ResponsesFormatter) FormatReasoningItemDone(itemID, summaryText string, outputIndex int, sequenceNumber int) []byte {
 	event := map[string]interface{}{
-		"type":         "response.output_item.done",
-		"item_id":      itemID,
-		"output_index": outputIndex,
+		"type":            "response.output_item.done",
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"sequence_number": sequenceNumber,
 		"item": map[string]interface{}{
 			"type": "reasoning",
 			"id":   itemID,
@@ -342,11 +470,18 @@ func (f *ResponsesFormatter) FormatReasoningItemDone(itemID, summaryText string,
 // NewResponsesTransformer creates a new transformer for OpenAI Responses API.
 func NewResponsesTransformer(output io.Writer) *ResponsesTransformer {
 	return &ResponsesTransformer{
-		output:      output,
-		formatter:   NewResponsesFormatter("", ""),
-		parser:      NewParser(DefaultTokens),
-		outputItems: make([]map[string]interface{}, 0),
+		output:         output,
+		formatter:      NewResponsesFormatter("", ""),
+		parser:         NewParser(DefaultTokens),
+		outputItems:    make([]map[string]interface{}, 0),
+		sequenceNumber: 0,
+		summaryIndex:   0,
 	}
+}
+
+func (t *ResponsesTransformer) nextSequenceNumber() int {
+	t.sequenceNumber++
+	return t.sequenceNumber
 }
 
 // Transform processes an SSE event and converts it to OpenAI Responses format.
@@ -401,7 +536,8 @@ func (t *ResponsesTransformer) handleMessageStart(event types.Event) error {
 	}
 
 	// Send response.created event
-	if err := t.write(t.formatter.FormatResponseCreated()); err != nil {
+	seqNum := t.nextSequenceNumber()
+	if err := t.write(t.formatter.FormatResponseCreated(seqNum)); err != nil {
 		return err
 	}
 
@@ -438,26 +574,43 @@ func (t *ResponsesTransformer) handleContentBlockStart(event types.Event) error 
 			case "text":
 				t.inText = true
 				t.textContent.Reset()
-				// Emit message item if not yet emitted
 				if err := t.emitMessageItemAdded(); err != nil {
 					return err
 				}
-				return t.write(t.formatter.FormatContentPartAdded(t.blockIndex, "output_text"))
+				seqNum := t.nextSequenceNumber()
+				messageItemID, _ := t.currentItem["id"].(string)
+				if messageItemID == "" {
+					messageItemID = t.messageID
+				}
+				return t.write(t.formatter.FormatContentPartAdded(messageItemID, 0, "output_text", t.messageOutputIndex, seqNum))
 			case "thinking":
 				t.inReasoning = true
 				t.reasoningContent.Reset()
 				reasoningID := t.getReasoningID()
 				outputIdx := t.outputIndex
+				t.reasoningOutputIndex = outputIdx
 				t.outputIndex++
-				return t.write(t.formatter.FormatReasoningItemAdded(reasoningID, outputIdx))
+				t.summaryIndex = 0
+
+				// Emit response.output_item.added for reasoning
+				seqNum := t.nextSequenceNumber()
+				if err := t.write(t.formatter.FormatReasoningItemAdded(reasoningID, outputIdx, seqNum)); err != nil {
+					return err
+				}
+
+				// Emit response.reasoning_summary_part.added
+				seqNum = t.nextSequenceNumber()
+				return t.write(t.formatter.FormatReasoningSummaryPartAdded(reasoningID, outputIdx, t.summaryIndex, seqNum))
 			case "tool_use":
 				t.inToolCall = true
 				t.currentID = block.ID
 				t.currentToolName = block.Name
 				t.toolArgs.Reset()
 				outputIdx := t.outputIndex
+				t.toolCallOutputIndex = outputIdx
 				t.outputIndex++
-				return t.write(t.formatter.FormatFunctionCallItemAdded(block.ID, block.Name, outputIdx))
+				seqNum := t.nextSequenceNumber()
+				return t.write(t.formatter.FormatFunctionCallItemAdded(block.ID, block.Name, outputIdx, seqNum))
 			}
 		}
 	}
@@ -476,7 +629,12 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 		if err := json.Unmarshal(event.Delta, &textDelta); err == nil && textDelta.Type == "text_delta" {
 			if t.inText {
 				t.textContent.WriteString(textDelta.Text)
-				return t.write(t.formatter.FormatOutputTextDelta(*event.Index, textDelta.Text))
+				seqNum := t.nextSequenceNumber()
+				messageItemID, _ := t.currentItem["id"].(string)
+				if messageItemID == "" {
+					messageItemID = t.messageID
+				}
+				return t.write(t.formatter.FormatOutputTextDelta(messageItemID, 0, textDelta.Text, t.messageOutputIndex, seqNum))
 			}
 		}
 
@@ -486,7 +644,8 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 			if t.inReasoning {
 				t.reasoningContent.WriteString(thinkingDelta.Thinking)
 				reasoningID := t.getReasoningID()
-				return t.write(t.formatter.FormatReasoningSummaryDelta(reasoningID, thinkingDelta.Thinking))
+				seqNum := t.nextSequenceNumber()
+				return t.write(t.formatter.FormatReasoningSummaryDelta(reasoningID, thinkingDelta.Thinking, t.reasoningOutputIndex, t.summaryIndex, seqNum))
 			}
 		}
 
@@ -495,7 +654,8 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 		if err := json.Unmarshal(event.Delta, &inputDelta); err == nil && inputDelta.Type == "input_json_delta" {
 			if t.inToolCall {
 				t.toolArgs.WriteString(inputDelta.PartialJSON)
-				return t.write(t.formatter.FormatFunctionCallArgsDelta(t.currentID, t.currentID, inputDelta.PartialJSON))
+				seqNum := t.nextSequenceNumber()
+				return t.write(t.formatter.FormatFunctionCallArgsDelta(t.currentID, t.currentID, inputDelta.PartialJSON, t.toolCallOutputIndex, seqNum))
 			}
 		}
 	}
@@ -520,13 +680,31 @@ func (t *ResponsesTransformer) handleContentBlockStop(event types.Event) error {
 				})
 			}
 		}
-		return t.write(t.formatter.FormatContentPartDone(*event.Index, "output_text", content))
+		seqNum := t.nextSequenceNumber()
+		messageItemID, _ := t.currentItem["id"].(string)
+		if messageItemID == "" {
+			messageItemID = t.messageID
+		}
+		return t.write(t.formatter.FormatContentPartDone(messageItemID, 0, "output_text", content, t.messageOutputIndex, seqNum))
 	}
 
 	if t.inReasoning {
 		t.inReasoning = false
 		summary := t.reasoningContent.String()
 		reasoningID := t.getReasoningID()
+		outputIdx := t.reasoningOutputIndex
+
+		// Emit response.reasoning_summary_text.done
+		seqNum := t.nextSequenceNumber()
+		if err := t.write(t.formatter.FormatReasoningSummaryTextDone(reasoningID, summary, outputIdx, t.summaryIndex, seqNum)); err != nil {
+			return err
+		}
+
+		// Emit response.reasoning_summary_part.done
+		seqNum = t.nextSequenceNumber()
+		if err := t.write(t.formatter.FormatReasoningSummaryPartDone(reasoningID, summary, outputIdx, t.summaryIndex, seqNum)); err != nil {
+			return err
+		}
 
 		reasoningItem := map[string]interface{}{
 			"type": "reasoning",
@@ -537,9 +715,9 @@ func (t *ResponsesTransformer) handleContentBlockStop(event types.Event) error {
 		}
 		t.outputItems = append(t.outputItems, reasoningItem)
 
-		// Get output index: 0 for first reasoning item, 1 for second, etc.
-		outputIdx := t.getOutputIndexForReasoning()
-		return t.write(t.formatter.FormatReasoningItemDone(reasoningID, summary, outputIdx))
+		// Emit response.output_item.done
+		seqNum = t.nextSequenceNumber()
+		return t.write(t.formatter.FormatReasoningItemDone(reasoningID, summary, outputIdx, seqNum))
 	}
 
 	if t.inToolCall {
@@ -555,14 +733,23 @@ func (t *ResponsesTransformer) handleContentBlockStop(event types.Event) error {
 		}
 		t.outputItems = append(t.outputItems, toolItem)
 
-		outputIdx := t.getOutputIndexForToolCall()
-		return t.write(t.formatter.FormatFunctionCallItemDone(t.currentID, t.currentToolName, args, outputIdx))
+		outputIdx := t.toolCallOutputIndex
+		seqNum := t.nextSequenceNumber()
+		return t.write(t.formatter.FormatFunctionCallItemDone(t.currentID, t.currentToolName, args, outputIdx, seqNum))
 	}
 
 	return nil
 }
 
 func (t *ResponsesTransformer) handleMessageDelta(event types.Event) error {
+	// Capture usage from message_delta event
+	if event.Usage != nil {
+		t.usage = &Usage{
+			InputTokens:  event.Usage.InputTokens,
+			OutputTokens: event.Usage.OutputTokens,
+		}
+	}
+
 	// Handle stop_reason - convert Anthropic stop_reason to Responses API format
 	if event.StopReason != "" {
 		// Map Anthropic stop_reason to appropriate Responses API output
@@ -581,12 +768,12 @@ func (t *ResponsesTransformer) handleMessageDelta(event types.Event) error {
 }
 
 func (t *ResponsesTransformer) handleMessageStop(event types.Event) error {
-	// Only emit message item if there's actual text content.
+	// Only emit message item completion if there's actual text content.
 	// When stop_reason is tool_use with no text, output should only contain
 	// reasoning and function_call items - no empty message.
-	if t.itemAdded && t.currentItem != nil && t.textContent.Len() > 0 {
+	if t.itemAdded && t.currentItem != nil && t.textContent.Len() > 0 && t.messageItemEmitted {
 		// Calculate output index for message (after all reasoning and tool calls)
-		outputIdx := t.outputIndex
+		outputIdx := t.messageOutputIndex
 
 		// Get the message item ID from currentItem (set in handleMessageStart)
 		// This ensures we use msg_xxx format, not resp_xxx
@@ -595,35 +782,19 @@ func (t *ResponsesTransformer) handleMessageStop(event types.Event) error {
 			messageItemID = t.messageID
 		}
 
-		// Emit response.output_item.added for the message
-		if err := t.write(t.formatter.FormatOutputItemAdded(messageItemID, outputIdx)); err != nil {
-			return err
-		}
-
-		// Emit content_part events for the message content
-		if content, ok := t.currentItem["content"].([]map[string]interface{}); ok && len(content) > 0 {
-			for i, part := range content {
-				// Emit content_part.added and content_part.done for each part
-				if partType, ok := part["type"].(string); ok {
-					t.write(t.formatter.FormatContentPartAdded(i, partType))
-					if text, ok := part["text"].(string); ok {
-						t.write(t.formatter.FormatContentPartDone(i, partType, text))
-					}
-				}
-			}
-		}
-
 		// Mark message as completed and emit output_item.done
 		t.currentItem["status"] = "completed"
-		if err := t.write(t.formatter.FormatOutputItemDone(messageItemID, t.currentItem, outputIdx)); err != nil {
+		seqNum := t.nextSequenceNumber()
+		if err := t.write(t.formatter.FormatOutputItemDone(messageItemID, t.currentItem, outputIdx, seqNum)); err != nil {
 			return err
 		}
 		// Add to output items for response.completed
 		t.outputItems = append(t.outputItems, t.currentItem)
 	}
 
-	// Send response.completed event with populated output
-	return t.write(t.formatter.FormatResponseCompleted(t.outputItems))
+	// Send response.completed event with populated output and usage
+	seqNum := t.nextSequenceNumber()
+	return t.write(t.formatter.FormatResponseCompleted(t.outputItems, t.usage, seqNum))
 }
 
 func (t *ResponsesTransformer) write(data []byte) error {
