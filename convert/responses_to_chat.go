@@ -39,9 +39,13 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 		Model:     req.Model,
 		MaxTokens: req.MaxOutputTokens,
 		// Force streaming mode - this proxy only supports SSE streaming
-		Stream:      req.Stream || true,
+		Stream:      true,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
+		// Request usage statistics in the final streaming chunk
+		StreamOptions: &types.StreamOptions{
+			IncludeUsage: true,
+		},
 	}
 
 	// Convert instructions to system message

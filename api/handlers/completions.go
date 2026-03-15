@@ -85,7 +85,7 @@ func (h *CompletionsHandler) ValidateRequest(body []byte) error {
 }
 
 // TransformRequest converts the request body based on the upstream provider type.
-// For OpenAI providers: passes through without transformation.
+// For OpenAI providers: passes through without transformation, adding stream_options.
 // For Anthropic providers: converts OpenAI Chat Completions to Anthropic Messages.
 //
 // @param body - Raw request body in OpenAI ChatCompletion format.
@@ -103,22 +103,28 @@ func (h *CompletionsHandler) TransformRequest(body []byte) ([]byte, error) {
 		return body, nil
 	}
 	req["model"] = h.route.Model
-	updatedBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
 
 	switch h.route.Provider.Type {
 	case "anthropic":
 		// Convert OpenAI ChatCompletionRequest to Anthropic MessageRequest
+		updatedBody, err := json.Marshal(req)
+		if err != nil {
+			return nil, err
+		}
 		converter := convert.NewChatToAnthropicConverter()
 		return converter.Convert(updatedBody)
 	case "openai":
-		// Pass through without transformation
-		return updatedBody, nil
+		// Add stream_options.include_usage for usage statistics in streaming
+		if stream, ok := req["stream"].(bool); !ok || stream {
+			req["stream"] = true
+			req["stream_options"] = map[string]interface{}{
+				"include_usage": true,
+			}
+		}
+		return json.Marshal(req)
 	default:
 		// Unknown provider type - pass through as-is
-		return updatedBody, nil
+		return json.Marshal(req)
 	}
 }
 

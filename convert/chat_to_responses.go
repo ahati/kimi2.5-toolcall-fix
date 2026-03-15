@@ -80,21 +80,31 @@ func (t *ChatToResponsesTransformer) handleChunk(chunk *types.Chunk) error {
 		}
 	}
 
+	// Capture usage when available (may come after finish_reason in separate chunk)
 	if chunk.Usage != nil {
 		t.usage = chunk.Usage
 	}
 
+	// Handle finish reason - store it, emit response.completed after usage arrives or at [DONE]
+	if len(chunk.Choices) > 0 {
+		choice := chunk.Choices[0]
+		if choice.FinishReason != nil && *choice.FinishReason != "" {
+			t.finishReason = *choice.FinishReason
+			return nil // Don't emit response.completed yet, wait for usage or [DONE]
+		}
+	}
+
+	// If no choices, check if we have finishReason waiting and usage just arrived
 	if len(chunk.Choices) == 0 {
+		// If we have a pending finish reason and just got usage, emit response.completed
+		if t.finishReason != "" && chunk.Usage != nil {
+			return t.handleFinish()
+		}
 		return nil
 	}
 
 	choice := chunk.Choices[0]
 	delta := choice.Delta
-
-	if choice.FinishReason != nil && *choice.FinishReason != "" {
-		t.finishReason = *choice.FinishReason
-		return t.handleFinish()
-	}
 
 	// Process content BEFORE role check - chunks may have both role AND content
 	if delta.Content != "" {
@@ -394,6 +404,14 @@ func (t *ChatToResponsesTransformer) writeDone() error {
 	// Finalize any pending tool call before writing [DONE]
 	if t.currentToolCall != nil {
 		if err := t.emitToolCallDone(); err != nil {
+			return err
+		}
+	}
+
+	// If we have a pending finish reason, emit response.completed now
+	// (this happens when usage chunk never arrived or came with empty choices)
+	if t.finishReason != "" {
+		if err := t.handleFinish(); err != nil {
 			return err
 		}
 	}

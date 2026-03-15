@@ -444,3 +444,118 @@ func TestChatToResponsesTransformer_ContentWithRole(t *testing.T) {
 		})
 	}
 }
+
+func TestChatToResponsesTransformer_UsageAfterFinishReason(t *testing.T) {
+	// Test that usage is properly captured when it arrives AFTER finish_reason
+	// in a separate chunk (which is the OpenAI streaming behavior with stream_options)
+	finishReason := "stop"
+
+	chunks := []types.Chunk{
+		// First chunk with content
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						Role:    "assistant",
+						Content: "Hello",
+					},
+				},
+			},
+		},
+		// Second chunk with finish_reason but NO usage yet
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index:        0,
+					Delta:        types.Delta{},
+					FinishReason: &finishReason,
+				},
+			},
+		},
+		// Third chunk with ONLY usage (no choices)
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Usage: &types.Usage{
+				PromptTokens:     100,
+				CompletionTokens: 50,
+				TotalTokens:      150,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	transformer := NewChatToResponsesTransformer(&buf)
+
+	for _, chunk := range chunks {
+		data, err := json.Marshal(chunk)
+		if err != nil {
+			t.Fatalf("Failed to marshal chunk: %v", err)
+		}
+		event := &sse.Event{Data: string(data)}
+		if err := transformer.Transform(event); err != nil {
+			t.Fatalf("Transform failed: %v", err)
+		}
+	}
+
+	// Close to emit final events
+	if err := transformer.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Parse output and check that usage is in response.completed
+	output := buf.String()
+	t.Logf("Output:\n%s", output)
+
+	// Find response.completed event and check usage
+	lines := bytes.Split(buf.Bytes(), []byte("\n\n"))
+	var foundCompleted bool
+	var usageInput, usageOutput, usageTotal int
+
+	for _, line := range lines {
+		if bytes.Contains(line, []byte(`"type":"response.completed"`)) {
+			foundCompleted = true
+			dataIdx := bytes.Index(line, []byte("data: "))
+			if dataIdx >= 0 {
+				data := line[dataIdx+6:]
+				var event map[string]interface{}
+				if err := json.Unmarshal(data, &event); err != nil {
+					t.Fatalf("Failed to parse event: %v", err)
+				}
+				resp, ok := event["response"].(map[string]interface{})
+				if !ok {
+					t.Fatal("No response in response.completed event")
+				}
+				usage, ok := resp["usage"].(map[string]interface{})
+				if !ok {
+					t.Fatal("No usage in response.completed event")
+				}
+				usageInput = int(usage["input_tokens"].(float64))
+				usageOutput = int(usage["output_tokens"].(float64))
+				usageTotal = int(usage["total_tokens"].(float64))
+			}
+		}
+	}
+
+	if !foundCompleted {
+		t.Fatal("response.completed event not found")
+	}
+
+	if usageInput != 100 {
+		t.Errorf("Expected input_tokens=100, got %d", usageInput)
+	}
+	if usageOutput != 50 {
+		t.Errorf("Expected output_tokens=50, got %d", usageOutput)
+	}
+	if usageTotal != 150 {
+		t.Errorf("Expected total_tokens=150, got %d", usageTotal)
+	}
+}
