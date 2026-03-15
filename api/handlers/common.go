@@ -464,7 +464,7 @@ func sendOpenAIResponsesError(c *gin.Context, status int, msg string) {
 	event := map[string]interface{}{
 		"type": "error",
 		"error": map[string]interface{}{
-			"code":    "invalid_request_error",
+			"type":    "invalid_request_error",
 			"message": msg,
 		},
 	}

@@ -78,7 +78,7 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 	anthReq.Tools = convertResponsesToolsToAnthropic(openReq.Tools)
 
 	// Convert tool_choice
-	anthReq.ToolChoice = convertToolChoiceToAnthropic(openReq.ToolChoice)
+	anthReq.ToolChoice = ConvertToolChoiceOpenAIToAnthropic(openReq.ToolChoice)
 
 	return json.Marshal(anthReq)
 }
@@ -244,40 +244,3 @@ func convertResponsesToolsToAnthropic(openTools []types.ResponsesTool) []types.T
 	return anthTools
 }
 
-// convertToolChoiceToAnthropic converts OpenAI tool_choice to Anthropic format.
-func convertToolChoiceToAnthropic(toolChoice interface{}) *types.ToolChoice {
-	if toolChoice == nil {
-		return nil
-	}
-
-	// Handle string values
-	if s, ok := toolChoice.(string); ok {
-		switch s {
-		case "none":
-			return nil
-		case "auto":
-			return &types.ToolChoice{Type: "auto"}
-		case "required":
-			return &types.ToolChoice{Type: "any"}
-		default:
-			return &types.ToolChoice{Type: "auto"}
-		}
-	}
-
-	// Handle object format: {"type": "function", "function": {"name": "xyz"}}
-	if obj, ok := toolChoice.(map[string]interface{}); ok {
-		objType, _ := obj["type"].(string)
-		if objType == "function" {
-			if fn, ok := obj["function"].(map[string]interface{}); ok {
-				if name, ok := fn["name"].(string); ok {
-					return &types.ToolChoice{
-						Type: "tool",
-						Name: name,
-					}
-				}
-			}
-		}
-	}
-
-	return &types.ToolChoice{Type: "auto"}
-}

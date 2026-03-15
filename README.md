@@ -335,7 +335,6 @@ ai-proxy/
 │   ├── interface.go        # Converter interface
 │   ├── common.go           # Shared conversion utilities
 │   ├── chat_to_anthropic.go    # OpenAI Chat → Anthropic
-│   ├── anthropic_to_chat.go    # Anthropic → OpenAI Chat
 │   ├── responses_to_anthropic.go # Responses → Anthropic
 │   └── responses_to_chat.go    # Responses → OpenAI Chat
 ├── logging/                # Logging utilities

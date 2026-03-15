@@ -48,6 +48,11 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 		},
 	}
 
+	// Convert parallel_tool_calls if set
+	if req.ParallelToolCalls {
+		chatReq.ParallelToolCalls = &req.ParallelToolCalls
+	}
+
 	// Convert instructions to system message
 	if req.Instructions != "" {
 		chatReq.System = req.Instructions
@@ -588,7 +593,7 @@ func (t *ResponsesToChatTransformer) handleOutputItemAdded(event *types.Response
 	if event.OutputItem.Type == "function_call" {
 		t.currentToolCall = &responsesToolCallState{
 			id:   event.OutputItem.ID,
-			name: event.OutputItem.CallID,
+			name: event.OutputItem.Name,
 		}
 		t.toolCallIndex++
 	}

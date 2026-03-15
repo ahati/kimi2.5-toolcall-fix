@@ -196,7 +196,7 @@ func (h *MessagesHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 
 // CreateTransformer builds an SSE transformer based on the provider type.
 // For Anthropic providers: uses AnthropicTransformer for tool call handling.
-// For OpenAI providers: uses AnthropicToChatTransformer to convert responses back to Anthropic format.
+// For OpenAI providers: uses ChatToAnthropicTransformer to convert OpenAI Chat responses back to Anthropic format.
 //
 // @param w - Writer to receive transformed output.
 // @return Transformer for processing SSE events.
