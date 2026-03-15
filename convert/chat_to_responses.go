@@ -371,11 +371,23 @@ func (t *ChatToResponsesTransformer) handleFinish() error {
 	}
 
 	if t.usage != nil {
-		response["usage"] = map[string]interface{}{
+		usageData := map[string]interface{}{
 			"input_tokens":  t.usage.PromptTokens,
 			"output_tokens": t.usage.CompletionTokens,
 			"total_tokens":  t.usage.TotalTokens,
 		}
+		// Include cache tokens if available
+		if t.usage.PromptTokensDetails != nil && t.usage.PromptTokensDetails.CachedTokens > 0 {
+			usageData["input_tokens_details"] = map[string]interface{}{
+				"cached_tokens": t.usage.PromptTokensDetails.CachedTokens,
+			}
+		}
+		if t.usage.CompletionTokensDetails != nil && t.usage.CompletionTokensDetails.ReasoningTokens > 0 {
+			usageData["output_tokens_details"] = map[string]interface{}{
+				"reasoning_tokens": t.usage.CompletionTokensDetails.ReasoningTokens,
+			}
+		}
+		response["usage"] = usageData
 	}
 
 	event := map[string]interface{}{

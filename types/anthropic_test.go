@@ -31,7 +31,7 @@ func TestMessageRequest(t *testing.T) {
 				TopK:        40,
 				System:      "You are helpful",
 			},
-			wantJSON: `{"model":"claude-3","messages":[{"role":"user","content":"hello"}],"max_tokens":1024,"stream":true,"system":"You are helpful","temperature":0.7,"top_p":0.9,"top_k":40}`,
+			wantJSON: `{"model":"claude-3","messages":[{"role":"user","content":"hello"}],"max_tokens":1024,"stream":true,"temperature":0.7,"top_p":0.9,"top_k":40,"system":"You are helpful"}`,
 		},
 		{
 			name: "with tools",

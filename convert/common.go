@@ -201,8 +201,18 @@ func ConvertOpenAIToolsToAnthropic(openTools []types.Tool) []types.ToolDef {
 }
 
 // ExtractTextFromContent extracts text from various content formats.
-// Content can be: string, []interface{} (content blocks), or nil.
-// Returns an empty string if no text content is found.
+// This is the SINGLE source of truth for text extraction across the codebase.
+// All other implementations should call this function.
+//
+// Content can be:
+//   - string: returned directly
+//   - []interface{}: array of content blocks (Anthropic/OpenAI format)
+//   - []map[string]interface{}: typed content blocks
+//   - nil: returns empty string
+//
+// Supported content block types:
+//   - "text", "input_text", "output_text": extracts "text" field
+//   - "thinking": extracts "thinking" field
 func ExtractTextFromContent(content interface{}) string {
 	if content == nil {
 		return ""
@@ -212,32 +222,60 @@ func ExtractTextFromContent(content interface{}) string {
 	case string:
 		return c
 	case []interface{}:
-		var result strings.Builder
-		for _, part := range c {
-			if partMap, ok := part.(map[string]interface{}); ok {
-				partType, _ := partMap["type"].(string)
-				switch partType {
-				case "text":
-					if text, ok := partMap["text"].(string); ok {
-						if result.Len() > 0 {
-							result.WriteString("\n")
-						}
-						result.WriteString(text)
-					}
-				case "input_text":
-					if text, ok := partMap["text"].(string); ok {
-						if result.Len() > 0 {
-							result.WriteString("\n")
-						}
-						result.WriteString(text)
-					}
-				}
-			}
-		}
-		return result.String()
+		return extractTextFromInterfaceSlice(c)
+	case []map[string]interface{}:
+		return extractTextFromMapSlice(c)
 	default:
 		return ""
 	}
+}
+
+// extractTextFromInterfaceSlice extracts text from a slice of interface{} (untyped content blocks).
+func extractTextFromInterfaceSlice(blocks []interface{}) string {
+	var result strings.Builder
+	for _, part := range blocks {
+		if partMap, ok := part.(map[string]interface{}); ok {
+			text := extractTextFromBlock(partMap)
+			if text != "" {
+				if result.Len() > 0 {
+					result.WriteString("\n")
+				}
+				result.WriteString(text)
+			}
+		}
+	}
+	return result.String()
+}
+
+// extractTextFromMapSlice extracts text from a slice of map[string]interface{} (typed content blocks).
+func extractTextFromMapSlice(blocks []map[string]interface{}) string {
+	var result strings.Builder
+	for _, part := range blocks {
+		text := extractTextFromBlock(part)
+		if text != "" {
+			if result.Len() > 0 {
+				result.WriteString("\n")
+			}
+			result.WriteString(text)
+		}
+	}
+	return result.String()
+}
+
+// extractTextFromBlock extracts text from a single content block based on its type.
+func extractTextFromBlock(block map[string]interface{}) string {
+	partType, _ := block["type"].(string)
+	switch partType {
+	case "text", "input_text", "output_text":
+		if text, ok := block["text"].(string); ok {
+			return text
+		}
+	case "thinking":
+		if thinking, ok := block["thinking"].(string); ok {
+			return thinking
+		}
+	}
+	return ""
 }
 
 // ConvertContentBlocks converts Anthropic content blocks to OpenAI format.

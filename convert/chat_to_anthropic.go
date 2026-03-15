@@ -40,19 +40,29 @@ func (c *ChatToAnthropicConverter) Convert(body []byte) ([]byte, error) {
 	// Set max_tokens - Anthropic requires this field
 	anthReq.MaxTokens = openReq.MaxTokens
 	if anthReq.MaxTokens == 0 {
-		anthReq.MaxTokens = 4096 // Default max tokens for Anthropic API
+		// Default to 32768 tokens (32k) - supported by all modern Claude models.
+		// Claude Opus 4.6 supports up to 128k, Sonnet/Haiku support 64k.
+		// See: https://docs.anthropic.com/en/docs/about-claude/models
+		anthReq.MaxTokens = 32768
 	}
 
 	// Copy optional parameters
-	// Force streaming mode - this proxy only supports SSE streaming
-	anthReq.Stream = openReq.Stream || true
+	// Force streaming mode - this proxy supports both streaming and non-streaming
+	anthReq.Stream = openReq.Stream
 	anthReq.Temperature = openReq.Temperature
 	anthReq.TopP = openReq.TopP
+	anthReq.TopK = openReq.TopK
+
+	// Convert stop sequences
+	anthReq.StopSequences = ConvertStopOpenAIToAnthropic(openReq.Stop)
 
 	// Convert tools
 	if len(openReq.Tools) > 0 {
 		anthReq.Tools = ConvertOpenAIToolsToAnthropic(openReq.Tools)
 	}
+
+	// Convert tool_choice
+	anthReq.ToolChoice = ConvertToolChoiceOpenAIToAnthropic(openReq.ToolChoice)
 
 	return json.Marshal(anthReq)
 }
@@ -114,6 +124,8 @@ type ChatToAnthropicTransformer struct {
 	// Usage tracking - captured from final upstream chunk
 	promptTokens     int
 	completionTokens int
+	cacheReadTokens  int
+	cacheCreateTokens int
 
 	// Finish reason tracking - delay message_delta until we have usage
 	finishReason string
@@ -199,6 +211,10 @@ func (t *ChatToAnthropicTransformer) handleChunk(chunk types.Chunk) error {
 		if chunk.Usage != nil {
 			t.promptTokens = chunk.Usage.PromptTokens
 			t.completionTokens = chunk.Usage.CompletionTokens
+			// Capture cache tokens
+			if chunk.Usage.PromptTokensDetails != nil {
+				t.cacheReadTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+			}
 			// Now emit message_delta with the stored finish_reason and usage
 			if t.finishReason != "" {
 				t.handleFinishReason(t.finishReason, chunk.Usage)
@@ -283,20 +299,8 @@ func (t *ChatToAnthropicTransformer) handleToolCalls(toolCalls []types.ToolCall)
 
 // handleFinishReason processes the finish reason and emits appropriate events.
 func (t *ChatToAnthropicTransformer) handleFinishReason(reason string, usage *types.Usage) error {
-	// Map OpenAI finish reason to Anthropic stop_reason
-	var stopReason string
-	switch reason {
-	case "stop":
-		stopReason = "end_turn"
-	case "length":
-		stopReason = "max_tokens"
-	case "tool_calls":
-		stopReason = "tool_use"
-	case "content_filter":
-		stopReason = "end_turn" // No direct equivalent
-	default:
-		stopReason = "end_turn"
-	}
+	// Map OpenAI finish reason to Anthropic stop_reason using shared mapper
+	stopReason := MapOpenAIToAnthropic(reason)
 
 	// Close open content block (thinking/text) first
 	if t.contentOpen {
@@ -327,10 +331,18 @@ func (t *ChatToAnthropicTransformer) handleFinishReason(reason string, usage *ty
 	}
 	// Include usage with both tokens for compatibility
 	// Some SDKs expect input_tokens in message_delta even though spec says output_tokens only
-	eventData["usage"] = map[string]interface{}{
+	usageData := map[string]interface{}{
 		"input_tokens":  t.promptTokens,
 		"output_tokens": t.completionTokens,
 	}
+	// Include cache tokens if available
+	if t.cacheReadTokens > 0 {
+		usageData["cache_read_input_tokens"] = t.cacheReadTokens
+	}
+	if t.cacheCreateTokens > 0 {
+		usageData["cache_creation_input_tokens"] = t.cacheCreateTokens
+	}
+	eventData["usage"] = usageData
 
 	if err := t.writeEvent("message_delta", eventData); err != nil {
 		return err

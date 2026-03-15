@@ -206,8 +206,8 @@ func TestChatToAnthropicConverter_Convert(t *testing.T) {
 				if err := json.Unmarshal(result, &anthReq); err != nil {
 					t.Fatalf("failed to parse result: %v", err)
 				}
-				if anthReq.MaxTokens != 4096 {
-					t.Errorf("expected default max_tokens 4096, got %d", anthReq.MaxTokens)
+				if anthReq.MaxTokens != 32768 {
+					t.Errorf("expected default max_tokens 32768, got %d", anthReq.MaxTokens)
 				}
 			},
 		},

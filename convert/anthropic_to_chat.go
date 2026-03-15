@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-proxy/transform"
 	"ai-proxy/types"
 
 	"github.com/tmaxmax/go-sse"
@@ -24,7 +25,7 @@ import (
 // - message_delta: maps stop_reason to finish_reason
 // - message_stop: emits [DONE]
 type AnthropicToChatTransformer struct {
-	w io.Writer
+	sseWriter *transform.SSEWriter
 
 	// Response state
 	messageID string
@@ -56,9 +57,9 @@ type blockState struct {
 // NewAnthropicToChatTransformer creates a transformer for Anthropic to OpenAI Chat SSE conversion.
 func NewAnthropicToChatTransformer(w io.Writer) *AnthropicToChatTransformer {
 	return &AnthropicToChatTransformer{
-		w:       w,
-		created: time.Now().Unix(),
-		blocks:  make(map[int]*blockState),
+		sseWriter: transform.NewSSEWriter(w),
+		created:   time.Now().Unix(),
+		blocks:    make(map[int]*blockState),
 	}
 }
 
@@ -109,6 +110,20 @@ func (t *AnthropicToChatTransformer) handleMessageStart(event *types.Event) erro
 	if event.Message != nil {
 		t.messageID = event.Message.ID
 		t.model = event.Message.Model
+		// Capture usage from message_start (includes cache tokens per Anthropic spec)
+		if event.Message.Usage != nil {
+			t.usage = &types.Usage{
+				PromptTokens:     event.Message.Usage.InputTokens,
+				CompletionTokens: event.Message.Usage.OutputTokens,
+				TotalTokens:      event.Message.Usage.InputTokens + event.Message.Usage.OutputTokens,
+			}
+			// Include cache tokens if available
+			if event.Message.Usage.CacheReadInputTokens > 0 {
+				t.usage.PromptTokensDetails = &types.PromptTokensDetails{
+					CachedTokens: event.Message.Usage.CacheReadInputTokens,
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -200,12 +215,18 @@ func (t *AnthropicToChatTransformer) handleContentBlockStop(_ *types.Event) erro
 
 // handleMessageDelta handles message_delta event with stop_reason.
 func (t *AnthropicToChatTransformer) handleMessageDelta(event *types.Event) error {
-	// Capture usage
+	// Capture usage including cache tokens
 	if event.Usage != nil {
 		t.usage = &types.Usage{
 			PromptTokens:     event.Usage.InputTokens,
 			CompletionTokens: event.Usage.OutputTokens,
 			TotalTokens:      event.Usage.InputTokens + event.Usage.OutputTokens,
+		}
+		// Include cache tokens if available
+		if event.Usage.CacheReadInputTokens > 0 {
+			t.usage.PromptTokensDetails = &types.PromptTokensDetails{
+				CachedTokens: event.Usage.CacheReadInputTokens,
+			}
 		}
 	}
 
@@ -237,20 +258,9 @@ func (t *AnthropicToChatTransformer) handleMessageStop() error {
 	return t.writeDone()
 }
 
-// mapStopReason maps Anthropic stop_reason to OpenAI finish_reason.
+// mapStopReason maps Anthropic stop_reason to OpenAI finish_reason using shared mapper.
 func (t *AnthropicToChatTransformer) mapStopReason(stopReason string) string {
-	switch stopReason {
-	case "end_turn":
-		return "stop"
-	case "max_tokens":
-		return "length"
-	case "tool_use":
-		return "tool_calls"
-	case "stop_sequence":
-		return "stop"
-	default:
-		return "stop"
-	}
+	return MapAnthropicToOpenAI(stopReason)
 }
 
 // emitTextDelta emits a text content chunk.
@@ -310,25 +320,12 @@ func (t *AnthropicToChatTransformer) writeChunk(chunk *types.Chunk) error {
 
 // writeData writes raw data as SSE event.
 func (t *AnthropicToChatTransformer) writeData(data []byte) error {
-	if len(data) == 0 {
-		return nil
-	}
-	_, err := t.w.Write([]byte("data: "))
-	if err != nil {
-		return err
-	}
-	_, err = t.w.Write(data)
-	if err != nil {
-		return err
-	}
-	_, err = t.w.Write([]byte("\n\n"))
-	return err
+	return t.sseWriter.WriteData(data)
 }
 
 // writeDone writes the [DONE] marker.
 func (t *AnthropicToChatTransformer) writeDone() error {
-	_, err := t.w.Write([]byte("data: [DONE]\n\n"))
-	return err
+	return t.sseWriter.WriteDone()
 }
 
 // Flush writes any buffered data.

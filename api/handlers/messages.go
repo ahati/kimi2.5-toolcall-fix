@@ -271,28 +271,9 @@ func transformAnthropicToChat(body []byte) ([]byte, error) {
 
 // extractSystemMessage extracts a string system message from various
 // Anthropic system field formats.
+// Uses the shared ExtractTextFromContent from convert package.
 func extractSystemMessage(system interface{}) string {
-	if system == nil {
-		return ""
-	}
-
-	if s, ok := system.(string); ok {
-		return s
-	}
-
-	if arr, ok := system.([]interface{}); ok {
-		var content strings.Builder
-		for _, item := range arr {
-			if m, ok := item.(map[string]interface{}); ok {
-				if text, ok := m["text"].(string); ok {
-					content.WriteString(text)
-				}
-			}
-		}
-		return content.String()
-	}
-
-	return ""
+	return convert.ExtractTextFromContent(system)
 }
 
 // convertAnthropicMessages transforms a slice of Anthropic messages to OpenAI format.

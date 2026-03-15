@@ -7,20 +7,21 @@ import (
 	"strings"
 
 	"ai-proxy/logging"
+	"ai-proxy/transform"
 	"ai-proxy/types"
 
 	"github.com/tmaxmax/go-sse"
 )
 
 type AnthropicTransformer struct {
-	output     io.Writer
-	formatter  *AnthropicFormatter
-	state      anthropicState
-	buf        string
-	toolIndex  int
-	blockIndex int
-	currentID  string
-	messageID  string
+	sseWriter   *transform.SSEWriter
+	formatter   *AnthropicFormatter
+	state       anthropicState
+	buf         string
+	toolIndex   int
+	blockIndex  int
+	currentID   string
+	messageID   string
 
 	inThinking       bool
 	inText           bool
@@ -43,7 +44,7 @@ const (
 
 func NewAnthropicTransformer(output io.Writer) *AnthropicTransformer {
 	return &AnthropicTransformer{
-		output:    output,
+		sseWriter: transform.NewSSEWriter(output),
 		formatter: NewAnthropicFormatter("", ""),
 		state:     anthropicStateIdle,
 	}
@@ -586,44 +587,19 @@ func (t *AnthropicTransformer) write(data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-	_, err := t.output.Write(data)
+	_, err := t.sseWriter.WriteRaw(data)
 	return err
 }
 
 func (t *AnthropicTransformer) writeData(data []byte) error {
-	if len(data) == 0 {
-		return nil
-	}
-	_, err := t.output.Write([]byte("data: "))
-	if err != nil {
-		return err
-	}
-	_, err = t.output.Write(data)
-	if err != nil {
-		return err
-	}
-	_, err = t.output.Write([]byte("\n\n"))
-	return err
+	return t.sseWriter.WriteData(data)
 }
 
 func (t *AnthropicTransformer) writePassthrough(eventType string, data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-	_, err := t.output.Write([]byte("event: " + eventType + "\n"))
-	if err != nil {
-		return err
-	}
-	_, err = t.output.Write([]byte("data: "))
-	if err != nil {
-		return err
-	}
-	_, err = t.output.Write(data)
-	if err != nil {
-		return err
-	}
-	_, err = t.output.Write([]byte("\n\n"))
-	return err
+	return t.sseWriter.WriteEvent(eventType, data)
 }
 
 func (t *AnthropicTransformer) Flush() error {
