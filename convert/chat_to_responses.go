@@ -23,7 +23,8 @@ type ChatToResponsesTransformer struct {
 	toolCallIndex   int
 	currentToolCall *chatToRespToolCallState
 
-	contentBuilder strings.Builder
+	contentBuilder   strings.Builder
+	reasoningBuilder strings.Builder
 
 	finishReason string
 	usage        *types.Usage
@@ -32,6 +33,8 @@ type ChatToResponsesTransformer struct {
 	reasoningIndex int
 	sequenceNumber int
 
+	messageStarted bool // track if message item has been emitted
+	completed      bool // track if response.completed has been emitted
 	toolCalls []map[string]interface{}
 }
 
@@ -148,13 +151,14 @@ func (t *ChatToResponsesTransformer) emitResponseCreated() error {
 }
 
 func (t *ChatToResponsesTransformer) emitTextDelta(text string) error {
-	if t.contentIndex == 0 && !t.inReasoning {
+	if !t.messageStarted {
 		if err := t.emitMessageItemAdded(); err != nil {
 			return err
 		}
 		if err := t.emitContentPartAdded(); err != nil {
 			return err
 		}
+		t.messageStarted = true
 	}
 
 	t.contentBuilder.WriteString(text)
@@ -188,6 +192,8 @@ func (t *ChatToResponsesTransformer) emitReasoningDelta(text string) error {
 			return err
 		}
 	}
+
+	t.reasoningBuilder.WriteString(text)
 
 	event := map[string]interface{}{
 		"type":            "response.reasoning_summary_text.delta",
@@ -320,6 +326,10 @@ func (t *ChatToResponsesTransformer) emitToolCallDone() error {
 }
 
 func (t *ChatToResponsesTransformer) handleFinish() error {
+	if t.completed {
+		return nil // Already emitted response.completed
+	}
+
 	if t.currentToolCall != nil {
 		if err := t.emitToolCallDone(); err != nil {
 			return err
@@ -334,7 +344,7 @@ func (t *ChatToResponsesTransformer) handleFinish() error {
 			"type": "reasoning",
 			"id":   reasoningID,
 			"summary": []map[string]interface{}{
-				{"type": "summary_text", "text": ""},
+				{"type": "summary_text", "text": t.reasoningBuilder.String()},
 			},
 		})
 	}
@@ -373,7 +383,11 @@ func (t *ChatToResponsesTransformer) handleFinish() error {
 		"sequence_number": t.nextSeq(),
 		"response":        response,
 	}
-	return t.writeEvent(event)
+	if err := t.writeEvent(event); err != nil {
+		return err
+	}
+	t.completed = true
+	return nil
 }
 
 func (t *ChatToResponsesTransformer) writeEvent(event map[string]interface{}) error {

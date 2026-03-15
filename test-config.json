@@ -34,6 +34,26 @@
       "provider": "alibaba_anthropic",
       "model": "kimi-k2.5",
       "tool_call_transform": true
+    },
+    "gpt-5.4": {
+      "provider": "alibaba_anthropic",
+      "model": "glm-5",
+      "tool_call_transform": false
+    },
+    "gpt-5.3-codex": {
+      "provider": "alibaba_anthropic",
+      "model": "glm-5",
+      "tool_call_transform": false
+    },
+    "gpt-5.1-codex-mini": {
+      "provider": "alibaba_openai",
+      "model": "MiniMax-M2.5",
+      "tool_call_transform": false
+    },
+    "gpt-5-mini": {
+      "provider": "alibaba_anthropic",
+      "model": "MiniMax-M2.5",
+      "tool_call_transform": false
     }
   },
   "fallback": {
