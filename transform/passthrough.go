@@ -59,17 +59,23 @@ func NewPassthroughTransformer(output io.Writer) *PassthroughTransformer {
 // @pre output writer must be writable.
 // @post Event data is written to output unchanged.
 //
-// @note Event.Type is ignored - only Data is written.
-// @note The "data: " prefix and newlines are added to maintain SSE format.
+// @note The SSE format with both event type and data is maintained.
 func (t *PassthroughTransformer) Transform(event *sse.Event) error {
 	// Skip empty events
 	if event.Data == "" {
 		return nil
 	}
 
-	// Write the event in SSE format: "data: <content>\n\n"
-	// This maintains proper SSE protocol format.
-	_, err := t.output.Write([]byte("data: " + event.Data + "\n\n"))
+	// Write the event in proper SSE format: "event: <type>\ndata: <content>\n\n"
+	// This maintains proper SSE protocol format with event type for client routing.
+	var err error
+	if event.Type != "" {
+		_, err = t.output.Write([]byte("event: " + event.Type + "\n"))
+		if err != nil {
+			return err
+		}
+	}
+	_, err = t.output.Write([]byte("data: " + event.Data + "\n\n"))
 	return err
 }
 

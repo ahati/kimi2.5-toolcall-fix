@@ -296,9 +296,9 @@ func TestListModels(t *testing.T) {
 			{Name: "openai", Type: "openai", BaseURL: "https://api.openai.com"},
 		},
 		Models: map[string]config.ModelConfig{
-			"gpt-4":    {Provider: "openai", Model: "gpt-4-turbo"},
-			"gpt-3.5":  {Provider: "openai", Model: "gpt-3.5-turbo"},
-			"claude":   {Provider: "openai", Model: "claude-3"},
+			"gpt-4":   {Provider: "openai", Model: "gpt-4-turbo"},
+			"gpt-3.5": {Provider: "openai", Model: "gpt-3.5-turbo"},
+			"claude":  {Provider: "openai", Model: "claude-3"},
 		},
 	}
 

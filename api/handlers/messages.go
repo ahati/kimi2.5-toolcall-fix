@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"ai-proxy/config"
+	"ai-proxy/convert"
+	"ai-proxy/logging"
 	"ai-proxy/router"
 	"ai-proxy/transform"
 	"ai-proxy/transform/toolcall"
@@ -201,13 +203,15 @@ func (h *MessagesHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 func (h *MessagesHandler) CreateTransformer(w io.Writer) transform.SSETransformer {
 	if h.route == nil {
 		// Legacy behavior - use Anthropic transformer
+		logging.InfoMsg("Using legacy AnthropicTransformer (no route resolved)")
 		return toolcall.NewAnthropicTransformer(w)
 	}
 
 	switch h.route.Provider.Type {
 	case "openai":
 		// Convert OpenAI Chat responses back to Anthropic format
-		return toolcall.NewAnthropicTransformer(w)
+		logging.InfoMsg("Using ChatToAnthropicTransformer for OpenAI upstream (model=%s)", h.route.Model)
+		return convert.NewChatToAnthropicTransformer(w)
 	case "anthropic":
 		// Use Anthropic transformer for tool call handling
 		if h.route.ToolCallTransform {
@@ -239,12 +243,20 @@ func transformAnthropicToChat(body []byte) ([]byte, error) {
 	}
 
 	// Build the OpenAI format request with corresponding fields
+	// Force streaming mode - this proxy only supports SSE streaming
+	stream := anthReq.Stream
+	if !stream {
+		logging.InfoMsg("Forcing stream=true for upstream request (client did not specify)")
+		stream = true
+	}
 	openReq := types.ChatCompletionRequest{
 		Model:       anthReq.Model,
 		MaxTokens:   anthReq.MaxTokens,
-		Stream:      anthReq.Stream,
+		Stream:      stream,
 		Temperature: anthReq.Temperature,
 		TopP:        anthReq.TopP,
+		// Request usage statistics from upstream (required for Anthropic SDK)
+		StreamOptions: &types.StreamOptions{IncludeUsage: true},
 	}
 
 	// Convert system message (may be string or array of content blocks)
@@ -342,8 +354,33 @@ func convertAnthropicContentBlocks(blocks []interface{}) (interface{}, []types.T
 				}
 			}
 		case "tool_result":
+			// Extract tool_use_id and content
 			if id, ok := m["tool_use_id"].(string); ok {
 				toolCallID = id
+			}
+			// Extract the tool result content
+			if content, ok := m["content"]; ok {
+				switch c := content.(type) {
+				case string:
+					if textContent.Len() > 0 {
+						textContent.WriteString("\n")
+					}
+					textContent.WriteString(c)
+				case []interface{}:
+					// Handle array content blocks within tool_result
+					for _, block := range c {
+						if blockMap, ok := block.(map[string]interface{}); ok {
+							if blockType, ok := blockMap["type"].(string); ok && blockType == "text" {
+								if t, ok := blockMap["text"].(string); ok {
+									if textContent.Len() > 0 {
+										textContent.WriteString("\n")
+									}
+									textContent.WriteString(t)
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 	}

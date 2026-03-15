@@ -501,17 +501,17 @@ func TestExtractTextFromContent(t *testing.T) {
 // TestConvertContentBlocks tests the conversion of Anthropic content blocks.
 func TestConvertContentBlocks(t *testing.T) {
 	tests := []struct {
-		name              string
-		input             []interface{}
-		expectedText      string
-		expectedToolCalls int
+		name               string
+		input              []interface{}
+		expectedText       string
+		expectedToolCalls  int
 		expectedToolCallID string
 	}{
 		{
-			name:              "empty slice",
-			input:             []interface{}{},
-			expectedText:      "",
-			expectedToolCalls: 0,
+			name:               "empty slice",
+			input:              []interface{}{},
+			expectedText:       "",
+			expectedToolCalls:  0,
 			expectedToolCallID: "",
 		},
 		{

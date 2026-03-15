@@ -31,6 +31,15 @@ type ChatCompletionRequest struct {
 	// System provides system-level instructions to the model.
 	// Optional; sets the behavior and context for the assistant.
 	System string `json:"system,omitempty"`
+	// StreamOptions configures streaming behavior.
+	// Set include_usage: true to receive usage statistics in the final chunk.
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+}
+
+// StreamOptions configures streaming behavior for chat completion requests.
+type StreamOptions struct {
+	// IncludeUsage enables usage statistics in the final chunk when true.
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 // Message represents a single message in a chat conversation.

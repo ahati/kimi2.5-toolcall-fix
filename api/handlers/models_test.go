@@ -16,8 +16,8 @@ func TestModelsHandler_Handle_MissingAPIKey(t *testing.T) {
 		AppConfig: &config.Schema{
 			Providers: []config.Provider{
 				{
-					Name:   "openai",
-					Type:   "openai",
+					Name:    "openai",
+					Type:    "openai",
 					BaseURL: "https://api.example.com/v1/chat/completions",
 					APIKey:  "",
 				},

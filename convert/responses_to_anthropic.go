@@ -38,9 +38,10 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 		maxTokens = 16384 // Default max tokens (16k) for Anthropic API
 	}
 	anthReq := types.MessageRequest{
-		Model:       openReq.Model,
-		MaxTokens:   maxTokens,
-		Stream:      openReq.Stream,
+		Model:     openReq.Model,
+		MaxTokens: maxTokens,
+		// Force streaming mode - this proxy only supports SSE streaming
+		Stream:      openReq.Stream || true,
 		Temperature: openReq.Temperature,
 		TopP:        openReq.TopP,
 	}

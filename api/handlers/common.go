@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"ai-proxy/capture"
 	"ai-proxy/proxy"
@@ -229,20 +231,26 @@ func setStreamHeaders(c *gin.Context) {
 // @pre cc != nil and is properly initialized.
 // @post All events are captured in cc.Recorder.
 func streamWithCapture(c *gin.Context, body io.Reader, h Handler, cc *capture.CaptureContext) {
+	// Set headers required for SSE streaming
+	setStreamHeaders(c)
+
 	startTime := cc.StartTime
 	// Create capture writer for downstream (transformed) events
 	downstream := capture.NewCaptureWriter(startTime)
 	// Create capture writer for upstream (original) events
 	upstream := capture.NewCaptureWriter(startTime)
 
-	// Wrap the response writer to capture downstream events
-	recorder := NewResponseRecorder(c.Writer, downstream)
-	// Create transformer that writes through the recorder
-	transformer := h.CreateTransformer(recorder)
-	defer transformer.Close()
+	// Create a buffer to accumulate downstream SSE data
+	var dsBuf bytes.Buffer
 
 	// Stream events with capture
 	c.Stream(func(w io.Writer) bool {
+		// Create multiWriter to write to both the stream writer and our buffer
+		multiW := io.MultiWriter(w, &dsBuf)
+		// Create transformer that writes to multiWriter
+		transformer := h.CreateTransformer(multiW)
+		defer transformer.Close()
+
 		// Iterate over all SSE events from upstream
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
@@ -254,14 +262,33 @@ func streamWithCapture(c *gin.Context, body io.Reader, h Handler, cc *capture.Ca
 			if ev.Data != "" {
 				recordUpstreamEvent(upstream, ev)
 			}
-			// Transform and send event to client
+			// Transform and send event to client (also captured in dsBuf)
 			transformer.Transform(&ev)
 		}
 		return false
 	})
 
+	// Parse and capture downstream SSE events from the buffer
+	parseAndCaptureSSE(downstream, dsBuf.Bytes(), startTime)
+
 	// Finalize capture by recording all captured data
 	finalizeCapture(cc, downstream, upstream)
+}
+
+// parseAndCaptureSSE parses SSE data and records chunks.
+func parseAndCaptureSSE(cw capture.CaptureWriter, data []byte, start time.Time) {
+	// Split by SSE event delimiter
+	events := bytes.Split(data, []byte("\n\n"))
+	for _, event := range events {
+		if len(event) == 0 {
+			continue
+		}
+		eventType := extractEventType(event)
+		dataPart := extractDataPart(event)
+		if len(dataPart) > 0 {
+			cw.RecordChunk(eventType, dataPart)
+		}
+	}
 }
 
 // streamWithoutCapture streams the response without capturing data.
@@ -316,7 +343,6 @@ func recordUpstreamEvent(w capture.CaptureWriter, ev sse.Event) {
 // @param cc - Capture context to finalize.
 // @param downstream - Writer containing captured downstream events.
 // @param upstream - Writer containing captured upstream events.
-//
 // @pre cc != nil and has been recording the request.
 // @post cc.Recorder contains complete downstream and upstream response data.
 // @post cc.RequestID is set if found in SSE stream.
@@ -326,7 +352,12 @@ func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.Ca
 	downstreamRecorder := cc.Recorder.RecordDownstreamResponse()
 	// Transfer captured chunks to the response recorder
 	for _, chunk := range downstream.Chunks() {
-		downstreamRecorder.RecordChunk(chunk.Event, string(chunk.Data))
+		// Use Raw if Data is empty (invalid JSON), otherwise use Data
+		rawData := string(chunk.Data)
+		if rawData == "" && chunk.Raw != "" {
+			rawData = chunk.Raw
+		}
+		downstreamRecorder.RecordChunk(chunk.Event, rawData)
 	}
 
 	// Record upstream response (original events from upstream)
@@ -338,7 +369,12 @@ func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.Ca
 		)
 		// Transfer captured chunks to the response recorder
 		for _, chunk := range upstream.Chunks() {
-			upstreamRecorder.RecordChunk(chunk.Event, string(chunk.Data))
+			// Use Raw if Data is empty (invalid JSON), otherwise use Data
+			rawData := string(chunk.Data)
+			if rawData == "" && chunk.Raw != "" {
+				rawData = chunk.Raw
+			}
+			upstreamRecorder.RecordChunk(chunk.Event, rawData)
 		}
 	}
 
@@ -367,9 +403,15 @@ func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.Ca
 func handleUpstreamError(c *gin.Context, resp *http.Response) {
 	// Read the error body for inclusion in client error message
 	body, _ := io.ReadAll(resp.Body)
-	msg := fmt.Sprintf("Upstream error: %s", string(body))
-	// Send error in OpenAI format for consistency
-	sendOpenAIError(c, http.StatusBadGateway, msg)
+	msg := string(body)
+
+	// Record the upstream error for capture
+	c.Set("upstream_error_body", msg)
+	c.Set("upstream_error_status", resp.StatusCode)
+
+	// Send error in OpenAI format with the original upstream status code
+	// This preserves error details like 400 (bad request), 401 (auth), 429 (rate limit)
+	sendOpenAIError(c, resp.StatusCode, msg)
 }
 
 // sendOpenAIError sends an error response in OpenAI API format.

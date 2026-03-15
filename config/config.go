@@ -34,8 +34,7 @@ type Config struct {
 // @post Flag.Parse() has been called, consuming command-line arguments
 // @note Environment variables: PORT, SSELOG_DIR, CONFIG_FILE
 func Load() *Config {
-	// Parse CLI flags to get config file path
-	configFile, err := ParseFlags()
+	flags, err := ParseFlags()
 	if err != nil {
 		// If config file is required but not provided, return config with error info
 		// The caller should check AppConfig == nil
@@ -47,21 +46,21 @@ func Load() *Config {
 
 	// Load JSON config file
 	loader := NewLoader()
-	appConfig, err := loader.Load(configFile)
+	appConfig, err := loader.Load(flags.ConfigFile)
 	if err != nil {
 		// Return config with nil AppConfig, caller should handle error
 		return &Config{
-			Port:       getEnvOrFlag("PORT", "", "8080"),
-			SSELogDir:  getEnvOrFlag("SSELOG_DIR", "", ""),
-			ConfigFile: configFile,
+			Port:       getEnvOrFlag("PORT", flags.Port, "8080"),
+			SSELogDir:  getEnvOrFlag("SSELOG_DIR", flags.SSELogDir, ""),
+			ConfigFile: flags.ConfigFile,
 		}
 	}
 
 	// Build config with precedence: flag > env var > default
 	return &Config{
-		Port:       getEnvOrFlag("PORT", "", "8080"),
-		SSELogDir:  getEnvOrFlag("SSELOG_DIR", "", ""),
-		ConfigFile: configFile,
+		Port:       getEnvOrFlag("PORT", flags.Port, "8080"),
+		SSELogDir:  getEnvOrFlag("SSELOG_DIR", flags.SSELogDir, ""),
+		ConfigFile: flags.ConfigFile,
 		AppConfig:  appConfig,
 	}
 }

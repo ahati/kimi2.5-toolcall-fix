@@ -254,10 +254,10 @@ func TestLoaderValidate(t *testing.T) {
 			schema: Schema{
 				Providers: []Provider{
 					{
-						Name:   "test",
-						Type:   "openai",
+						Name:    "test",
+						Type:    "openai",
 						BaseURL: "",
-						APIKey: "key",
+						APIKey:  "key",
 					},
 				},
 				Models:   map[string]ModelConfig{},
@@ -428,10 +428,10 @@ func TestLoaderValidate(t *testing.T) {
 
 func TestLoaderResolveEnvVars(t *testing.T) {
 	tests := []struct {
-		name           string
-		schema         Schema
-		envVars        map[string]string
-		wantAPIKeys    map[string]string
+		name        string
+		schema      Schema
+		envVars     map[string]string
+		wantAPIKeys map[string]string
 	}{
 		{
 			name: "resolve envApiKey when apiKey is empty",
@@ -719,14 +719,14 @@ func TestLoaderJSONUnmarshalErrors(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "empty file",
+			name:          "empty file",
 			configContent: ``,
-			wantErr: true,
+			wantErr:       true,
 		},
 		{
-			name: "null instead of object",
+			name:          "null instead of object",
 			configContent: `null`,
-			wantErr: true, // null unmarshals to empty schema which fails validation
+			wantErr:       true, // null unmarshals to empty schema which fails validation
 		},
 	}
 

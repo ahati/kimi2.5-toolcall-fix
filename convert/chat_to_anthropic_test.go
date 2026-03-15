@@ -240,9 +240,9 @@ func TestChatToAnthropicConverter_Convert(t *testing.T) {
 // TestChatToAnthropicTransformer_Transform tests the SSE response transformation.
 func TestChatToAnthropicTransformer_Transform(t *testing.T) {
 	tests := []struct {
-		name     string
-		events   []types.Chunk
-		checkFn  func(t *testing.T, output string)
+		name      string
+		events    []types.Chunk
+		checkFn   func(t *testing.T, output string)
 		doneEvent bool
 	}{
 		{
@@ -330,6 +330,16 @@ func TestChatToAnthropicTransformer_Transform(t *testing.T) {
 							},
 							FinishReason: ptr("stop"),
 						},
+					},
+				},
+				// Usage chunk (sent after finish_reason by upstream)
+				{
+					ID:      "chatcmpl-123",
+					Model:   "claude-3-opus",
+					Choices: []types.Choice{},
+					Usage: &types.Usage{
+						PromptTokens:     10,
+						CompletionTokens: 5,
 					},
 				},
 			},
@@ -467,6 +477,16 @@ func TestChatToAnthropicTransformer_Transform(t *testing.T) {
 							},
 							FinishReason: ptr("tool_calls"),
 						},
+					},
+				},
+				// Usage chunk (sent after finish_reason by upstream)
+				{
+					ID:      "chatcmpl-123",
+					Model:   "claude-3-opus",
+					Choices: []types.Choice{},
+					Usage: &types.Usage{
+						PromptTokens:     10,
+						CompletionTokens: 5,
 					},
 				},
 			},
@@ -716,6 +736,7 @@ func TestChatToAnthropicTransformer_FinishReasonMapping(t *testing.T) {
 			var buf bytes.Buffer
 			transformer := NewChatToAnthropicTransformer(&buf)
 
+			// First chunk with finish_reason
 			chunk := types.Chunk{
 				ID:    "chatcmpl-test",
 				Model: "claude-3-opus",
@@ -732,6 +753,20 @@ func TestChatToAnthropicTransformer_FinishReasonMapping(t *testing.T) {
 			}
 			data, _ := json.Marshal(chunk)
 			transformer.Transform(&sse.Event{Data: string(data)})
+
+			// Second chunk with usage (required to trigger message_delta emission)
+			usageChunk := types.Chunk{
+				ID:      "chatcmpl-test",
+				Model:   "claude-3-opus",
+				Choices: []types.Choice{},
+				Usage: &types.Usage{
+					PromptTokens:     10,
+					CompletionTokens: 5,
+				},
+			}
+			usageData, _ := json.Marshal(usageChunk)
+			transformer.Transform(&sse.Event{Data: string(usageData)})
+
 			transformer.Close()
 
 			output := buf.String()
@@ -775,6 +810,147 @@ func TestChatToAnthropicTransformer_InvalidJSON(t *testing.T) {
 	output := buf.String()
 	if !contains(output, "not valid json") {
 		t.Error("expected invalid JSON to be passed through")
+	}
+}
+
+// TestChatToAnthropicTransformer_ThinkingToTextTransition tests that the transformer
+// properly handles the transition from thinking content to text content.
+// According to Anthropic SSE spec, each content block should be either thinking OR text,
+// not both. When switching from thinking to text, we must close the thinking block
+// and start a new text block.
+func TestChatToAnthropicTransformer_ThinkingToTextTransition(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewChatToAnthropicTransformer(&buf)
+
+	// First chunk with thinking content
+	chunk1 := types.Chunk{
+		ID:    "chatcmpl-123",
+		Model: "claude-3-opus",
+		Choices: []types.Choice{
+			{
+				Index: 0,
+				Delta: types.Delta{
+					ReasoningContent: "Let me think...",
+				},
+			},
+		},
+	}
+	data1, _ := json.Marshal(chunk1)
+	transformer.Transform(&sse.Event{Data: string(data1)})
+
+	// Second chunk with text content - should close thinking and start text
+	chunk2 := types.Chunk{
+		ID:    "chatcmpl-123",
+		Model: "claude-3-opus",
+		Choices: []types.Choice{
+			{
+				Index: 0,
+				Delta: types.Delta{
+					Content: "Hello",
+				},
+			},
+		},
+	}
+	data2, _ := json.Marshal(chunk2)
+	transformer.Transform(&sse.Event{Data: string(data2)})
+
+	// Close the stream
+	transformer.Close()
+
+	output := buf.String()
+
+	// Verify we have thinking block at index 0
+	if !contains(output, `"type":"thinking"`) {
+		t.Error("expected thinking content block to be started")
+	}
+
+	// Verify we have text block at index 1
+	if !contains(output, `"type":"text"`) {
+		t.Error("expected text content block to be started")
+	}
+
+	// Verify thinking block was closed at index 0
+	if !contains(output, `"index":0,"type":"content_block_stop"`) {
+		t.Error("expected thinking block to be closed at index 0")
+	}
+
+	// Verify text block was closed at index 1
+	if !contains(output, `"index":1,"type":"content_block_stop"`) {
+		t.Error("expected text block to be closed at index 1")
+	}
+
+	// Verify thinking_delta is at index 0
+	if !contains(output, `"index":0,"type":"content_block_delta"`) {
+		t.Error("expected thinking delta at index 0")
+	}
+
+	// Verify text_delta is at index 1 (not 0)
+	if !contains(output, `"index":1`) || !contains(output, `"type":"text_delta"`) {
+		t.Error("expected text delta at index 1, not mixed with thinking at index 0")
+	}
+}
+
+// TestChatToAnthropicTransformer_TextToThinkingTransition tests the reverse transition
+// from text to thinking content.
+func TestChatToAnthropicTransformer_TextToThinkingTransition(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewChatToAnthropicTransformer(&buf)
+
+	// First chunk with text content
+	chunk1 := types.Chunk{
+		ID:    "chatcmpl-123",
+		Model: "claude-3-opus",
+		Choices: []types.Choice{
+			{
+				Index: 0,
+				Delta: types.Delta{
+					Content: "Hello",
+				},
+			},
+		},
+	}
+	data1, _ := json.Marshal(chunk1)
+	transformer.Transform(&sse.Event{Data: string(data1)})
+
+	// Second chunk with thinking content - should close text and start thinking
+	chunk2 := types.Chunk{
+		ID:    "chatcmpl-123",
+		Model: "claude-3-opus",
+		Choices: []types.Choice{
+			{
+				Index: 0,
+				Delta: types.Delta{
+					ReasoningContent: "Let me reconsider...",
+				},
+			},
+		},
+	}
+	data2, _ := json.Marshal(chunk2)
+	transformer.Transform(&sse.Event{Data: string(data2)})
+
+	// Close the stream
+	transformer.Close()
+
+	output := buf.String()
+
+	// Verify we have text block at index 0
+	if !contains(output, `"type":"text"`) {
+		t.Error("expected text content block to be started")
+	}
+
+	// Verify we have thinking block at index 1
+	if !contains(output, `"type":"thinking"`) {
+		t.Error("expected thinking content block to be started")
+	}
+
+	// Verify text block was closed at index 0
+	if !contains(output, `"index":0,"type":"content_block_stop"`) {
+		t.Error("expected text block to be closed at index 0")
+	}
+
+	// Verify thinking block was closed at index 1
+	if !contains(output, `"index":1,"type":"content_block_stop"`) {
+		t.Error("expected thinking block to be closed at index 1")
 	}
 }
 

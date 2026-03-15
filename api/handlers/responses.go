@@ -198,13 +198,8 @@ func (h *ResponsesHandler) CreateTransformer(w io.Writer) transform.SSETransform
 
 	switch h.route.Provider.Type {
 	case "openai":
-		// Convert Chat Completions SSE to Responses API format
-		if h.route.ToolCallTransform {
-			return toolcall.NewOpenAITransformer(w)
-		}
-		return convert.NewResponsesToChatTransformer(w)
+		return convert.NewChatToResponsesTransformer(w)
 	case "anthropic":
-		// Convert Anthropic SSE to Responses API format
 		return toolcall.NewResponsesTransformer(w)
 	default:
 		return transform.NewPassthroughTransformer(w)
@@ -312,12 +307,10 @@ func (h *ResponsesHandlerNoRouter) ForwardHeaders(c *gin.Context, req *http.Requ
 
 // CreateTransformer builds an SSE transformer based on the provider type.
 func (h *ResponsesHandlerNoRouter) CreateTransformer(w io.Writer) transform.SSETransformer {
-	// Check for Anthropic provider first
 	if h.cfg.GetAnthropicUpstreamURL() != "" {
 		return toolcall.NewResponsesTransformer(w)
 	}
-	// Fall back to OpenAI provider - convert Chat to Responses format
-	return convert.NewResponsesToChatTransformer(w)
+	return convert.NewChatToResponsesTransformer(w)
 }
 
 // WriteError sends an error response in OpenAI Responses API format.

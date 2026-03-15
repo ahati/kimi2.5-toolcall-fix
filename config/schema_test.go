@@ -8,11 +8,11 @@ import (
 
 func TestProviderGetAPIKey(t *testing.T) {
 	tests := []struct {
-		name      string
-		provider  Provider
-		envKey    string
-		envValue  string
-		wantKey   string
+		name     string
+		provider Provider
+		envKey   string
+		envValue string
+		wantKey  string
 	}{
 		{
 			name: "direct APIKey takes precedence",

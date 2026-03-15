@@ -294,14 +294,14 @@ func TestResponsesToChatTransformer_Transform(t *testing.T) {
 					},
 				},
 				{
-					Type:       "response.output_text.delta",
-					ItemID:     "msg_123",
-					Delta:      "Hello",
+					Type:   "response.output_text.delta",
+					ItemID: "msg_123",
+					Delta:  "Hello",
 				},
 				{
-					Type:       "response.output_text.delta",
-					ItemID:     "msg_123",
-					Delta:      " world",
+					Type:   "response.output_text.delta",
+					ItemID: "msg_123",
+					Delta:  " world",
 				},
 			},
 			validate: func(t *testing.T, output string) {
@@ -338,14 +338,14 @@ func TestResponsesToChatTransformer_Transform(t *testing.T) {
 					},
 				},
 				{
-					Type:       "response.function_call_arguments.delta",
-					ItemID:     "call_123",
-					Delta:      `{"location"`,
+					Type:   "response.function_call_arguments.delta",
+					ItemID: "call_123",
+					Delta:  `{"location"`,
 				},
 				{
-					Type:       "response.function_call_arguments.delta",
-					ItemID:     "call_123",
-					Delta:      `: "Paris"}`,
+					Type:   "response.function_call_arguments.delta",
+					ItemID: "call_123",
+					Delta:  `: "Paris"}`,
 				},
 			},
 			validate: func(t *testing.T, output string) {
@@ -371,9 +371,9 @@ func TestResponsesToChatTransformer_Transform(t *testing.T) {
 					},
 				},
 				{
-					Type:       "response.output_text.delta",
-					ItemID:     "msg_123",
-					Delta:      "Hello",
+					Type:   "response.output_text.delta",
+					ItemID: "msg_123",
+					Delta:  "Hello",
 				},
 				{
 					Type: "response.completed",
@@ -423,9 +423,9 @@ func TestResponsesToChatTransformer_Transform(t *testing.T) {
 					},
 				},
 				{
-					Type:       "response.function_call_arguments.delta",
-					ItemID:     "call_123",
-					Delta:      `{}`,
+					Type:   "response.function_call_arguments.delta",
+					ItemID: "call_123",
+					Delta:  `{}`,
 				},
 				{
 					Type: "response.completed",
@@ -698,19 +698,19 @@ func TestResponsesToChatTransformer_FullFlow(t *testing.T) {
 			},
 		},
 		{
-			Type:       "response.output_text.delta",
-			ItemID:     "msg_123",
-			Delta:      "Hello",
+			Type:   "response.output_text.delta",
+			ItemID: "msg_123",
+			Delta:  "Hello",
 		},
 		{
-			Type:       "response.output_text.delta",
-			ItemID:     "msg_123",
-			Delta:      " there",
+			Type:   "response.output_text.delta",
+			ItemID: "msg_123",
+			Delta:  " there",
 		},
 		{
-			Type:       "response.output_text.delta",
-			ItemID:     "msg_123",
-			Delta:      "!",
+			Type:   "response.output_text.delta",
+			ItemID: "msg_123",
+			Delta:  "!",
 		},
 		{
 			Type: "response.completed",
@@ -758,6 +758,133 @@ func TestResponsesToChatTransformer_FullFlow(t *testing.T) {
 	}
 }
 
+// TestResponsesToChatConverter_MultipleToolCalls tests that multiple consecutive
+// function_call items are grouped into a single assistant message.
+func TestResponsesToChatConverter_MultipleToolCalls(t *testing.T) {
+	converter := NewResponsesToChatConverter()
+
+	input := `{
+		"model": "gpt-4o",
+		"input": [
+			{"type": "message", "role": "user", "content": "What is the weather?"},
+			{"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{\"city\": \"SF\"}"},
+			{"type": "function_call", "call_id": "call_2", "name": "get_temperature", "arguments": "{\"city\": \"SF\"}"},
+			{"type": "function_call_output", "call_id": "call_1", "output": "Sunny"},
+			{"type": "function_call_output", "call_id": "call_2", "output": "72F"}
+		]
+	}`
+
+	output, err := converter.Convert([]byte(input))
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+
+	var req types.ChatCompletionRequest
+	if err := json.Unmarshal(output, &req); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	// Should have 3 messages:
+	// 1. user message
+	// 2. assistant message with 2 tool_calls
+	// 3. tool message for call_1
+	// 4. tool message for call_2
+	if len(req.Messages) != 4 {
+		t.Errorf("Expected 4 messages, got %d", len(req.Messages))
+		for i, msg := range req.Messages {
+			t.Logf("Message %d: role=%s, tool_call_id=%s, tool_calls=%v", i, msg.Role, msg.ToolCallID, msg.ToolCalls)
+		}
+		return
+	}
+
+	// Check first message is user
+	if req.Messages[0].Role != "user" {
+		t.Errorf("Expected first message to be user, got %s", req.Messages[0].Role)
+	}
+
+	// Check second message is assistant with 2 tool_calls
+	if req.Messages[1].Role != "assistant" {
+		t.Errorf("Expected second message to be assistant, got %s", req.Messages[1].Role)
+	}
+	if len(req.Messages[1].ToolCalls) != 2 {
+		t.Errorf("Expected assistant message to have 2 tool_calls, got %d", len(req.Messages[1].ToolCalls))
+	} else {
+		// Verify tool call IDs
+		ids := make(map[string]bool)
+		for _, tc := range req.Messages[1].ToolCalls {
+			ids[tc.ID] = true
+		}
+		if !ids["call_1"] || !ids["call_2"] {
+			t.Errorf("Expected tool_calls to have call_1 and call_2, got IDs: %v", ids)
+		}
+	}
+
+	// Check third and fourth messages are tool messages
+	if req.Messages[2].Role != "tool" {
+		t.Errorf("Expected third message to be tool, got %s", req.Messages[2].Role)
+	}
+	if req.Messages[3].Role != "tool" {
+		t.Errorf("Expected fourth message to be tool, got %s", req.Messages[3].Role)
+	}
+}
+
+// TestResponsesToChatConverter_FunctionCallAndOutput tests function_call and
+// function_call_output conversion.
+func TestResponsesToChatConverter_FunctionCallAndOutput(t *testing.T) {
+	converter := NewResponsesToChatConverter()
+
+	input := `{
+		"model": "gpt-4o",
+		"input": [
+			{"type": "message", "role": "user", "content": "What is the weather?"},
+			{"type": "function_call", "call_id": "call_123", "name": "get_weather", "arguments": "{\"location\": \"SF\"}"},
+			{"type": "function_call_output", "call_id": "call_123", "output": "Sunny in SF"}
+		]
+	}`
+
+	output, err := converter.Convert([]byte(input))
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+
+	var req types.ChatCompletionRequest
+	if err := json.Unmarshal(output, &req); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	// Should have 3 messages: user, assistant with tool_calls, tool
+	if len(req.Messages) != 3 {
+		t.Errorf("Expected 3 messages, got %d", len(req.Messages))
+		return
+	}
+
+	// Check assistant message
+	if req.Messages[1].Role != "assistant" {
+		t.Errorf("Expected second message to be assistant, got %s", req.Messages[1].Role)
+	}
+	if len(req.Messages[1].ToolCalls) != 1 {
+		t.Errorf("Expected assistant message to have 1 tool_call, got %d", len(req.Messages[1].ToolCalls))
+		return
+	}
+	if req.Messages[1].ToolCalls[0].ID != "call_123" {
+		t.Errorf("Expected tool_call ID call_123, got %s", req.Messages[1].ToolCalls[0].ID)
+	}
+	if req.Messages[1].ToolCalls[0].Function.Name != "get_weather" {
+		t.Errorf("Expected function name get_weather, got %s", req.Messages[1].ToolCalls[0].Function.Name)
+	}
+
+	// Check tool message
+	if req.Messages[2].Role != "tool" {
+		t.Errorf("Expected third message to be tool, got %s", req.Messages[2].Role)
+	}
+	if req.Messages[2].ToolCallID != "call_123" {
+		t.Errorf("Expected tool_call_id call_123, got %s", req.Messages[2].ToolCallID)
+	}
+	if req.Messages[2].Content != "Sunny in SF" {
+		t.Errorf("Expected content 'Sunny in SF', got %v", req.Messages[2].Content)
+	}
+}
+
 // BenchmarkResponsesToChatConverter_Convert benchmarks request conversion.
 func BenchmarkResponsesToChatConverter_Convert(b *testing.B) {
 	converter := NewResponsesToChatConverter()
@@ -777,9 +904,9 @@ func BenchmarkResponsesToChatConverter_Convert(b *testing.B) {
 // BenchmarkResponsesToChatTransformer_Transform benchmarks response transformation.
 func BenchmarkResponsesToChatTransformer_Transform(b *testing.B) {
 	event := types.ResponsesStreamEvent{
-		Type:       "response.output_text.delta",
-		ItemID:     "msg_123",
-		Delta:      "Hello world",
+		Type:   "response.output_text.delta",
+		ItemID: "msg_123",
+		Delta:  "Hello world",
 	}
 	data, _ := json.Marshal(event)
 

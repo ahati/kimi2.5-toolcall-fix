@@ -114,7 +114,7 @@ func TestParseFlags(t *testing.T) {
 			}
 			defer os.Unsetenv("CONFIG_FILE")
 
-			path, err := ParseFlags()
+			flags, err := ParseFlags()
 
 			if tt.expectError {
 				if err == nil {
@@ -123,15 +123,15 @@ func TestParseFlags(t *testing.T) {
 				if err != nil && err.Error() != tt.expectedErrMsg {
 					t.Errorf("ParseFlags() error = %q, want %q", err.Error(), tt.expectedErrMsg)
 				}
-				if path != "" {
-					t.Errorf("ParseFlags() path = %q, want empty string on error", path)
+				if flags.ConfigFile != "" {
+					t.Errorf("ParseFlags() path = %q, want empty string on error", flags.ConfigFile)
 				}
 			} else {
 				if err != nil {
 					t.Errorf("ParseFlags() unexpected error: %v", err)
 				}
-				if path != tt.expectedPath {
-					t.Errorf("ParseFlags() path = %q, want %q", path, tt.expectedPath)
+				if flags.ConfigFile != tt.expectedPath {
+					t.Errorf("ParseFlags() path = %q, want %q", flags.ConfigFile, tt.expectedPath)
 				}
 			}
 		})
@@ -160,13 +160,16 @@ func TestParseFlags_MultipleFlags(t *testing.T) {
 	os.Args = []string{"test", "--config-file=/config.yaml", "--port=8080"}
 	os.Unsetenv("CONFIG_FILE")
 
-	path, err := ParseFlags()
+	flags, err := ParseFlags()
 
 	if err != nil {
 		t.Errorf("ParseFlags() unexpected error: %v", err)
 	}
-	if path != "/config.yaml" {
-		t.Errorf("ParseFlags() path = %q, want /config.yaml", path)
+	if flags.ConfigFile != "/config.yaml" {
+		t.Errorf("ParseFlags() path = %q, want /config.yaml", flags.ConfigFile)
+	}
+	if flags.Port != "8080" {
+		t.Errorf("ParseFlags() port = %q, want 8080", flags.Port)
 	}
 }
 
@@ -176,13 +179,13 @@ func TestParseFlags_FlagPrecedenceOverEnv(t *testing.T) {
 	os.Setenv("CONFIG_FILE", "/env-config.yaml")
 	defer os.Unsetenv("CONFIG_FILE")
 
-	path, err := ParseFlags()
+	flags, err := ParseFlags()
 
 	if err != nil {
 		t.Errorf("ParseFlags() unexpected error: %v", err)
 	}
-	if path != "/flag-config.yaml" {
-		t.Errorf("ParseFlags() path = %q, want /flag-config.yaml (flag should override env)", path)
+	if flags.ConfigFile != "/flag-config.yaml" {
+		t.Errorf("ParseFlags() path = %q, want /flag-config.yaml (flag should override env)", flags.ConfigFile)
 	}
 }
 
@@ -192,12 +195,12 @@ func TestParseFlags_EnvWithSpecialChars(t *testing.T) {
 	os.Setenv("CONFIG_FILE", "/path/with-special_chars.123/config.yaml")
 	defer os.Unsetenv("CONFIG_FILE")
 
-	path, err := ParseFlags()
+	flags, err := ParseFlags()
 
 	if err != nil {
 		t.Errorf("ParseFlags() unexpected error: %v", err)
 	}
-	if path != "/path/with-special_chars.123/config.yaml" {
-		t.Errorf("ParseFlags() path = %q, want /path/with-special_chars.123/config.yaml", path)
+	if flags.ConfigFile != "/path/with-special_chars.123/config.yaml" {
+		t.Errorf("ParseFlags() path = %q, want /path/with-special_chars.123/config.yaml", flags.ConfigFile)
 	}
 }

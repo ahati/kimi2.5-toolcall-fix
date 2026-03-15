@@ -80,7 +80,7 @@ type ResponsesToolFunction struct {
 // InputItem represents an input item in the conversation.
 type InputItem struct {
 	// Type identifies the input item type.
-	// Values: "message", "file"
+	// Values: "message", "function_call", "function_call_output"
 	Type string `json:"type"`
 	// Role identifies the speaker for message type.
 	// Values: "user", "assistant", "system", "developer"
@@ -88,6 +88,18 @@ type InputItem struct {
 	// Content is the message content.
 	// Can be a string or array of content parts.
 	Content interface{} `json:"content,omitempty"`
+	// ID is the unique identifier for function_call type.
+	ID string `json:"id,omitempty"`
+	// CallID is the call ID for function_call and function_call_output types.
+	CallID string `json:"call_id,omitempty"`
+	// ToolCallID is an alternative field name for call_id (used by some clients).
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	// Name is the function name for function_call type.
+	Name string `json:"name,omitempty"`
+	// Arguments is the JSON-encoded arguments for function_call type.
+	Arguments string `json:"arguments,omitempty"`
+	// Output is the function result for function_call_output type.
+	Output string `json:"output,omitempty"`
 }
 
 // ContentPart represents a content part in a message.

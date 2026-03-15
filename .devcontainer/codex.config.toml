@@ -1,0 +1,144 @@
+# ==========================================
+# GLOBAL SETTINGS & DEFAULTS
+# ==========================================
+model = "qwen3.5-plus"
+model_provider = "proxy_ai"
+model_catalog_json = "/home/vscode/custom_models.json"
+disabled_providers = ["opencode"]
+model_reasoning_effort = "high"
+
+# ==========================================
+# PROVIDER DEFINITIONS
+# ==========================================
+
+[model_providers.proxy_ai]
+name = "proxy"
+base_url = "http://host.docker.internal:8080/v1"
+api_key = "sk-cp-dummy"
+
+[model_providers.proxy_ai_anthropic]
+name = "proxy-anthropic"
+base_url = "http://host.docker.internal:8080/v1"
+api_key = "sk-cp-dummy"
+provider_type = "anthropic"
+npm_package = "@ai-sdk/anthropic"
+
+[model_providers.alibaba_anthropic]
+name = "alibaba-anthropic"
+base_url = "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1"
+env_key = "ALIBABA_API_KEY"
+provider_type = "anthropic"
+npm_package = "@ai-sdk/anthropic"
+
+[model_providers.alibaba_coding_plan]
+name = "Alibaba Coding Plan"
+base_url = "https://coding-intl.dashscope.aliyuncs.com/v1"
+env_key = "ALIBABA_API_KEY"
+npm_package = "@ai-sdk/openai-compatible"
+
+# ==========================================
+# MODEL PROFILES (WITH ALL PARAMETERS)
+# ==========================================
+
+# --- Proxy AI Models ---
+[profiles."proxy-ai/Kimi-K2.5-TEE"]
+model_provider = "proxy_ai"
+model = "moonshotai/Kimi-K2.5-TEE"
+context_window = 262144
+max_output = 262144
+modalities = ["text", "image", "video"]
+reasoning_field = "reasoning_content"
+thinking_budget = 81920
+structured_output = true
+temperature = 0.0
+
+# --- Proxy AI Anthropic Models ---
+[profiles."proxy-anthropic/kimi-k2.5"]
+model_provider = "proxy_ai_anthropic"
+model = "kimi-k2.5"
+context_window = 262144
+max_output = 262144
+modalities = ["text", "image", "video"]
+reasoning_field = "reasoning_content"
+thinking_budget = 81920
+structured_output = true
+
+[profiles."proxy-anthropic/glm-5"]
+model_provider = "proxy_ai_anthropic"
+model = "glm-5"
+context_window = 202752
+max_output = 16384
+modalities = ["text"]
+thinking_budget = 8196
+
+# --- Alibaba Anthropic Models ---
+[profiles."alibaba-anthropic/kimi-k2.5"]
+model_provider = "alibaba_anthropic"
+model = "kimi-k2.5"
+context_window = 262144
+max_output = 262144
+modalities = ["text", "image", "video"]
+reasoning_field = "reasoning_content"
+
+[profiles."alibaba-anthropic/qwen3.5-plus"]
+model_provider = "alibaba_anthropic"
+model = "qwen3.5-plus"
+context_window = 1000000
+max_output = 65536
+modalities = ["text", "image", "video"]
+thinking_budget = 81920
+structured_output = true
+
+[profiles."alibaba-anthropic/qwen3-max"]
+model_provider = "alibaba_anthropic"
+model = "qwen3-max-2026-01-23"
+context_window = 262144
+max_output = 32768
+modalities = ["text"]
+
+[profiles."alibaba-anthropic/qwen3-coder-next"]
+model_provider = "alibaba_anthropic"
+model = "qwen3-coder-next"
+context_window = 262144
+max_output = 65536
+modalities = ["text"]
+
+[profiles."alibaba-anthropic/qwen3-coder-plus"]
+model_provider = "alibaba_anthropic"
+model = "qwen3-coder-plus"
+context_window = 1000000
+max_output = 65536
+modalities = ["text"]
+
+[profiles."alibaba-anthropic/MiniMax-M2.5"]
+model_provider = "alibaba_anthropic"
+model = "MiniMax-M2.5"
+context_window = 200000
+max_output = 128000
+modalities = ["text"]
+thinking_budget = 1024
+
+[profiles."alibaba-anthropic/glm-5"]
+model_provider = "alibaba_anthropic"
+model = "glm-5"
+context_window = 202752
+max_output = 16384
+modalities = ["text"]
+thinking_budget = 1024
+
+[profiles."alibaba-anthropic/glm-4.7"]
+model_provider = "alibaba_anthropic"
+model = "glm-4.7"
+context_window = 169984
+max_output = 16384
+modalities = ["text"]
+thinking_budget = 1024
+
+[projects."/workspaces/kimi-k2.5-fix-proxy"]
+trust_level = "trusted"
+
+[notice]
+hide_full_access_warning = true
+
+[notice.model_migrations]
+"gpt-5.3-codex" = "gpt-5.4"

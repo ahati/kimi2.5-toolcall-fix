@@ -11,25 +11,41 @@ import (
 // ErrConfigFileRequired is returned when no config file path is provided.
 var ErrConfigFileRequired = errors.New("config file required: use --config-file or CONFIG_FILE environment variable")
 
-// ParseFlags parses CLI flags and returns the config file path.
-// Priority: --config-file flag > CONFIG_FILE env var > error
+// CLIFlags holds the parsed command-line flags.
+type CLIFlags struct {
+	ConfigFile string
+	SSELogDir  string
+	Port       string
+}
+
+// ParseFlags parses CLI flags and returns the parsed flags.
+// Priority for config file: --config-file flag > CONFIG_FILE env var > error
+// Priority for other flags: flag > environment variable > default
 //
-// @return string - the config file path
-// @return error - ErrConfigFileRequired if neither flag nor env var is provided
+// @return CLIFlags - the parsed flags
+// @return error - ErrConfigFileRequired if neither flag nor env var is provided for config file
 // @post flag.Parse() has been called, consuming command-line arguments
-// @note The returned path may be empty only if an error is returned
-func ParseFlags() (configFile string, err error) {
+func ParseFlags() (CLIFlags, error) {
 	configFilePath := flag.String("config-file", "", "Path to configuration file")
+	sseLogDir := flag.String("sse-log-dir", "", "Directory for SSE request/response logging")
+	port := flag.String("port", "", "Server port (default: 8080)")
 
 	flag.Parse()
 
+	flags := CLIFlags{
+		SSELogDir: *sseLogDir,
+		Port:      *port,
+	}
+
 	if *configFilePath != "" {
-		return *configFilePath, nil
+		flags.ConfigFile = *configFilePath
+		return flags, nil
 	}
 
 	if envPath, ok := os.LookupEnv("CONFIG_FILE"); ok && envPath != "" {
-		return envPath, nil
+		flags.ConfigFile = envPath
+		return flags, nil
 	}
 
-	return "", ErrConfigFileRequired
+	return flags, ErrConfigFileRequired
 }

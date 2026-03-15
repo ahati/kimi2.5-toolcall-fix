@@ -11,11 +11,12 @@ import (
 )
 
 type OpenAITransformer struct {
-	output    io.Writer
-	formatter *OpenAIFormatter
-	parser    *Parser
-	messageID string
-	model     string
+	output      io.Writer
+	formatter   *OpenAIFormatter
+	parser      *Parser
+	messageID   string
+	model       string
+	inReasoning bool
 }
 
 func NewOpenAITransformer(output io.Writer) *OpenAITransformer {
@@ -52,6 +53,9 @@ func (t *OpenAITransformer) handleChunk(chunk types.Chunk, rawData string) error
 	}
 
 	if len(chunk.Choices) == 0 {
+		if chunk.Usage != nil {
+			return t.writeData([]byte(rawData))
+		}
 		return t.writeData([]byte(rawData))
 	}
 
@@ -59,7 +63,25 @@ func (t *OpenAITransformer) handleChunk(chunk types.Chunk, rawData string) error
 	delta := choice.Delta
 
 	if delta.Content != "" {
+		t.inReasoning = false
 		return t.write(t.formatter.FormatContent(delta.Content))
+	}
+
+	if len(delta.ToolCalls) > 0 {
+		t.inReasoning = false
+		for _, tc := range delta.ToolCalls {
+			if tc.ID != "" && tc.Function.Name != "" {
+				if err := t.write(t.formatter.FormatToolStart(tc.ID, tc.Function.Name, tc.Index)); err != nil {
+					return err
+				}
+			}
+			if tc.Function.Arguments != "" {
+				if err := t.write(t.formatter.FormatToolArgs(tc.Function.Arguments, tc.Index)); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
 
 	text := delta.Reasoning
@@ -67,14 +89,16 @@ func (t *OpenAITransformer) handleChunk(chunk types.Chunk, rawData string) error
 		text = delta.ReasoningContent
 	}
 
-	if text == "" {
-		if choice.FinishReason != nil && *choice.FinishReason != "" {
-			return t.writeData([]byte(rawData))
-		}
-		return nil
+	if text != "" {
+		t.inReasoning = true
+		return t.processText(text)
 	}
 
-	return t.processText(text)
+	if choice.FinishReason != nil && *choice.FinishReason != "" {
+		return t.writeData([]byte(rawData))
+	}
+
+	return nil
 }
 
 func (t *OpenAITransformer) processText(text string) error {
@@ -89,6 +113,9 @@ func (t *OpenAITransformer) processText(text string) error {
 		return nil
 	}
 
+	if t.inReasoning {
+		return t.write(t.formatter.FormatReasoning(text))
+	}
 	return t.write(t.formatter.FormatContent(text))
 }
 

@@ -7,28 +7,39 @@
       "envApiKey": "CHUTES_API_KEY"
     },
     {
-      "name": "alibaba",
+      "name": "alibaba_anthropic",
       "type": "anthropic",
       "base_url": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages",
+      "envApiKey": "ALIBABA_API_KEY"
+    },
+    {
+      "name": "alibaba_openai",
+      "type": "openai",
+      "base_url": "https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions",
       "envApiKey": "ALIBABA_API_KEY"
     }
   ],
   "models": {
-    "kimi-k2.5": {
+    "moonshotai/Kimi-K2.5-TEE": {
       "provider": "chutes",
       "model": "moonshotai/Kimi-K2.5-TEE",
       "tool_call_transform": true
     },
-    "glm-5": {
-      "provider": "alibaba",
-      "model": "glm-5",
+    "zai-org/GLM-5-TEE": {
+      "provider": "chutes",
+      "model": "zai-org/GLM-5-TEE",
       "tool_call_transform": false
+    },
+    "kimi-k2.5": {
+      "provider": "alibaba_anthropic",
+      "model": "kimi-k2.5",
+      "tool_call_transform": true
     }
   },
   "fallback": {
     "enabled": true,
-    "provider": "chutes",
+    "provider": "alibaba_openai",
     "model": "{model}",
-    "tool_call_transform": true
+    "tool_call_transform": false
   }
 }
