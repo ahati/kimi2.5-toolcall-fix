@@ -460,8 +460,8 @@ func TestResponsesHandler_WriteError(t *testing.T) {
 		t.Error("Response should contain error type")
 	}
 
-	if !strings.Contains(body, `"type":"invalid_request_error"`) {
-		t.Error("Response should contain error type")
+	if !strings.Contains(body, `"code":"invalid_request_error"`) {
+		t.Error("Response should contain error code")
 	}
 
 	if !strings.Contains(body, "Test error message") {
