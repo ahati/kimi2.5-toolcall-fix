@@ -3,6 +3,8 @@ package convert
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"ai-proxy/types"
@@ -778,9 +780,9 @@ func TestChatToAnthropicConverter_TemperatureBoundaries(t *testing.T) {
 // Category A1: Stop sequences with special chars (MEDIUM)
 func TestChatToAnthropicConverter_StopSequencesSpecialChars(t *testing.T) {
 	tests := []struct {
-		name        string
-		stop        interface{}
-		expected    []string
+		name     string
+		stop     interface{}
+		expected []string
 	}{
 		{
 			name:     "stop with newline",
@@ -923,10 +925,10 @@ func TestChatToAnthropicConverter_MultipleStopSequences(t *testing.T) {
 // Category A3: Tool choice "required" (force tool use) (MEDIUM)
 func TestChatToAnthropicConverter_ToolChoiceRequired(t *testing.T) {
 	tests := []struct {
-		name             string
-		toolChoice       interface{}
-		expectedType     string
-		expectedName     string
+		name         string
+		toolChoice   interface{}
+		expectedType string
+		expectedName string
 	}{
 		{
 			name:         "tool choice required",
@@ -1391,4 +1393,158 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestChatToAnthropicTransformer_ThinkingTextToolCalls(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewChatToAnthropicTransformer(&buf)
+
+	chunks := []types.Chunk{
+		{
+			ID:    "chatcmpl-123",
+			Model: "claude-3-opus",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						ReasoningContent: "Let me think...",
+					},
+				},
+			},
+		},
+		{
+			ID:    "chatcmpl-123",
+			Model: "claude-3-opus",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						Content: "Hello",
+					},
+				},
+			},
+		},
+		{
+			ID:    "chatcmpl-123",
+			Model: "claude-3-opus",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						ToolCalls: []types.ToolCall{
+							{
+								Index: 0,
+								ID:    "call_abc",
+								Type:  "function",
+								Function: types.Function{
+									Name: "get_weather",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			ID:    "chatcmpl-123",
+			Model: "claude-3-opus",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						ToolCalls: []types.ToolCall{
+							{
+								Index: 1,
+								ID:    "call_def",
+								Type:  "function",
+								Function: types.Function{
+									Name: "get_time",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, chunk := range chunks {
+		data, _ := json.Marshal(chunk)
+		transformer.Transform(&sse.Event{Data: string(data)})
+	}
+
+	transformer.Close()
+
+	output := buf.String()
+
+	var blockStartIndices []int
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, `"type":"content_block_start"`) {
+			var idx int
+			if _, err := fmt.Sscanf(line, `event: content_block_start
+data: {"index":%d`, &idx); err == nil {
+				blockStartIndices = append(blockStartIndices, idx)
+			} else {
+				if strings.Contains(line, `"index":0`) {
+					blockStartIndices = append(blockStartIndices, 0)
+				} else if strings.Contains(line, `"index":1`) {
+					blockStartIndices = append(blockStartIndices, 1)
+				} else if strings.Contains(line, `"index":2`) {
+					blockStartIndices = append(blockStartIndices, 2)
+				} else if strings.Contains(line, `"index":3`) {
+					blockStartIndices = append(blockStartIndices, 3)
+				}
+			}
+		}
+	}
+
+	if len(blockStartIndices) < 4 {
+		t.Logf("Block start indices found: %v", blockStartIndices)
+	}
+
+	if !contains(output, `"type":"thinking"`) {
+		t.Error("expected thinking content block")
+	}
+	if !contains(output, `"type":"text"`) {
+		t.Error("expected text content block")
+	}
+	if !contains(output, `"type":"tool_use"`) {
+		t.Error("expected tool_use content block")
+	}
+}
+
+func TestChatToAnthropicTransformer_AbruptClose(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewChatToAnthropicTransformer(&buf)
+
+	chunk := types.Chunk{
+		ID:    "chatcmpl-123",
+		Model: "claude-3-opus",
+		Choices: []types.Choice{
+			{
+				Index: 0,
+				Delta: types.Delta{
+					Role:    "assistant",
+					Content: "Hello",
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(chunk)
+	transformer.Transform(&sse.Event{Data: string(data)})
+
+	transformer.Close()
+
+	output := buf.String()
+
+	if !contains(output, `"type":"message_delta"`) {
+		t.Error("expected message_delta event on abrupt close")
+	}
+
+	if contains(output, `"input_tokens":0`) && contains(output, `"output_tokens":0`) {
+		if strings.Contains(output, `"usage"`) {
+			t.Error("expected usage field to be omitted when no token data available, or should not contain zeros")
+		}
+	}
 }

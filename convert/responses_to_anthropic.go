@@ -51,7 +51,7 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 		Model:     openReq.Model,
 		MaxTokens: maxTokens,
 		// Force streaming mode - this proxy only supports SSE streaming
-		Stream:      openReq.Stream || true,
+		Stream:      true,
 		Temperature: openReq.Temperature,
 		TopP:        openReq.TopP,
 	}
@@ -273,28 +273,33 @@ func convertResponsesToolsToAnthropic(openTools []types.ResponsesTool) []types.T
 //   - "detailed": ~40-50% of max_output_tokens (min 2048)
 //   - Cap at 32000 for safety
 func convertReasoningToThinking(reasoning *types.ReasoningConfig, maxTokens int) *types.ThinkingConfig {
-	if reasoning == nil || reasoning.Summary == "" {
+	if reasoning == nil || (reasoning.Summary == "" && reasoning.Effort == "") {
 		return nil
 	}
 
 	var budgetTokens int
 
-	switch reasoning.Summary {
-	case "concise":
-		// 20-30% of max_output_tokens, min 1024
-		budgetTokens = int(float64(maxTokens) * 0.25)
-		if budgetTokens < 1024 {
-			budgetTokens = 1024
-		}
-	case "detailed":
-		// 40-50% of max_output_tokens, min 2048
+	switch {
+	case reasoning.Summary == "detailed" || reasoning.Effort == "high":
 		budgetTokens = int(float64(maxTokens) * 0.45)
 		if budgetTokens < 2048 {
 			budgetTokens = 2048
 		}
+	case reasoning.Summary == "concise" || reasoning.Effort == "medium":
+		budgetTokens = int(float64(maxTokens) * 0.25)
+		if budgetTokens < 1024 {
+			budgetTokens = 1024
+		}
+	case reasoning.Effort == "low":
+		budgetTokens = int(float64(maxTokens) * 0.10)
+		if budgetTokens < 1024 {
+			budgetTokens = 1024
+		}
 	default:
-		// Unknown summary type, return nil
-		return nil
+		budgetTokens = int(float64(maxTokens) * 0.25)
+		if budgetTokens < 1024 {
+			budgetTokens = 1024
+		}
 	}
 
 	// Cap at 32000 for safety
@@ -399,4 +404,3 @@ func prependHistoryToInput(hist *conversation.Conversation, currentInput interfa
 
 	return items
 }
-

@@ -15,6 +15,7 @@
     "commit": "",
     "pr": ""
   },
+  "model": "opus",
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true,
     "clangd-lsp@claude-plugins-official": true,
@@ -28,6 +29,5 @@
   "showThinkingSummaries": true,
   "skipDangerousModePermissionPrompt": true,
   "terminalProgressBarEnabled": false,
-  "defaultMode": "bypassPermissions",
-  "model": "opus"
+  "defaultMode": "bypassPermissions"
 }

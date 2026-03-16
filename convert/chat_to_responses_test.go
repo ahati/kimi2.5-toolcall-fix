@@ -13,20 +13,20 @@ import (
 
 func TestChatToResponsesTransformer_ToolCalls(t *testing.T) {
 	tests := []struct {
-		name           string
-		chunks         []types.Chunk
-		wantToolCalls  int // number of tool calls expected
-		wantArgs       string // expected arguments for first tool call
-		wantName       string // expected name for first tool call
-		wantCallID     string // expected call_id for first tool call
+		name          string
+		chunks        []types.Chunk
+		wantToolCalls int    // number of tool calls expected
+		wantArgs      string // expected arguments for first tool call
+		wantName      string // expected name for first tool call
+		wantCallID    string // expected call_id for first tool call
 	}{
 		{
 			name: "single tool call with streaming arguments",
 			chunks: []types.Chunk{
 				{
-					ID:      "chatcmpl-123",
-					Object:  "chat.completion.chunk",
-					Model:   "test-model",
+					ID:     "chatcmpl-123",
+					Object: "chat.completion.chunk",
+					Model:  "test-model",
 					Choices: []types.Choice{
 						{
 							Index: 0,
@@ -46,9 +46,9 @@ func TestChatToResponsesTransformer_ToolCalls(t *testing.T) {
 					},
 				},
 				{
-					ID:      "chatcmpl-123",
-					Object:  "chat.completion.chunk",
-					Model:   "test-model",
+					ID:     "chatcmpl-123",
+					Object: "chat.completion.chunk",
+					Model:  "test-model",
 					Choices: []types.Choice{
 						{
 							Index: 0,
@@ -67,9 +67,9 @@ func TestChatToResponsesTransformer_ToolCalls(t *testing.T) {
 					},
 				},
 				{
-					ID:      "chatcmpl-123",
-					Object:  "chat.completion.chunk",
-					Model:   "test-model",
+					ID:     "chatcmpl-123",
+					Object: "chat.completion.chunk",
+					Model:  "test-model",
 					Choices: []types.Choice{
 						{
 							Index: 0,
@@ -97,9 +97,9 @@ func TestChatToResponsesTransformer_ToolCalls(t *testing.T) {
 			name: "multiple tool calls",
 			chunks: []types.Chunk{
 				{
-					ID:      "chatcmpl-123",
-					Object:  "chat.completion.chunk",
-					Model:   "test-model",
+					ID:     "chatcmpl-123",
+					Object: "chat.completion.chunk",
+					Model:  "test-model",
 					Choices: []types.Choice{
 						{
 							Index: 0,
@@ -119,9 +119,9 @@ func TestChatToResponsesTransformer_ToolCalls(t *testing.T) {
 					},
 				},
 				{
-					ID:      "chatcmpl-123",
-					Object:  "chat.completion.chunk",
-					Model:   "test-model",
+					ID:     "chatcmpl-123",
+					Object: "chat.completion.chunk",
+					Model:  "test-model",
 					Choices: []types.Choice{
 						{
 							Index: 0,
@@ -140,9 +140,9 @@ func TestChatToResponsesTransformer_ToolCalls(t *testing.T) {
 					},
 				},
 				{
-					ID:      "chatcmpl-123",
-					Object:  "chat.completion.chunk",
-					Model:   "test-model",
+					ID:     "chatcmpl-123",
+					Object: "chat.completion.chunk",
+					Model:  "test-model",
 					Choices: []types.Choice{
 						{
 							Index: 0,
@@ -162,9 +162,9 @@ func TestChatToResponsesTransformer_ToolCalls(t *testing.T) {
 					},
 				},
 				{
-					ID:      "chatcmpl-123",
-					Object:  "chat.completion.chunk",
-					Model:   "test-model",
+					ID:     "chatcmpl-123",
+					Object: "chat.completion.chunk",
+					Model:  "test-model",
 					Choices: []types.Choice{
 						{
 							Index: 0,
@@ -190,9 +190,9 @@ func TestChatToResponsesTransformer_ToolCalls(t *testing.T) {
 			chunks: []types.Chunk{
 				// First chunk has both role: "assistant" and the tool call
 				{
-					ID:      "chatcmpl-123",
-					Object:  "chat.completion.chunk",
-					Model:   "test-model",
+					ID:     "chatcmpl-123",
+					Object: "chat.completion.chunk",
+					Model:  "test-model",
 					Choices: []types.Choice{
 						{
 							Index: 0,
@@ -213,9 +213,9 @@ func TestChatToResponsesTransformer_ToolCalls(t *testing.T) {
 					},
 				},
 				{
-					ID:      "chatcmpl-123",
-					Object:  "chat.completion.chunk",
-					Model:   "test-model",
+					ID:     "chatcmpl-123",
+					Object: "chat.completion.chunk",
+					Model:  "test-model",
 					Choices: []types.Choice{
 						{
 							Index: 0,
@@ -312,9 +312,9 @@ func TestChatToResponsesTransformer_ToolCalls(t *testing.T) {
 
 func TestChatToResponsesTransformer_ContentWithRole(t *testing.T) {
 	tests := []struct {
-		name       string
-		chunks     []types.Chunk
-		wantText   string // expected text content
+		name     string
+		chunks   []types.Chunk
+		wantText string // expected text content
 	}{
 		{
 			name: "first chunk has both role and content",
@@ -557,5 +557,378 @@ func TestChatToResponsesTransformer_UsageAfterFinishReason(t *testing.T) {
 	}
 	if usageTotal != 150 {
 		t.Errorf("Expected total_tokens=150, got %d", usageTotal)
+	}
+}
+
+func TestChatToResponsesTransformer_ToolCallOnly(t *testing.T) {
+	chunks := []types.Chunk{
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						Role: "assistant",
+					},
+				},
+			},
+		},
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						ToolCalls: []types.ToolCall{
+							{
+								ID:    "call_abc",
+								Type:  "function",
+								Index: 0,
+								Function: types.Function{
+									Name: "get_weather",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						ToolCalls: []types.ToolCall{
+							{
+								Index: 0,
+								Function: types.Function{
+									Arguments: "{\"city\": \"SF\"}",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	finishReason := "tool_calls"
+	chunks = append(chunks, types.Chunk{
+		ID:      "chatcmpl-123",
+		Choices: []types.Choice{{Index: 0, FinishReason: &finishReason}},
+	})
+
+	var buf bytes.Buffer
+	transformer := NewChatToResponsesTransformer(&buf)
+
+	for _, chunk := range chunks {
+		data, err := json.Marshal(chunk)
+		if err != nil {
+			t.Fatalf("Failed to marshal chunk: %v", err)
+		}
+		event := &sse.Event{Data: string(data)}
+		if err := transformer.Transform(event); err != nil {
+			t.Fatalf("Transform failed: %v", err)
+		}
+	}
+
+	if err := transformer.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	output := buf.String()
+	t.Logf("Output:\n%s", output)
+
+	if bytes.Contains(buf.Bytes(), []byte(`"type":"message"`)) {
+		t.Error("Expected no message item in response.completed for tool-call-only response")
+	}
+
+	doneCount := bytes.Count(buf.Bytes(), []byte(`"type":"response.output_item.done"`))
+	if doneCount != 1 {
+		t.Errorf("Expected 1 output_item.done event for tool call, got %d", doneCount)
+	}
+}
+
+func TestChatToResponsesTransformer_NoChunkID(t *testing.T) {
+	chunks := []types.Chunk{
+		{
+			ID:     "",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						Content: "Hello",
+					},
+				},
+			},
+		},
+		{
+			ID:     "",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						Content: " world",
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	transformer := NewChatToResponsesTransformer(&buf)
+
+	for _, chunk := range chunks {
+		data, err := json.Marshal(chunk)
+		if err != nil {
+			t.Fatalf("Failed to marshal chunk: %v", err)
+		}
+		event := &sse.Event{Data: string(data)}
+		if err := transformer.Transform(event); err != nil {
+			t.Fatalf("Transform failed: %v", err)
+		}
+	}
+
+	if err := transformer.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	output := buf.String()
+	t.Logf("Output:\n%s", output)
+
+	if !bytes.Contains(buf.Bytes(), []byte(`"type":"response.created"`)) {
+		t.Error("Expected response.created event even when chunk.ID is empty")
+	}
+
+	createdIdx := bytes.Index(buf.Bytes(), []byte(`"type":"response.created"`))
+	deltaIdx := bytes.Index(buf.Bytes(), []byte(`"type":"response.output_text.delta"`))
+	if createdIdx == -1 || deltaIdx == -1 {
+		return
+	}
+	if createdIdx > deltaIdx {
+		t.Error("response.created should be emitted before response.output_text.delta")
+	}
+}
+
+func TestChatToResponsesTransformer_DoneEvents(t *testing.T) {
+	chunks := []types.Chunk{
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						Role:    "assistant",
+						Content: "Hello",
+					},
+				},
+			},
+		},
+	}
+	finishReason := "stop"
+	chunks = append(chunks, types.Chunk{
+		ID:      "chatcmpl-123",
+		Choices: []types.Choice{{Index: 0, FinishReason: &finishReason}},
+	})
+
+	var buf bytes.Buffer
+	transformer := NewChatToResponsesTransformer(&buf)
+
+	for _, chunk := range chunks {
+		data, err := json.Marshal(chunk)
+		if err != nil {
+			t.Fatalf("Failed to marshal chunk: %v", err)
+		}
+		event := &sse.Event{Data: string(data)}
+		if err := transformer.Transform(event); err != nil {
+			t.Fatalf("Transform failed: %v", err)
+		}
+	}
+
+	if err := transformer.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	output := buf.String()
+	t.Logf("Output:\n%s", output)
+
+	if !bytes.Contains(buf.Bytes(), []byte(`"type":"response.output_text.done"`)) {
+		t.Error("Expected response.output_text.done event")
+	}
+	if !bytes.Contains(buf.Bytes(), []byte(`"type":"response.content_part.done"`)) {
+		t.Error("Expected response.content_part.done event")
+	}
+	if !bytes.Contains(buf.Bytes(), []byte(`"type":"response.output_item.done"`)) {
+		t.Error("Expected response.output_item.done event for message")
+	}
+
+	completedIdx := bytes.Index(buf.Bytes(), []byte(`"type":"response.completed"`))
+	textDoneIdx := bytes.Index(buf.Bytes(), []byte(`"type":"response.output_text.done"`))
+	if completedIdx == -1 || textDoneIdx == -1 {
+		return
+	}
+	if textDoneIdx > completedIdx {
+		t.Error("response.output_text.done should be emitted before response.completed")
+	}
+}
+
+func TestChatToResponsesTransformer_OutputOrdering(t *testing.T) {
+	chunks := []types.Chunk{
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						ReasoningContent: "Let me think...",
+					},
+				},
+			},
+		},
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						Content: "Hello",
+					},
+				},
+			},
+		},
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						ToolCalls: []types.ToolCall{
+							{
+								ID:    "call_abc",
+								Type:  "function",
+								Index: 0,
+								Function: types.Function{
+									Name: "get_weather",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			ID:     "chatcmpl-123",
+			Object: "chat.completion.chunk",
+			Model:  "test-model",
+			Choices: []types.Choice{
+				{
+					Index: 0,
+					Delta: types.Delta{
+						ToolCalls: []types.ToolCall{
+							{
+								Index: 0,
+								Function: types.Function{
+									Arguments: "{}",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	finishReason := "tool_calls"
+	chunks = append(chunks, types.Chunk{
+		ID:      "chatcmpl-123",
+		Choices: []types.Choice{{Index: 0, FinishReason: &finishReason}},
+	})
+
+	var buf bytes.Buffer
+	transformer := NewChatToResponsesTransformer(&buf)
+
+	for _, chunk := range chunks {
+		data, err := json.Marshal(chunk)
+		if err != nil {
+			t.Fatalf("Failed to marshal chunk: %v", err)
+		}
+		event := &sse.Event{Data: string(data)}
+		if err := transformer.Transform(event); err != nil {
+			t.Fatalf("Transform failed: %v", err)
+		}
+	}
+
+	if err := transformer.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	output := buf.String()
+	t.Logf("Output:\n%s", output)
+
+	lines := bytes.Split(buf.Bytes(), []byte("\n\n"))
+	var completedOutput []interface{}
+	for _, line := range lines {
+		if bytes.Contains(line, []byte(`"type":"response.completed"`)) {
+			dataIdx := bytes.Index(line, []byte("data: "))
+			if dataIdx >= 0 {
+				data := line[dataIdx+6:]
+				var event map[string]interface{}
+				if err := json.Unmarshal(data, &event); err != nil {
+					t.Fatalf("Failed to parse event: %v", err)
+				}
+				resp, ok := event["response"].(map[string]interface{})
+				if !ok {
+					t.Fatal("No response in response.completed event")
+				}
+				completedOutput = resp["output"].([]interface{})
+			}
+		}
+	}
+
+	if len(completedOutput) < 2 {
+		t.Fatalf("Expected at least 2 output items, got %d", len(completedOutput))
+	}
+
+	reasoningIdx := -1
+	messageIdx := -1
+	toolCallIdx := -1
+	for i, item := range completedOutput {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		itemType, _ := itemMap["type"].(string)
+		switch itemType {
+		case "reasoning":
+			reasoningIdx = i
+		case "message":
+			messageIdx = i
+		case "function_call":
+			toolCallIdx = i
+		}
+	}
+
+	if reasoningIdx != -1 && reasoningIdx != 0 {
+		t.Errorf("Reasoning should be at index 0, got %d", reasoningIdx)
+	}
+	if messageIdx != -1 && toolCallIdx != -1 && messageIdx > toolCallIdx {
+		t.Errorf("Message (index %d) should come before tool calls (index %d)", messageIdx, toolCallIdx)
 	}
 }

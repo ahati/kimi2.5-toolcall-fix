@@ -1838,3 +1838,107 @@ func TestResponsesToChatTransformer_ModelNamePreservation(t *testing.T) {
 		})
 	}
 }
+
+func TestResponsesToChatConverter_ReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		validate func(t *testing.T, output []byte)
+	}{
+		{
+			name: "reasoning effort high",
+			input: `{
+				"model": "o1",
+				"input": "Think about this problem",
+				"reasoning": {"effort": "high"}
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.ReasoningEffort != "high" {
+					t.Errorf("Expected ReasoningEffort 'high', got %q", req.ReasoningEffort)
+				}
+			},
+		},
+		{
+			name: "reasoning effort medium",
+			input: `{
+				"model": "o1",
+				"input": "Think about this",
+				"reasoning": {"effort": "medium"}
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.ReasoningEffort != "medium" {
+					t.Errorf("Expected ReasoningEffort 'medium', got %q", req.ReasoningEffort)
+				}
+			},
+		},
+		{
+			name: "reasoning effort low",
+			input: `{
+				"model": "o1-mini",
+				"input": "Quick thought",
+				"reasoning": {"effort": "low"}
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.ReasoningEffort != "low" {
+					t.Errorf("Expected ReasoningEffort 'low', got %q", req.ReasoningEffort)
+				}
+			},
+		},
+		{
+			name: "reasoning effort with summary",
+			input: `{
+				"model": "o1",
+				"input": "Think hard",
+				"reasoning": {"effort": "high", "summary": "detailed"}
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.ReasoningEffort != "high" {
+					t.Errorf("Expected ReasoningEffort 'high', got %q", req.ReasoningEffort)
+				}
+			},
+		},
+		{
+			name: "no reasoning config",
+			input: `{
+				"model": "gpt-4o",
+				"input": "Hello"
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.ReasoningEffort != "" {
+					t.Errorf("Expected ReasoningEffort to be empty, got %q", req.ReasoningEffort)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewResponsesToChatConverter()
+			output, err := converter.Convert([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("Convert returned error: %v", err)
+			}
+			tt.validate(t, output)
+		})
+	}
+}
