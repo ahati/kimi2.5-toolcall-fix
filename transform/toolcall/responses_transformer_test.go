@@ -1134,3 +1134,619 @@ func mustMarshal(v interface{}) json.RawMessage {
 	data, _ := json.Marshal(v)
 	return json.RawMessage(data)
 }
+
+// TestResponsesTransformer_MultipleToolCalls tests multiple parallel tool calls.
+func TestResponsesTransformer_MultipleToolCalls(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewResponsesTransformer(&buf)
+
+	events := []types.Event{
+		{
+			Type: "message_start",
+			Message: &types.MessageInfo{
+				ID:    "msg_abc",
+				Model: "claude-3",
+			},
+		},
+		{
+			Type:         "content_block_start",
+			Index:        intPtr(0),
+			ContentBlock: mustMarshal(types.ContentBlock{Type: "tool_use", ID: "toolu_1", Name: "get_weather"}),
+		},
+		{
+			Type:  "content_block_delta",
+			Index: intPtr(0),
+			Delta: mustMarshal(types.InputJSONDelta{Type: "input_json_delta", PartialJSON: `{"city": "SF"}`}),
+		},
+		{
+			Type:  "content_block_stop",
+			Index: intPtr(0),
+		},
+		{
+			Type:         "content_block_start",
+			Index:        intPtr(1),
+			ContentBlock: mustMarshal(types.ContentBlock{Type: "tool_use", ID: "toolu_2", Name: "get_time"}),
+		},
+		{
+			Type:  "content_block_delta",
+			Index: intPtr(1),
+			Delta: mustMarshal(types.InputJSONDelta{Type: "input_json_delta", PartialJSON: `{"timezone": "PST"}`}),
+		},
+		{
+			Type:  "content_block_stop",
+			Index: intPtr(1),
+		},
+		{
+			Type: "message_stop",
+		},
+	}
+
+	for _, e := range events {
+		data, _ := json.Marshal(e)
+		err := transformer.Transform(&sse.Event{Data: string(data)})
+		if err != nil {
+			t.Errorf("Transform returned error: %v", err)
+		}
+	}
+
+	result := buf.String()
+
+	// Should contain both function_call items
+	if !strings.Contains(result, `"name":"get_weather"`) {
+		t.Error("Expected get_weather in output")
+	}
+	if !strings.Contains(result, `"name":"get_time"`) {
+		t.Error("Expected get_time in output")
+	}
+
+	// Should contain both tool IDs
+	if !strings.Contains(result, `"id":"toolu_1"`) {
+		t.Error("Expected toolu_1 in output")
+	}
+	if !strings.Contains(result, `"id":"toolu_2"`) {
+		t.Error("Expected toolu_2 in output")
+	}
+}
+
+// TestResponsesTransformer_NestedJSONArgs tests nested JSON in tool arguments.
+func TestResponsesTransformer_NestedJSONArgs(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewResponsesTransformer(&buf)
+
+	events := []types.Event{
+		{
+			Type: "message_start",
+			Message: &types.MessageInfo{
+				ID:    "msg_abc",
+				Model: "claude-3",
+			},
+		},
+		{
+			Type:         "content_block_start",
+			Index:        intPtr(0),
+			ContentBlock: mustMarshal(types.ContentBlock{Type: "tool_use", ID: "toolu_123", Name: "search"}),
+		},
+		{
+			Type:  "content_block_delta",
+			Index: intPtr(0),
+			Delta: mustMarshal(types.InputJSONDelta{Type: "input_json_delta", PartialJSON: `{"query": "test", "filters": {"date": "2024-01"}}`}),
+		},
+		{
+			Type:  "content_block_stop",
+			Index: intPtr(0),
+		},
+		{
+			Type: "message_stop",
+		},
+	}
+
+	for _, e := range events {
+		data, _ := json.Marshal(e)
+		transformer.Transform(&sse.Event{Data: string(data)})
+	}
+
+	result := buf.String()
+
+	// Should contain arguments field
+	if !strings.Contains(result, `"arguments"`) {
+		t.Error("Expected arguments in output")
+	}
+}
+
+// TestResponsesTransformer_EmptyToolArgs tests empty tool arguments.
+func TestResponsesTransformer_EmptyToolArgs(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewResponsesTransformer(&buf)
+
+	events := []types.Event{
+		{
+			Type: "message_start",
+			Message: &types.MessageInfo{
+				ID:    "msg_abc",
+				Model: "claude-3",
+			},
+		},
+		{
+			Type:         "content_block_start",
+			Index:        intPtr(0),
+			ContentBlock: mustMarshal(types.ContentBlock{Type: "tool_use", ID: "toolu_123", Name: "get_time"}),
+		},
+		{
+			Type:  "content_block_delta",
+			Index: intPtr(0),
+			Delta: mustMarshal(types.InputJSONDelta{Type: "input_json_delta", PartialJSON: `{}`}),
+		},
+		{
+			Type:  "content_block_stop",
+			Index: intPtr(0),
+		},
+		{
+			Type: "message_stop",
+		},
+	}
+
+	for _, e := range events {
+		data, _ := json.Marshal(e)
+		transformer.Transform(&sse.Event{Data: string(data)})
+	}
+
+	result := buf.String()
+
+	// Should contain empty arguments
+	if !strings.Contains(result, `"arguments":"{}"`) {
+		t.Error("Expected empty arguments in output")
+	}
+}
+
+// ============================================================================
+// PHASE 2 HIGH PRIORITY TESTS
+// ============================================================================
+
+// TestResponsesTransformer_ReasoningSummaryTextDelta tests response.reasoning_summary_text.delta.
+// Category B2 (Responses → Chat transformation): HIGH priority
+func TestResponsesTransformer_ReasoningSummaryTextDelta(t *testing.T) {
+	tests := []struct {
+		name     string
+		events   []types.Event
+		validate func(t *testing.T, output string)
+	}{
+		{
+			name: "reasoning summary text delta streaming",
+			events: []types.Event{
+				{
+					Type: "message_start",
+					Message: &types.MessageInfo{
+						ID:    "msg_abc123",
+						Model: "claude-3-opus",
+					},
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(0),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "thinking"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.ThinkingDelta{Type: "thinking_delta", Thinking: "Let me"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.ThinkingDelta{Type: "thinking_delta", Thinking: " analyze this"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.ThinkingDelta{Type: "thinking_delta", Thinking: " step by step..."}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(0),
+				},
+				{
+					Type: "message_stop",
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Should contain response.reasoning_summary_text.delta events
+				if !strings.Contains(output, `"type":"response.reasoning_summary_text.delta"`) {
+					t.Error("Expected response.reasoning_summary_text.delta in output")
+				}
+				// Should have all deltas
+				if !strings.Contains(output, `"delta":"Let me"`) {
+					t.Error("Expected first reasoning delta")
+				}
+				if !strings.Contains(output, `"delta":" analyze this"`) {
+					t.Error("Expected second reasoning delta")
+				}
+				if !strings.Contains(output, `"delta":" step by step..."`) {
+					t.Error("Expected third reasoning delta")
+				}
+				// Should have correct output_index
+				if !strings.Contains(output, `"output_index":0`) {
+					t.Error("Expected output_index 0 for reasoning")
+				}
+				// Should have summary_index
+				if !strings.Contains(output, `"summary_index":0`) {
+					t.Error("Expected summary_index")
+				}
+			},
+		},
+		{
+			name: "reasoning followed by text message",
+			events: []types.Event{
+				{
+					Type: "message_start",
+					Message: &types.MessageInfo{
+						ID:    "msg_def456",
+						Model: "claude-3-opus",
+					},
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(0),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "thinking"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.ThinkingDelta{Type: "thinking_delta", Thinking: "Thinking..."}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(0),
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(1),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "text"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(1),
+					Delta: mustMarshal(types.TextDelta{Type: "text_delta", Text: "Answer: 42"}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(1),
+				},
+				{
+					Type: "message_stop",
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Should have both reasoning and text events
+				if !strings.Contains(output, `"type":"response.reasoning_summary_text.delta"`) {
+					t.Error("Expected reasoning summary delta")
+				}
+				if !strings.Contains(output, `"type":"response.output_text.delta"`) {
+					t.Error("Expected output text delta")
+				}
+				// Reasoning should come before text (output_index 0 vs 1)
+				reasoningIdx := strings.Index(output, `"type":"response.reasoning_summary_text.delta"`)
+				textIdx := strings.Index(output, `"type":"response.output_text.delta"`)
+				if reasoningIdx == -1 || textIdx == -1 {
+					t.Fatal("Missing expected events")
+				}
+				if reasoningIdx > textIdx {
+					t.Error("Reasoning should come before text in output")
+				}
+				// Final output should have both items
+				if !strings.Contains(output, `"type":"reasoning"`) {
+					t.Error("Expected reasoning item in final output")
+				}
+				if !strings.Contains(output, `"type":"message"`) {
+					t.Error("Expected message item in final output")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			transformer := NewResponsesTransformer(&buf)
+
+			for _, e := range tt.events {
+				data, _ := json.Marshal(e)
+				err := transformer.Transform(&sse.Event{Data: string(data)})
+				if err != nil {
+					t.Errorf("Transform returned error: %v", err)
+				}
+			}
+
+			output := buf.String()
+			if tt.validate != nil {
+				tt.validate(t, output)
+			}
+		})
+	}
+}
+
+// TestResponsesTransformer_ResponseCompletedWithReasoning tests response.completed with reasoning item.
+// Category B2 (Responses → Chat transformation): HIGH priority
+func TestResponsesTransformer_ResponseCompletedWithReasoning(t *testing.T) {
+	tests := []struct {
+		name     string
+		events   []types.Event
+		validate func(t *testing.T, output string)
+	}{
+		{
+			name: "response.completed with only reasoning",
+			events: []types.Event{
+				{
+					Type: "message_start",
+					Message: &types.MessageInfo{
+						ID:    "msg_abc",
+						Type:  "message",
+						Role:  "assistant",
+						Model: "claude-3-opus",
+					},
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(0),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "thinking"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.ThinkingDelta{Type: "thinking_delta", Thinking: "Internal reasoning"}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(0),
+				},
+				{
+					Type: "message_stop",
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Should have response.completed
+				if !strings.Contains(output, `"type":"response.completed"`) {
+					t.Error("Expected response.completed event")
+				}
+				// Should have reasoning output item
+				if !strings.Contains(output, `"type":"reasoning"`) {
+					t.Error("Expected reasoning item in output")
+				}
+				// Should have the reasoning ID
+				if !strings.Contains(output, `"id":"rs_abc"`) {
+					t.Error("Expected reasoning ID rs_abc")
+				}
+				// Should have summary text
+				if !strings.Contains(output, `"text":"Internal reasoning"`) {
+					t.Error("Expected reasoning summary text")
+				}
+				// Should have correct structure
+				if !strings.Contains(output, `"type":"summary_text"`) {
+					t.Error("Expected summary_text type in reasoning")
+				}
+			},
+		},
+		{
+			name: "response.completed with reasoning and tool call",
+			events: []types.Event{
+				{
+					Type: "message_start",
+					Message: &types.MessageInfo{
+						ID:    "msg_xyz",
+						Model: "claude-3-opus",
+					},
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(0),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "thinking"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.ThinkingDelta{Type: "thinking_delta", Thinking: "Need to check weather"}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(0),
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(1),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "tool_use", ID: "toolu_123", Name: "get_weather"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(1),
+					Delta: mustMarshal(types.InputJSONDelta{Type: "input_json_delta", PartialJSON: `{"city": "SF"}`}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(1),
+				},
+				{
+					Type: "message_stop",
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Should have both reasoning and function_call in final output
+				if !strings.Contains(output, `"type":"reasoning"`) {
+					t.Error("Expected reasoning item")
+				}
+				if !strings.Contains(output, `"type":"function_call"`) {
+					t.Error("Expected function_call item")
+				}
+				// Reasoning should come before function_call
+				reasoningIdx := strings.Index(output, `"type":"reasoning"`)
+				functionIdx := strings.Index(output, `"type":"function_call"`)
+				if reasoningIdx == -1 || functionIdx == -1 {
+					t.Fatal("Missing expected items")
+				}
+				if reasoningIdx > functionIdx {
+					t.Error("Reasoning should come before function_call in output")
+				}
+				// Verify reasoning content
+				if !strings.Contains(output, `"text":"Need to check weather"`) {
+					t.Error("Expected reasoning text content")
+				}
+				// Verify function_call content
+				if !strings.Contains(output, `"name":"get_weather"`) {
+					t.Error("Expected function name")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			transformer := NewResponsesTransformer(&buf)
+
+			for _, e := range tt.events {
+				data, _ := json.Marshal(e)
+				err := transformer.Transform(&sse.Event{Data: string(data)})
+				if err != nil {
+					t.Errorf("Transform returned error: %v", err)
+				}
+			}
+
+			output := buf.String()
+			if tt.validate != nil {
+				tt.validate(t, output)
+			}
+		})
+	}
+}
+
+// TestResponsesTransformer_FunctionCallArgumentsDelta tests response.function_call_arguments.delta.
+// Category B2 (Responses → Chat transformation): HIGH priority
+func TestResponsesTransformer_FunctionCallArgumentsDelta(t *testing.T) {
+	tests := []struct {
+		name     string
+		events   []types.Event
+		validate func(t *testing.T, output string)
+	}{
+		{
+			name: "function_call_arguments.delta chunked streaming",
+			events: []types.Event{
+				{
+					Type: "message_start",
+					Message: &types.MessageInfo{
+						ID:    "msg_tool123",
+						Model: "claude-3",
+					},
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(0),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "tool_use", ID: "toolu_abc", Name: "search"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.InputJSONDelta{Type: "input_json_delta", PartialJSON: `{"q`}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.InputJSONDelta{Type: "input_json_delta", PartialJSON: `uery": "`}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.InputJSONDelta{Type: "input_json_delta", PartialJSON: `hello`}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.InputJSONDelta{Type: "input_json_delta", PartialJSON: `"}`}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(0),
+				},
+				{
+					Type: "message_stop",
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Should have function_call_arguments.delta events
+				if !strings.Contains(output, `"type":"response.function_call_arguments.delta"`) {
+					t.Error("Expected response.function_call_arguments.delta")
+				}
+				// Should have all chunks
+				count := strings.Count(output, `"type":"response.function_call_arguments.delta"`)
+				if count != 4 {
+					t.Errorf("Expected 4 argument delta events, got %d", count)
+				}
+				// Each chunk should have correct call_id
+				if !strings.Contains(output, `"call_id":"toolu_abc"`) {
+					t.Error("Expected call_id in argument deltas")
+				}
+				// Final arguments should be complete
+				if !strings.Contains(output, `"arguments":"{\"query\": \"hello\"}"`) {
+					t.Error("Expected complete arguments in final output")
+				}
+			},
+		},
+		{
+			name: "function_call_arguments.delta with special characters",
+			events: []types.Event{
+				{
+					Type: "message_start",
+					Message: &types.MessageInfo{
+						ID:    "msg_special",
+						Model: "claude-3",
+					},
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(0),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "tool_use", ID: "toolu_special", Name: "process_text"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.InputJSONDelta{Type: "input_json_delta", PartialJSON: `{"text": "Hello
+World"}`}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(0),
+				},
+				{
+					Type: "message_stop",
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Special characters should be handled correctly
+				if !strings.Contains(output, `"type":"response.function_call_arguments.delta"`) {
+					t.Error("Expected function_call_arguments.delta")
+				}
+				// Arguments should contain the text
+				if !strings.Contains(output, `"arguments"`) {
+					t.Error("Expected arguments field")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			transformer := NewResponsesTransformer(&buf)
+
+			for _, e := range tt.events {
+				data, _ := json.Marshal(e)
+				err := transformer.Transform(&sse.Event{Data: string(data)})
+				if err != nil {
+					t.Errorf("Transform returned error: %v", err)
+				}
+			}
+
+			output := buf.String()
+			if tt.validate != nil {
+				tt.validate(t, output)
+			}
+		})
+	}
+}

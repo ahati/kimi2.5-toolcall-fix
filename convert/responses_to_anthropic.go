@@ -46,6 +46,22 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 		TopP:        openReq.TopP,
 	}
 
+	// TODO: Handle previous_response_id for multi-turn conversations.
+	// The Responses API uses previous_response_id to fetch conversation history
+	// from server-side storage. However, the Anthropic Messages API requires
+	// an explicit messages array with the full conversation context.
+	//
+	// To properly support previous_response_id, we would need:
+	// 1. A conversation store keyed by response_id (e.g., Redis, database)
+	// 2. Fetch prior messages when previous_response_id is provided
+	// 3. Append current input to the fetched messages
+	//
+	// Current behavior: previous_response_id is ignored. Clients must provide
+	// the full conversation context in the input array when using this proxy.
+	// This is a known limitation when converting from Responses API to
+	// Anthropic Messages API format.
+	_ = openReq.PreviousResponseID // Acknowledge field exists but is not used
+
 	// Combine instructions with developer messages from input
 	systemParts := []string{}
 	if openReq.Instructions != "" {
@@ -79,6 +95,18 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 
 	// Convert tool_choice
 	anthReq.ToolChoice = ConvertToolChoiceOpenAIToAnthropic(openReq.ToolChoice)
+
+	// If tool_choice is "none", strip tools from request
+	// Anthropic doesn't have a "none" option, so we must clear tools to prevent tool calls
+	if openReq.ToolChoice == "none" {
+		anthReq.Tools = nil
+		anthReq.ToolChoice = nil
+	}
+
+	// Convert reasoning to thinking configuration
+	if openReq.Reasoning != nil {
+		anthReq.Thinking = convertReasoningToThinking(openReq.Reasoning, maxTokens)
+	}
 
 	return json.Marshal(anthReq)
 }
@@ -243,5 +271,46 @@ func convertResponsesToolsToAnthropic(openTools []types.ResponsesTool) []types.T
 		}
 	}
 	return anthTools
+}
+
+// convertReasoningToThinking converts OpenAI reasoning configuration to Anthropic thinking configuration.
+// Budget calculation:
+//   - "concise": ~20-30% of max_output_tokens (min 1024)
+//   - "detailed": ~40-50% of max_output_tokens (min 2048)
+//   - Cap at 32000 for safety
+func convertReasoningToThinking(reasoning *types.ReasoningConfig, maxTokens int) *types.ThinkingConfig {
+	if reasoning == nil || reasoning.Summary == "" {
+		return nil
+	}
+
+	var budgetTokens int
+
+	switch reasoning.Summary {
+	case "concise":
+		// 20-30% of max_output_tokens, min 1024
+		budgetTokens = int(float64(maxTokens) * 0.25)
+		if budgetTokens < 1024 {
+			budgetTokens = 1024
+		}
+	case "detailed":
+		// 40-50% of max_output_tokens, min 2048
+		budgetTokens = int(float64(maxTokens) * 0.45)
+		if budgetTokens < 2048 {
+			budgetTokens = 2048
+		}
+	default:
+		// Unknown summary type, return nil
+		return nil
+	}
+
+	// Cap at 32000 for safety
+	if budgetTokens > 32000 {
+		budgetTokens = 32000
+	}
+
+	return &types.ThinkingConfig{
+		Type:         "enabled",
+		BudgetTokens: budgetTokens,
+	}
 }
 

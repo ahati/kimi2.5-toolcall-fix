@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -930,4 +931,221 @@ func TestHandle_EmptyBody(t *testing.T) {
 	}
 
 	Handle(h)(c)
+}
+
+// ============================================================================
+// Category G2: Authorization Security Boundary Tests
+// ============================================================================
+
+// TestMissingAPIKey documents the behavior when no API key is provided.
+// The proxy will forward the request with a "Bearer" Authorization header (no space when empty),
+// resulting in an upstream authentication error (401 from upstream).
+// Note: Actual authentication is handled by middleware, not these handlers.
+func TestMissingAPIKey(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The proxy always sets Authorization header (even if empty key)
+		authHeader := r.Header.Get("Authorization")
+		// Will be "Bearer" when key is empty (no trailing space)
+		if authHeader != "Bearer" {
+			t.Errorf("expected Authorization header to be 'Bearer' when key is missing, got %q", authHeader)
+		}
+		// Return 401 to simulate upstream auth failure
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("missing api key"))
+	}))
+	defer upstream.Close()
+
+	mockWriter := newMockResponseWriter()
+	c, _ := gin.CreateTestContext(mockWriter)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true}`))
+
+	h := &mockHandler{
+		upstreamURL: upstream.URL,
+		apiKey:      "", // No API key provided
+	}
+
+	Handle(h)(c)
+
+	// Should receive the upstream's 401 status
+	if mockWriter.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d for missing API key, got %d", http.StatusUnauthorized, mockWriter.Code)
+	}
+}
+
+// TestInvalidAPIKey documents the behavior when an invalid API key is provided.
+// The proxy forwards the key to upstream, which returns an authentication error.
+// Note: API key validation is performed by upstream, not by the proxy.
+func TestInvalidAPIKey(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify the invalid key was forwarded
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "Bearer invalid-key-12345" {
+			t.Errorf("expected Authorization header to be forwarded, got %q", authHeader)
+		}
+		// Return 401 to simulate invalid key rejection
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("invalid api key"))
+	}))
+	defer upstream.Close()
+
+	mockWriter := newMockResponseWriter()
+	c, _ := gin.CreateTestContext(mockWriter)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true}`))
+
+	h := &mockHandler{
+		upstreamURL: upstream.URL,
+		apiKey:      "invalid-key-12345",
+	}
+
+	Handle(h)(c)
+
+	// Should receive the upstream's 401 status
+	if mockWriter.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d for invalid API key, got %d", http.StatusUnauthorized, mockWriter.Code)
+	}
+}
+
+// TestInsufficientPermissions documents behavior when upstream returns 403 Forbidden.
+// This indicates the API key is valid but lacks required permissions.
+// Note: Permission checking is performed by upstream, not by the proxy.
+func TestInsufficientPermissions(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify valid key was forwarded
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "Bearer sk-valid-key" {
+			t.Errorf("expected Authorization header, got %q", authHeader)
+		}
+		// Return 403 to simulate insufficient permissions
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("insufficient permissions for model gpt-4"))
+	}))
+	defer upstream.Close()
+
+	mockWriter := newMockResponseWriter()
+	c, _ := gin.CreateTestContext(mockWriter)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true, "model": "gpt-4"}`))
+
+	h := &mockHandler{
+		upstreamURL: upstream.URL,
+		apiKey:      "sk-valid-key",
+	}
+
+	Handle(h)(c)
+
+	// Should receive the upstream's 403 status
+	if mockWriter.Code != http.StatusForbidden {
+		t.Errorf("expected status %d for insufficient permissions, got %d", http.StatusForbidden, mockWriter.Code)
+	}
+}
+
+// TestAuthorizationHeaderFormat documents that the Authorization header
+// is formatted correctly with the "Bearer" prefix.
+func TestAuthorizationHeaderFormat(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		expectedPrefix := "Bearer "
+		if !strings.HasPrefix(authHeader, expectedPrefix) {
+			t.Errorf("Authorization header should start with %q, got %q", expectedPrefix, authHeader)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: {}\n\n"))
+	}))
+	defer upstream.Close()
+
+	mockWriter := newMockResponseWriter()
+	c, _ := gin.CreateTestContext(mockWriter)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true}`))
+
+	h := &mockHandler{
+		upstreamURL: upstream.URL,
+		apiKey:      "sk-test-key",
+	}
+
+	Handle(h)(c)
+
+	// Request should succeed
+	if mockWriter.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, mockWriter.Code)
+	}
+}
+
+// TestAPIKeyExtraction documents that API keys can be extracted from
+// various sources (configuration, headers, etc.) depending on handler implementation.
+func TestAPIKeyExtraction(t *testing.T) {
+	tests := []struct {
+		name           string
+		configuredKey  string
+		expectedHeader string
+	}{
+		{
+			name:           "key from configuration",
+			configuredKey:  "sk-config-key",
+			expectedHeader: "Bearer sk-config-key",
+		},
+		{
+			name:           "key with special characters",
+			configuredKey:  "sk-abc123_def.ghi",
+			expectedHeader: "Bearer sk-abc123_def.ghi",
+		},
+		{
+			name:           "empty key",
+			configuredKey:  "",
+			expectedHeader: "Bearer",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedHeader string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedHeader = r.Header.Get("Authorization")
+				if receivedHeader == "" {
+					w.WriteHeader(http.StatusUnauthorized)
+				} else {
+					w.WriteHeader(http.StatusOK)
+				}
+				w.Write([]byte("data: {}\n\n"))
+			}))
+			defer upstream.Close()
+
+			mockWriter := newMockResponseWriter()
+			c, _ := gin.CreateTestContext(mockWriter)
+			c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true}`))
+
+			h := &mockHandler{
+				upstreamURL: upstream.URL,
+				apiKey:      tt.configuredKey,
+			}
+
+			Handle(h)(c)
+
+			if receivedHeader != tt.expectedHeader {
+				t.Errorf("expected Authorization header %q, got %q", tt.expectedHeader, receivedHeader)
+			}
+		})
+	}
+}
+
+// TestResolveAPIKeyInterface documents the ResolveAPIKey method contract.
+// Handlers must implement this to provide the API key for upstream requests.
+func TestResolveAPIKeyInterface(t *testing.T) {
+	mockWriter := newMockResponseWriter()
+	c, _ := gin.CreateTestContext(mockWriter)
+
+	// Test that mockHandler implements the interface correctly
+	h := &mockHandler{
+		apiKey: "test-key",
+	}
+
+	key := h.ResolveAPIKey(c)
+	if key != "test-key" {
+		t.Errorf("expected API key %q, got %q", "test-key", key)
+	}
+
+	// Test with empty key
+	h.apiKey = ""
+	key = h.ResolveAPIKey(c)
+	if key != "" {
+		t.Errorf("expected empty API key, got %q", key)
+	}
 }
