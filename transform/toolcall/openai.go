@@ -106,6 +106,19 @@ func (f *OpenAIFormatter) FormatContent(content string) []byte {
 	})
 }
 
+func (f *OpenAIFormatter) FormatReasoning(reasoning string) []byte {
+	return f.marshalChunk(types.Chunk{
+		ID:      f.messageID,
+		Object:  "chat.completion.chunk",
+		Created: time.Now().Unix(),
+		Model:   f.model,
+		Choices: []types.Choice{{
+			Index: 0,
+			Delta: types.Delta{ReasoningContent: reasoning},
+		}},
+	})
+}
+
 // FormatToolStart formats the beginning of a tool call in OpenAI format.
 //
 // @brief Formats a tool call start event into OpenAI streaming chunk format.

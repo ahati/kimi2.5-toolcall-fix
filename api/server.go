@@ -6,6 +6,7 @@ package api
 import (
 	"ai-proxy/api/handlers"
 	"ai-proxy/config"
+	"ai-proxy/router"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,6 +28,10 @@ type Server struct {
 	// config holds the application configuration including upstream URLs,
 	// API keys, and other runtime settings. Must not be nil after initialization.
 	config *config.Config
+
+	// modelRouter resolves model names to providers.
+	// May be nil if no config file was loaded.
+	modelRouter router.Router
 }
 
 // NewServer creates and initializes a new Server instance with the given configuration.
@@ -55,6 +60,13 @@ func NewServer(cfg *config.Config, middleware ...gin.HandlerFunc) *Server {
 		config: cfg,
 	}
 
+	// Create model router if config is loaded
+	if cfg.AppConfig != nil {
+		if r, err := router.NewRouter(cfg.AppConfig); err == nil {
+			s.modelRouter = r
+		}
+	}
+
 	// Apply middleware first so it runs before routes
 	for _, m := range middleware {
 		s.router.Use(m)
@@ -81,26 +93,25 @@ func (s *Server) setupRoutes() {
 	// Supports OpenAI-compatible response format.
 	s.router.GET("/v1/models", handlers.NewModelsHandler(s.config))
 
-	// Chat completions endpoint - primary OpenAI-compatible endpoint
-	// for streaming chat completions with tool call support.
-	s.router.POST("/v1/chat/completions", handlers.NewCompletionsHandler(s.config))
+	// Chat completions endpoint - unified OpenAI Chat format endpoint
+	// Routes to the appropriate provider based on model configuration.
+	// Supports OpenAI and Anthropic providers with automatic format conversion.
+	s.router.POST("/v1/chat/completions", handlers.NewCompletionsHandler(s.config, s.modelRouter))
 
-	// Messages endpoint - native Anthropic API format endpoint
-	// for streaming messages with tool call support.
-	s.router.POST("/v1/messages", handlers.NewMessagesHandler(s.config))
+	// Messages endpoint - unified Anthropic Messages format endpoint
+	// Routes to the appropriate provider based on model configuration.
+	// Supports Anthropic and OpenAI providers with automatic format conversion.
+	s.router.POST("/v1/messages", handlers.NewMessagesHandler(s.config, s.modelRouter))
 
 	// Messages count tokens endpoint - Anthropic API format endpoint
 	// for counting tokens in messages before sending to upstream.
 	s.router.POST("/v1/messages/count_tokens", handlers.NewCountTokensHandler(s.config))
 
-	// Bridge endpoint - converts Anthropic format requests to OpenAI format
-	// before forwarding to upstream, then converts responses back to Anthropic format.
-	s.router.POST("/v1/openai-to-anthropic/messages", handlers.NewBridgeHandler(s.config))
-
-	// Anthropic-to-OpenAI Responses endpoint - converts OpenAI Responses API format requests
-	// to Anthropic format before forwarding to upstream, then converts responses back to
-	// OpenAI Responses API format.
-	s.router.POST("/v1/anthropic-to-openai/responses", handlers.NewAnthropicToOpenAIHandler(s.config))
+	// Responses endpoint - unified OpenAI Responses API endpoint that routes to the
+	// appropriate provider based on model configuration.
+	if s.modelRouter != nil {
+		s.router.POST("/v1/responses", handlers.NewResponsesHandler(s.config, s.modelRouter))
+	}
 }
 
 // Use adds middleware to the server's router chain.

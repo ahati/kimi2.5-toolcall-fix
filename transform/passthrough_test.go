@@ -14,20 +14,27 @@ func TestPassthroughTransformer_Transform(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "single event",
+			name: "single event with type",
+			events: []sse.Event{
+				{Type: "message_start", Data: `{"test": "value"}`},
+			},
+			expected: "event: message_start\ndata: {\"test\": \"value\"}\n\n",
+		},
+		{
+			name: "single event without type",
 			events: []sse.Event{
 				{Data: `{"test": "value"}`},
 			},
 			expected: "data: {\"test\": \"value\"}\n\n",
 		},
 		{
-			name: "multiple events",
+			name: "multiple events with types",
 			events: []sse.Event{
-				{Data: `{"id": "1"}`},
-				{Data: `{"id": "2"}`},
-				{Data: `{"id": "3"}`},
+				{Type: "message_start", Data: `{"id": "1"}`},
+				{Type: "content_block_start", Data: `{"id": "2"}`},
+				{Type: "message_stop", Data: `{"id": "3"}`},
 			},
-			expected: "data: {\"id\": \"1\"}\n\ndata: {\"id\": \"2\"}\n\ndata: {\"id\": \"3\"}\n\n",
+			expected: "event: message_start\ndata: {\"id\": \"1\"}\n\nevent: content_block_start\ndata: {\"id\": \"2\"}\n\nevent: message_stop\ndata: {\"id\": \"3\"}\n\n",
 		},
 		{
 			name: "empty event",
@@ -47,10 +54,10 @@ func TestPassthroughTransformer_Transform(t *testing.T) {
 			name: "mixed empty and data",
 			events: []sse.Event{
 				{Data: ""},
-				{Data: `{"content": "hello"}`},
+				{Type: "content_block_delta", Data: `{"content": "hello"}`},
 				{Data: ""},
 			},
-			expected: "data: {\"content\": \"hello\"}\n\n",
+			expected: "event: content_block_delta\ndata: {\"content\": \"hello\"}\n\n",
 		},
 	}
 
@@ -95,9 +102,9 @@ func TestPassthroughTransformer_FullFlow(t *testing.T) {
 	transformer := NewPassthroughTransformer(&buf)
 
 	events := []sse.Event{
-		{Data: `{"type": "message_start"}`},
-		{Data: `{"type": "content_block_start"}`},
-		{Data: `{"delta": {"text": "Hello"}}`},
+		{Type: "message_start", Data: `{"type": "message_start"}`},
+		{Type: "content_block_start", Data: `{"type": "content_block_start"}`},
+		{Type: "content_block_delta", Data: `{"delta": {"text": "Hello"}}`},
 		{Data: `[DONE]`},
 	}
 
@@ -115,7 +122,7 @@ func TestPassthroughTransformer_FullFlow(t *testing.T) {
 		t.Errorf("Close() error = %v", err)
 	}
 
-	expected := "data: {\"type\": \"message_start\"}\n\ndata: {\"type\": \"content_block_start\"}\n\ndata: {\"delta\": {\"text\": \"Hello\"}}\n\ndata: [DONE]\n\n"
+	expected := "event: message_start\ndata: {\"type\": \"message_start\"}\n\nevent: content_block_start\ndata: {\"type\": \"content_block_start\"}\n\nevent: content_block_delta\ndata: {\"delta\": {\"text\": \"Hello\"}}\n\ndata: [DONE]\n\n"
 	if got := buf.String(); got != expected {
 		t.Errorf("Full flow output = %q, want %q", got, expected)
 	}

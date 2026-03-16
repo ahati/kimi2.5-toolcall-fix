@@ -6,21 +6,52 @@
 	"image": "mcr.microsoft.com/devcontainers/go:2-1.25-trixie",
 	"features": {
 		"ghcr.io/devcontainers/features/python:1": {},
-		"ghcr.io/devcontainer-community/devcontainer-features/astral.sh-uv:1": {}
-	}
+		"ghcr.io/devcontainer-community/devcontainer-features/astral.sh-uv:1": {},
+		"ghcr.io/devcontainers/features/node:1": {}
+	},
 
-	// Features to add to the dev container. More info: https://containers.dev/features.
-	// "features": {},
+	"mounts": [
+		{
+			"target": "/home/vscode/.claude.settings.json",
+			"source": "${localWorkspaceFolder}/.devcontainer/claude.settings.json",
+			"type": "bind"
+		},
+		{
+			"target": "/home/vscode/.config/opencode/opencode.json",
+			"source": "${localWorkspaceFolder}/.devcontainer/opencode.json",
+			"type": "bind"
+		},
+		{
+			"target": "/home/vscode/.codex.config.toml",
+			"source": "${localWorkspaceFolder}/.devcontainer/codex.config.toml",
+			"type": "bind"
+		},
+		{
+			"target": "/home/vscode/user-install.sh",
+			"source": "${localWorkspaceFolder}/.devcontainer/user-install.sh",
+			"type": "bind"
+		},
+		{
+			"target": "/home/vscode/custom_models.json",
+			"source": "${localWorkspaceFolder}/.devcontainer/codex.custom_models.json",
+			"type": "bind"
+		},
+		{
+			"target": "/workspaces/temporary",
+			"source": "${localWorkspaceFolder}/../temporary",
+			"type": "bind"
+		}
+	],
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
-
 	// Use 'postCreateCommand' to run commands after the container is created.
-	// "postCreateCommand": "go version",
+	"postCreateCommand": "bash /home/vscode/user-install.sh",
 
-	// Configure tool-specific properties.
-	// "customizations": {},
-
-	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	// "remoteUser": "root"
+	"remoteEnv": {
+		"CHUTES_API_KEY": "${localEnv:CHUTES_API_KEY}",
+		"UPSTREAM_API_KEY": "${localEnv:UPSTREAM_API_KEY}",
+		"ALIBABA_API_KEY": "${localEnv:ALIBABA_API_KEY}",
+		"ALIBABA_ANTHROPIC_API_KEY": "${localEnv:ALIBABA_ANTHROPIC_API_KEY}"
+	}
 }

@@ -8,7 +8,7 @@ import "encoding/json"
 // This is the primary request structure for the /v1/chat/completions endpoint.
 type ChatCompletionRequest struct {
 	// Model is the model identifier to use for completion.
-	// Valid values: "moonshotai/Kimi-K2.5-TEE" or any OpenAI-compatible model ID.
+	// Valid values: "gpt-4", "gpt-3.5-turbo", or any OpenAI-compatible model ID.
 	Model string `json:"model"`
 	// Messages is the conversation history as an array of message objects.
 	// Must contain at least one message with role "user".
@@ -19,18 +19,99 @@ type ChatCompletionRequest struct {
 	// Stream enables streaming responses when true.
 	// Default: false. Set to true for SSE streaming responses.
 	Stream bool `json:"stream,omitempty"`
-	// Tools is a list of tools the model may call.
-	// Optional; each tool defines a function the model can invoke.
-	Tools []Tool `json:"tools,omitempty"`
+	// StreamOptions configures streaming behavior.
+	// Set include_usage: true to receive usage statistics in the final chunk.
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+
+	// Sampling parameters
 	// Temperature controls randomness in output generation.
 	// Range: 0.0 to 2.0. Higher values produce more random output.
 	Temperature float64 `json:"temperature,omitempty"`
 	// TopP controls diversity via nucleus sampling.
 	// Range: 0.0 to 1.0. Alternative to temperature.
 	TopP float64 `json:"top_p,omitempty"`
-	// System provides system-level instructions to the model.
-	// Optional; sets the behavior and context for the assistant.
+	// TopK limits sampling to the K most likely tokens.
+	// Not supported by all providers.
+	TopK int `json:"top_k,omitempty"`
+
+	// Stop sequences
+	// Stop sequences where the API will stop generating further tokens.
+	// Can be a string or array of strings.
+	Stop interface{} `json:"stop,omitempty"`
+
+	// Penalties
+	// PresencePenalty penalizes new tokens based on whether they appear in the text so far.
+	// Range: -2.0 to 2.0.
+	PresencePenalty float64 `json:"presence_penalty,omitempty"`
+	// FrequencyPenalty penalizes new tokens based on their frequency in the text so far.
+	// Range: -2.0 to 2.0.
+	FrequencyPenalty float64 `json:"frequency_penalty,omitempty"`
+
+	// Output control
+	// N is the number of chat completion choices to generate.
+	N int `json:"n,omitempty"`
+	// ResponseFormat specifies the format of the response.
+	// Use for JSON mode or structured outputs.
+	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
+
+	// Tool calling
+	// Tools is a list of tools the model may call.
+	// Optional; each tool defines a function the model can invoke.
+	Tools []Tool `json:"tools,omitempty"`
+	// ToolChoice controls which tool is called by the model.
+	// Can be "none", "auto", "required", or a specific tool object.
+	ToolChoice interface{} `json:"tool_choice,omitempty"`
+	// ParallelToolCalls enables parallel tool calling when true.
+	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
+
+	// Advanced parameters
+	// LogitBias modifies the likelihood of specified tokens appearing in the completion.
+	LogitBias map[int]float64 `json:"logit_bias,omitempty"`
+	// LogProbs whether to return log probabilities of the output tokens.
+	LogProbs *bool `json:"logprobs,omitempty"`
+	// TopLogProbs specifies how many top log probabilities to return (0-20).
+	TopLogProbs int `json:"top_logprobs,omitempty"`
+	// Seed enables deterministic sampling for reproducible outputs.
+	Seed *int `json:"seed,omitempty"`
+
+	// User identifier for abuse monitoring.
+	User string `json:"user,omitempty"`
+
+	// Service tier for the request.
+	ServiceTier string `json:"service_tier,omitempty"`
+
+	// Deprecated: System field is non-standard. Use a system message in Messages array instead.
+	// Kept for backwards compatibility with existing clients.
 	System string `json:"system,omitempty"`
+}
+
+// StreamOptions configures streaming behavior for chat completion requests.
+type StreamOptions struct {
+	// IncludeUsage enables usage statistics in the final chunk when true.
+	IncludeUsage bool `json:"include_usage,omitempty"`
+}
+
+// ResponseFormat specifies the format of the response output.
+// Used for JSON mode and structured outputs.
+type ResponseFormat struct {
+	// Type specifies the response format type.
+	// Values: "text" (default), "json_object", "json_schema".
+	Type string `json:"type"`
+	// JSONSchema specifies the JSON schema for structured outputs.
+	// Required when Type is "json_schema".
+	JSONSchema *JSONSchemaConfig `json:"json_schema,omitempty"`
+}
+
+// JSONSchemaConfig configures JSON schema for structured outputs.
+type JSONSchemaConfig struct {
+	// Name is a descriptive name for the schema.
+	Name string `json:"name"`
+	// Description is an optional description of the schema.
+	Description string `json:"description,omitempty"`
+	// Schema is the JSON Schema definition.
+	Schema json.RawMessage `json:"schema"`
+	// Strict enables strict schema validation when true.
+	Strict bool `json:"strict,omitempty"`
 }
 
 // Message represents a single message in a chat conversation.
@@ -173,6 +254,22 @@ type Usage struct {
 	// TotalTokens is the sum of prompt and completion tokens.
 	// Useful for cost estimation.
 	TotalTokens int `json:"total_tokens"`
+	// PromptTokensDetails contains detailed prompt token counts.
+	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	// CompletionTokensDetails contains detailed completion token counts.
+	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+}
+
+// PromptTokensDetails contains detailed prompt token information.
+type PromptTokensDetails struct {
+	// CachedTokens is the number of tokens read from cache.
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+// CompletionTokensDetails contains detailed completion token information.
+type CompletionTokensDetails struct {
+	// ReasoningTokens is the number of tokens used for reasoning.
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
 // ErrorResponse represents an error response from the OpenAI API.

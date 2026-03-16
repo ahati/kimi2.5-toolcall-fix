@@ -17,6 +17,10 @@ var (
 	// Writes to stderr with "[ERROR] " prefix.
 	// Nil until Init() is called; use ErrorMsg() for safe access.
 	Error *log.Logger
+	// Debug is the debug-level logger for detailed tracing.
+	// Writes to stderr with "[DEBUG] " prefix.
+	// Nil until Init() is called; use DebugMsg() for safe access.
+	Debug *log.Logger
 	// once ensures Init() is only executed once.
 	// Used for thread-safe lazy initialization.
 	once sync.Once
@@ -35,6 +39,7 @@ func Init() {
 		// Initialize loggers with standard flags including timestamp
 		Info = log.New(os.Stdout, "[INFO] ", log.LstdFlags)
 		Error = log.New(os.Stderr, "[ERROR] ", log.LstdFlags)
+		Debug = log.New(os.Stderr, "[DEBUG] ", log.LstdFlags)
 	})
 }
 
@@ -72,4 +77,22 @@ func ErrorMsg(format string, v ...interface{}) {
 		Init()
 	}
 	Error.Printf(format, v...)
+}
+
+// DebugMsg logs a debug-level message using the configured format.
+// It lazily initializes the logger if needed.
+// Format follows fmt.Printf conventions.
+//
+// @param format - the format string for the log message
+// @param v - variadic arguments for format string substitution
+// @pre format must be a valid fmt.Printf format string
+// @post Message is written to stderr with "[DEBUG] " prefix and timestamp
+// @note Safe to call before Init(); will auto-initialize
+// @note Thread-safe for concurrent use
+func DebugMsg(format string, v ...interface{}) {
+	// Lazy initialization ensures logger is ready even if Init() wasn't called
+	if Debug == nil {
+		Init()
+	}
+	Debug.Printf(format, v...)
 }

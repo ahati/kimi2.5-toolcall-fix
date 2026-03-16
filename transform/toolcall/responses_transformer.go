@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"ai-proxy/logging"
+	"ai-proxy/transform"
 	"ai-proxy/types"
 
 	"github.com/tmaxmax/go-sse"
@@ -13,21 +14,23 @@ import (
 
 // Usage tracks token usage from Anthropic API.
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
+	InputTokens             int
+	OutputTokens            int
+	CacheReadInputTokens    int
+	CacheCreationInputTokens int
 }
 
 // ResponsesTransformer converts Anthropic SSE events to OpenAI Responses API format.
 type ResponsesTransformer struct {
-	output     io.Writer
-	formatter  *ResponsesFormatter
-	parser     *Parser
-	messageID  string
-	model      string
-	blockIndex int
-	toolIndex  int
-	currentID  string
-	responseID string
+	sseWriter   *transform.SSEWriter
+	formatter   *ResponsesFormatter
+	parser      *Parser
+	messageID   string
+	model       string
+	blockIndex  int
+	toolIndex   int
+	currentID   string
+	responseID  string
 
 	// State flags
 	inToolCall  bool
@@ -345,11 +348,18 @@ func (f *ResponsesFormatter) FormatResponseCompleted(outputItems []map[string]in
 
 	// Add usage if available
 	if usage != nil {
-		response["usage"] = map[string]interface{}{
+		usageData := map[string]interface{}{
 			"input_tokens":  usage.InputTokens,
 			"output_tokens": usage.OutputTokens,
 			"total_tokens":  usage.InputTokens + usage.OutputTokens,
 		}
+		// Include cache tokens if available
+		if usage.CacheReadInputTokens > 0 {
+			usageData["input_tokens_details"] = map[string]interface{}{
+				"cached_tokens": usage.CacheReadInputTokens,
+			}
+		}
+		response["usage"] = usageData
 	}
 
 	event := map[string]interface{}{
@@ -470,7 +480,7 @@ func (f *ResponsesFormatter) FormatReasoningItemDone(itemID, summaryText string,
 // NewResponsesTransformer creates a new transformer for OpenAI Responses API.
 func NewResponsesTransformer(output io.Writer) *ResponsesTransformer {
 	return &ResponsesTransformer{
-		output:         output,
+		sseWriter:      transform.NewSSEWriter(output),
 		formatter:      NewResponsesFormatter("", ""),
 		parser:         NewParser(DefaultTokens),
 		outputItems:    make([]map[string]interface{}, 0),
@@ -533,6 +543,15 @@ func (t *ResponsesTransformer) handleMessageStart(event types.Event) error {
 		t.model = event.Message.Model
 		t.formatter.SetResponseID(t.responseID)
 		t.formatter.SetModel(t.model)
+		// Capture usage from message_start event (includes cache tokens)
+		if event.Message.Usage != nil {
+			t.usage = &Usage{
+				InputTokens:              event.Message.Usage.InputTokens,
+				OutputTokens:             event.Message.Usage.OutputTokens,
+				CacheReadInputTokens:     event.Message.Usage.CacheReadInputTokens,
+				CacheCreationInputTokens: event.Message.Usage.CacheCreationInputTokens,
+			}
+		}
 	}
 
 	// Send response.created event
@@ -671,14 +690,17 @@ func (t *ResponsesTransformer) handleContentBlockStop(event types.Event) error {
 	if t.inText {
 		t.inText = false
 		content := t.textContent.String()
-		// Track content for output item
+		// Track content for output item - ensure content array exists
 		if t.currentItem != nil {
-			if contents, ok := t.currentItem["content"].([]map[string]interface{}); ok {
-				t.currentItem["content"] = append(contents, map[string]interface{}{
-					"type": "output_text",
-					"text": content,
-				})
+			contents, ok := t.currentItem["content"].([]map[string]interface{})
+			if !ok {
+				// Initialize content array if it doesn't exist or has wrong type
+				contents = []map[string]interface{}{}
 			}
+			t.currentItem["content"] = append(contents, map[string]interface{}{
+				"type": "output_text",
+				"text": content,
+			})
 		}
 		seqNum := t.nextSequenceNumber()
 		messageItemID, _ := t.currentItem["id"].(string)
@@ -742,11 +764,19 @@ func (t *ResponsesTransformer) handleContentBlockStop(event types.Event) error {
 }
 
 func (t *ResponsesTransformer) handleMessageDelta(event types.Event) error {
-	// Capture usage from message_delta event
+	// Capture/merge usage from message_delta event
 	if event.Usage != nil {
-		t.usage = &Usage{
-			InputTokens:  event.Usage.InputTokens,
-			OutputTokens: event.Usage.OutputTokens,
+		if t.usage == nil {
+			t.usage = &Usage{}
+		}
+		t.usage.InputTokens = event.Usage.InputTokens
+		t.usage.OutputTokens = event.Usage.OutputTokens
+		// Merge cache tokens (may be in message_delta or message_start)
+		if event.Usage.CacheReadInputTokens > 0 {
+			t.usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
+		}
+		if event.Usage.CacheCreationInputTokens > 0 {
+			t.usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
 		}
 	}
 
@@ -768,10 +798,17 @@ func (t *ResponsesTransformer) handleMessageDelta(event types.Event) error {
 }
 
 func (t *ResponsesTransformer) handleMessageStop(event types.Event) error {
-	// Only emit message item completion if there's actual text content.
-	// When stop_reason is tool_use with no text, output should only contain
-	// reasoning and function_call items - no empty message.
-	if t.itemAdded && t.currentItem != nil && t.textContent.Len() > 0 && t.messageItemEmitted {
+	// Emit message item completion if there's a message item with content.
+	// Even if messageItemEmitted is false but we have text content, we should emit.
+	hasTextContent := t.textContent.Len() > 0
+	if t.itemAdded && t.currentItem != nil && hasTextContent {
+		// If message item wasn't emitted but we have text, emit it now
+		if !t.messageItemEmitted {
+			if err := t.emitMessageItemAdded(); err != nil {
+				return err
+			}
+		}
+
 		// Calculate output index for message (after all reasoning and tool calls)
 		outputIdx := t.messageOutputIndex
 
@@ -801,7 +838,7 @@ func (t *ResponsesTransformer) write(data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-	_, err := t.output.Write(data)
+	_, err := t.sseWriter.WriteRaw(data)
 	return err
 }
 

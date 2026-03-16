@@ -36,12 +36,24 @@ func TestNewServer(t *testing.T) {
 		{
 			name: "with all config fields",
 			config: &config.Config{
-				OpenAIUpstreamURL:    "https://api.example.com/v1",
-				OpenAIUpstreamAPIKey: "test-key",
-				AnthropicUpstreamURL: "https://api.anthropic.com/v1",
-				AnthropicAPIKey:      "anthropic-key",
-				Port:                 "9090",
-				SSELogDir:            "/tmp/logs",
+				AppConfig: &config.Schema{
+					Providers: []config.Provider{
+						{
+							Name:    "openai",
+							Type:    "openai",
+							BaseURL: "https://api.example.com/v1",
+							APIKey:  "test-key",
+						},
+						{
+							Name:    "anthropic",
+							Type:    "anthropic",
+							BaseURL: "https://api.anthropic.com/v1",
+							APIKey:  "anthropic-key",
+						},
+					},
+				},
+				Port:      "9090",
+				SSELogDir: "/tmp/logs",
 			},
 			wantMode: gin.ReleaseMode,
 		},
@@ -88,7 +100,6 @@ func TestServer_setupRoutes(t *testing.T) {
 		{method: "POST", path: "/v1/chat/completions"},
 		{method: "POST", path: "/v1/messages"},
 		{method: "POST", path: "/v1/messages/count_tokens"},
-		{method: "POST", path: "/v1/openai-to-anthropic/messages"},
 	}
 
 	for _, expected := range expectedRoutes {
@@ -111,7 +122,7 @@ func TestServer_setupRoutes_RouteCount(t *testing.T) {
 
 	routes := server.router.Routes()
 
-	expectedCount := 7
+	expectedCount := 5
 	if len(routes) != expectedCount {
 		t.Errorf("expected %d routes, got %d", expectedCount, len(routes))
 	}
@@ -205,7 +216,15 @@ func TestServer_Routes_Models(t *testing.T) {
 
 func TestServer_Routes_Models_WithAPIKey(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "test-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:   "openai",
+					Type:   "openai",
+					APIKey: "test-key",
+				},
+			},
+		},
 	}
 	server := NewServer(cfg)
 
@@ -310,19 +329,29 @@ func TestServer_Run_ValidAddress(t *testing.T) {
 
 func TestNewServer_SetsConfigCorrectly(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://upstream.example.com",
-		OpenAIUpstreamAPIKey: "test-api-key",
-		Port:                 "8080",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "openai",
+					Type:    "openai",
+					BaseURL: "https://upstream.example.com",
+					APIKey:  "test-api-key",
+				},
+			},
+		},
+		Port: "8080",
 	}
 
 	server := NewServer(cfg)
 
-	if server.config.OpenAIUpstreamURL != cfg.OpenAIUpstreamURL {
-		t.Errorf("expected OpenAIUpstreamURL %s, got %s", cfg.OpenAIUpstreamURL, server.config.OpenAIUpstreamURL)
+	expectedURL := "https://upstream.example.com"
+	if server.config.GetOpenAIUpstreamURL() != expectedURL {
+		t.Errorf("expected OpenAIUpstreamURL %s, got %s", expectedURL, server.config.GetOpenAIUpstreamURL())
 	}
 
-	if server.config.OpenAIUpstreamAPIKey != cfg.OpenAIUpstreamAPIKey {
-		t.Errorf("expected OpenAIUpstreamAPIKey %s, got %s", cfg.OpenAIUpstreamAPIKey, server.config.OpenAIUpstreamAPIKey)
+	expectedKey := "test-api-key"
+	if server.config.GetOpenAIUpstreamAPIKey() != expectedKey {
+		t.Errorf("expected OpenAIUpstreamAPIKey %s, got %s", expectedKey, server.config.GetOpenAIUpstreamAPIKey())
 	}
 
 	if server.config.Port != cfg.Port {

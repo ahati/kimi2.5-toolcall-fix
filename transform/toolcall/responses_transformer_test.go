@@ -440,8 +440,8 @@ func TestNewResponsesTransformer(t *testing.T) {
 		t.Fatal("NewResponsesTransformer returned nil")
 	}
 
-	if transformer.output != &buf {
-		t.Error("Transformer output should match buffer")
+	if transformer.sseWriter == nil {
+		t.Error("Transformer sseWriter should not be nil")
 	}
 
 	if transformer.formatter == nil {

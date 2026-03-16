@@ -13,8 +13,16 @@ import (
 
 func TestModelsHandler_Handle_MissingAPIKey(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "openai",
+					Type:    "openai",
+					BaseURL: "https://api.example.com/v1/chat/completions",
+					APIKey:  "",
+				},
+			},
+		},
 	}
 
 	w := httptest.NewRecorder()
@@ -45,7 +53,15 @@ func TestModelsHandler_Handle_MissingAPIKey(t *testing.T) {
 
 func TestModelsHandler_ResolveAPIKey(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "default-api-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:   "openai",
+					Type:   "openai",
+					APIKey: "default-api-key",
+				},
+			},
+		},
 	}
 	h := &ModelsHandler{cfg: cfg}
 
@@ -114,7 +130,15 @@ func TestModelsHandler_BuildModelsURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
-				OpenAIUpstreamURL: tt.upstreamURL,
+				AppConfig: &config.Schema{
+					Providers: []config.Provider{
+						{
+							Name:    "openai",
+							Type:    "openai",
+							BaseURL: tt.upstreamURL,
+						},
+					},
+				},
 			}
 			h := &ModelsHandler{cfg: cfg}
 
@@ -134,8 +158,16 @@ func TestModelsHandler_Handle_UpstreamError(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := &config.Config{
-		OpenAIUpstreamURL:    upstream.URL + "/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-api-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "openai",
+					Type:    "openai",
+					BaseURL: upstream.URL + "/v1/chat/completions",
+					APIKey:  "test-api-key",
+				},
+			},
+		},
 	}
 
 	w := httptest.NewRecorder()
@@ -167,8 +199,16 @@ func TestModelsHandler_Handle_Success(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := &config.Config{
-		OpenAIUpstreamURL:    upstream.URL + "/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "default-api-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "openai",
+					Type:    "openai",
+					BaseURL: upstream.URL + "/v1/chat/completions",
+					APIKey:  "default-api-key",
+				},
+			},
+		},
 	}
 
 	w := httptest.NewRecorder()

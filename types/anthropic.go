@@ -8,7 +8,7 @@ import "encoding/json"
 // This is the primary request structure for the /v1/messages endpoint.
 type MessageRequest struct {
 	// Model is the model identifier to use.
-	// Valid values: "kimi-k2.5" or other Anthropic-compatible model IDs.
+	// Valid values: "claude-3-opus-20240229", "claude-3-sonnet-20240229", etc.
 	Model string `json:"model"`
 	// Messages is the conversation history.
 	// Each message has a role and content.
@@ -19,16 +19,8 @@ type MessageRequest struct {
 	// Stream enables streaming responses when true.
 	// Default: false. Set to true for SSE streaming responses.
 	Stream bool `json:"stream,omitempty"`
-	// Tools is a list of tools the model may call.
-	// Optional; each tool defines a function the model can invoke.
-	Tools []ToolDef `json:"tools,omitempty"`
-	// ToolChoice specifies how the model should choose which tool to use.
-	// Optional; defaults to auto if not specified.
-	// Values: {"type": "auto"}, {"type": "any"}, {"type": "tool", "name": "..."}
-	ToolChoice *ToolChoice `json:"tool_choice,omitempty"`
-	// System provides system-level instructions.
-	// Can be a string or structured content blocks.
-	System interface{} `json:"system,omitempty"`
+
+	// Sampling parameters
 	// Temperature controls randomness in output generation.
 	// Range: 0.0 to 1.0. Higher values produce more random output.
 	Temperature float64 `json:"temperature,omitempty"`
@@ -38,6 +30,29 @@ type MessageRequest struct {
 	// TopK limits sampling to the K most likely tokens.
 	// Range: 0 to infinity. 0 means no limit.
 	TopK int `json:"top_k,omitempty"`
+
+	// Stop sequences
+	// StopSequences is a list of sequences where the API will stop generating.
+	StopSequences []string `json:"stop_sequences,omitempty"`
+
+	// System prompt
+	// System provides system-level instructions.
+	// Can be a string or structured content blocks.
+	System interface{} `json:"system,omitempty"`
+
+	// Tool calling
+	// Tools is a list of tools the model may call.
+	// Optional; each tool defines a function the model can invoke.
+	Tools []ToolDef `json:"tools,omitempty"`
+	// ToolChoice specifies how the model should choose which tool to use.
+	// Optional; defaults to auto if not specified.
+	// Values: {"type": "auto"}, {"type": "any"}, {"type": "tool", "name": "..."}
+	ToolChoice *ToolChoice `json:"tool_choice,omitempty"`
+
+	// Extended thinking
+	// Thinking enables extended thinking mode for supported models.
+	Thinking *ThinkingConfig `json:"thinking,omitempty"`
+
 	// Metadata contains arbitrary metadata for the request.
 	// Used for tracking and logging purposes.
 	Metadata json.RawMessage `json:"metadata,omitempty"`
@@ -118,10 +133,10 @@ type MessageInfo struct {
 }
 
 // ContentBlock represents a block of content in an Anthropic message.
-// Each block is either text, tool use, or thinking content.
+// Each block is either text, tool use, tool result, thinking, or image content.
 type ContentBlock struct {
 	// Type identifies the content block type.
-	// Values: "text", "tool_use", "thinking".
+	// Values: "text", "tool_use", "tool_result", "thinking", "image".
 	Type string `json:"type"`
 	// Text contains the text content for text blocks.
 	// Only present when Type is "text".
@@ -138,6 +153,30 @@ type ContentBlock struct {
 	// Thinking contains the model's reasoning process.
 	// Only present when Type is "thinking".
 	Thinking string `json:"thinking,omitempty"`
+	// ToolUseID references the tool call for tool_result blocks.
+	// Only present when Type is "tool_result".
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	// Content is the result content for tool_result blocks.
+	// Can be a string or array of content blocks.
+	Content interface{} `json:"content,omitempty"`
+	// Source contains image source data for image blocks.
+	// Only present when Type is "image".
+	Source *ImageSource `json:"source,omitempty"`
+	// IsError indicates if the tool result is an error.
+	// Only present when Type is "tool_result".
+	IsError bool `json:"is_error,omitempty"`
+}
+
+// ImageSource represents the source of an image in Anthropic format.
+type ImageSource struct {
+	// Type is the source type: "base64" or "url".
+	Type string `json:"type"`
+	// MediaType is the MIME type of the image (e.g., "image/png").
+	MediaType string `json:"media_type,omitempty"`
+	// Data is the base64-encoded image data (for base64 type).
+	Data string `json:"data,omitempty"`
+	// URL is the image URL (for url type).
+	URL string `json:"url,omitempty"`
 }
 
 // TextDelta represents a text content delta in a streaming response.
@@ -175,6 +214,9 @@ type InputJSONDelta struct {
 type AnthropicUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// Cache-related tokens
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 }
 
 // ToolChoice specifies how the model should choose which tool to use.

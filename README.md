@@ -9,46 +9,59 @@ A Go-based HTTP proxy for LLM APIs with OpenAI and Anthropic compatibility. Prov
 - **Tool call normalization**: Transforms Kimi-K2.5/K2's proprietary tool call format into standard formats
 - **Streaming support**: Real-time SSE streaming with format transformation
 - **Request capture**: Optional logging of all requests/responses for debugging
+- **Model-based routing**: Route requests to different providers based on model name
 
 ## API Endpoints
 
-| Method | Path | Request Format | Upstream Format | Response Format | Description |
-|--------|------|----------------|-----------------|-----------------|-------------|
-| `GET` | `/health` | N/A | N/A | N/A | Health check |
-| `GET` | `/v1/models` | OpenAI | N/A | OpenAI | List available models |
-| `POST` | `/v1/chat/completions` | OpenAI | OpenAI | OpenAI | Chat completions with tool call normalization |
-| `POST` | `/v1/messages` | Anthropic | Anthropic | Anthropic | Anthropic messages with tool call normalization |
-| `POST` | `/v1/openai-to-anthropic/messages` | Anthropic | OpenAI | Anthropic | Bridge: Anthropic client → OpenAI backend |
-| `POST` | `/v1/anthropic-to-openai/responses` | OpenAI Responses | Anthropic | OpenAI Responses | Bridge: OpenAI SDK → Anthropic backend |
+| Method | Path | Request Format | Response Format | Description |
+|--------|------|----------------|-----------------|-------------|
+| `GET` | `/health` | N/A | N/A | Health check |
+| `GET` | `/v1/models` | OpenAI | OpenAI | List available models |
+| `POST` | `/v1/chat/completions` | OpenAI | OpenAI | Chat completions (routes by model) |
+| `POST` | `/v1/messages` | Anthropic | Anthropic | Anthropic messages (routes by model) |
+| `POST` | `/v1/messages/count_tokens` | Anthropic | Anthropic | Count tokens in messages |
+| `POST` | `/v1/responses` | OpenAI Responses | OpenAI Responses | OpenAI Responses API (routes by model) |
 
 ## Architecture
 
+The proxy uses a unified handler architecture where each endpoint intelligently routes requests based on model configuration:
+
 ```
-                                    ┌─────────────────────────────────────┐
-                                    │           AI Proxy                  │
-                                    │                                     │
-┌──────────────┐                    │  ┌─────────────────────────────┐    │
-│  OpenAI SDK  │──▶ /v1/chat/completions ──▶│ OpenAI Transformer │───┼──▶ OpenAI Upstream
-│              │◀── OpenAI Response ────────│ (tool call fix)    │◀──┼─── OpenAI Response
-└──────────────┘                    │  └─────────────────────────────┘    │
-                                    │                                     │
-┌──────────────┐                    │  ┌─────────────────────────────┐    │
-│ Anthropic SDK│──▶ /v1/messages ─────▶│ Anthropic Transformer │─────┼──▶ Anthropic Upstream
-│              │◀─ Anthropic Response ─│ (tool call fix)       │◀────┼─── Anthropic Response
-└──────────────┘                    │  └─────────────────────────────┘    │
-                                    │                                     │
-┌──────────────┐                    │  ┌─────────────────────────────┐    │
-│ Anthropic SDK│──▶ /v1/openai-to-anthropic/messages ──▶│ Bridge │───┼──▶ OpenAI Upstream
-│              │◀── Anthropic Response ─────────────────│(A→O→A) │◀──┼─── OpenAI Response
-└──────────────┘                    │  └─────────────────────────────┘    │
-                                    │                                     │
-┌──────────────┐                    │  ┌─────────────────────────────┐    │
-│ OpenAI SDK   │──▶ /v1/anthropic-to-openai/responses ──▶│ Bridge │──┼──▶ Anthropic Upstream
-│ (Responses)  │◀── OpenAI Response ─────────────────────│(O→A→O)│◀──┼─── Anthropic Response
-└──────────────┘                    │  └─────────────────────────────┘    │
-                                    │                                     │
-                                    └─────────────────────────────────────┘
+                                    ┌──────────────────────────────────────────────────┐
+                                    │                  AI Proxy                        │
+                                    │                                                  │
+                                    │  ┌────────────────────────────────────────────┐  │
+┌──────────────┐                    │  │         /v1/chat/completions               │  │
+│  OpenAI SDK  │──▶ POST /v1/chat/completions ──▶│                            │──┼──▶ Provider (by model)
+│              │◀── OpenAI Response ─────────────│  Routes based on model:    │◀─┼─── Provider Response
+└──────────────┘                    │  │  • OpenAI provider → pass through          │  │
+                                    │  │  • Anthropic provider → convert O→A→O      │  │
+                                    │  └────────────────────────────────────────────┘  │
+┌──────────────┐                    │  ┌────────────────────────────────────────────┐  │
+│ Anthropic SDK│──▶ POST /v1/messages ──────────▶│                            │──┼──▶ Provider (by model)
+│              │◀─ Anthropic Response ───────────│  Routes based on model:    │◀─┼─── Provider Response
+└──────────────┘                    │  │  • Anthropic provider → pass through       │  │
+                                    │  │  • OpenAI provider → convert A→O→A         │  │
+                                    │  └────────────────────────────────────────────┘  │
+┌──────────────┐                    │  ┌────────────────────────────────────────────┐  │
+│ OpenAI SDK   │──▶ POST /v1/responses ─────────▶│                            │──┼──▶ Provider (by model)
+│ (Responses)  │◀── OpenAI Response ─────────────│  Routes based on model:    │◀─┼─── Provider Response
+└──────────────┘                    │  │  • OpenAI provider → convert R→C→R         │  │
+                                    │  │  • Anthropic provider → convert R→A→R      │  │
+                                    │  └────────────────────────────────────────────┘  │
+                                    │                                                  │
+                                    └──────────────────────────────────────────────────┘
+
+Legend: O=OpenAI Chat, A=Anthropic Messages, R=OpenAI Responses, C=OpenAI Chat
 ```
+
+### Request Flow
+
+1. Client sends request to unified endpoint with a model name
+2. Router resolves model name to provider configuration
+3. Handler transforms request format if needed (e.g., OpenAI → Anthropic)
+4. Request is forwarded to the appropriate upstream provider
+5. Response is transformed back to the client's expected format
 
 ## Tool Call Transformation
 
@@ -97,25 +110,80 @@ Kimi-K2.5 and K2 models output tool/function calls using special delimiter token
 
 ## Configuration
 
+### Configuration File
+
+The proxy requires a JSON configuration file that defines providers and model mappings.
+
+```json
+{
+  "providers": [
+    {
+      "name": "kimi-chutes",
+      "type": "openai",
+      "base_url": "https://llm.chutes.ai/v1/chat/completions",
+      "envApiKey": "CHUTES_API_KEY"
+    },
+    {
+      "name": "alibaba-coding",
+      "type": "anthropic",
+      "base_url": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages",
+      "envApiKey": "ALIBABA_ANTHROPIC_API_KEY"
+    }
+  ],
+  "models": {
+    "kimi-k2.5": {
+      "provider": "kimi-chutes",
+      "model": "moonshotai/Kimi-K2.5-TEE",
+      "tool_call_transform": true
+    },
+    "claude-3-opus": {
+      "provider": "alibaba-coding",
+      "model": "claude-3-opus-20240229",
+      "tool_call_transform": false
+    }
+  },
+  "fallback": {
+    "enabled": true,
+    "provider": "kimi-chutes",
+    "model": "{model}",
+    "tool_call_transform": true
+  }
+}
+```
+
+### Configuration Schema
+
+| Field | Description |
+|-------|-------------|
+| `providers[]` | List of upstream API providers |
+| `providers[].name` | Unique identifier for the provider |
+| `providers[].type` | API format: `"openai"` or `"anthropic"` |
+| `providers[].base_url` | API endpoint URL |
+| `providers[].apiKey` | Direct API key (optional) |
+| `providers[].envApiKey` | Environment variable name for API key |
+| `models{}` | Map of model aliases to configurations |
+| `models[].provider` | Provider name to use for this model |
+| `models[].model` | Actual model identifier on upstream |
+| `models[].tool_call_transform` | Enable tool call transformation |
+| `fallback.enabled` | Enable fallback for unknown models |
+| `fallback.provider` | Default provider for unknown models |
+| `fallback.model` | Model pattern (use `{model}` placeholder) |
+
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `8080` | Server port |
-| `UPSTREAM_URL` | `https://llm.chutes.ai/v1/chat/completions` | OpenAI-compatible upstream URL |
-| `UPSTREAM_API_KEY` | (empty) | API key for OpenAI-compatible upstream |
-| `ANTHROPIC_UPSTREAM_URL` | `https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages` | Anthropic-compatible upstream URL |
-| `ALIBABA_ANTHROPIC_API_KEY` | (empty) | API key for Anthropic upstream |
 | `SSELOG_DIR` | (empty) | Directory for request/response logging |
+| `CONFIG_FILE` | (empty) | Path to JSON configuration file |
 
-### Endpoint Configuration
+### Command-Line Flags
 
-| Endpoint | Upstream URL | API Key |
-|----------|--------------|---------|
-| `/v1/chat/completions` | `UPSTREAM_URL` | `UPSTREAM_API_KEY` |
-| `/v1/messages` | `ANTHROPIC_UPSTREAM_URL` | `ALIBABA_ANTHROPIC_API_KEY` |
-| `/v1/openai-to-anthropic/messages` | `UPSTREAM_URL` | `UPSTREAM_API_KEY` |
-| `/v1/anthropic-to-openai/responses` | `ANTHROPIC_UPSTREAM_URL` | `ALIBABA_ANTHROPIC_API_KEY` |
+| Flag | Description |
+|------|-------------|
+| `--config-file` | Path to JSON configuration file |
+| `--sse-log-dir` | Directory for request/response logging |
+| `--port` | Server port |
 
 ## Usage
 
@@ -125,19 +193,17 @@ Kimi-K2.5 and K2 models output tool/function calls using special delimiter token
 # Build
 go build -o ai-proxy .
 
-# Run with default configuration
-./ai-proxy
+# Run with config file
+./ai-proxy --config-file config.json
 
-# Run with custom upstreams
-UPSTREAM_URL=https://api.example.com/v1/chat/completions \
-UPSTREAM_API_KEY=your-key \
-ANTHROPIC_UPSTREAM_URL=https://api.anthropic.com/v1/messages \
-ALIBABA_ANTHROPIC_API_KEY=your-anthropic-key \
-PORT=3000 \
-./ai-proxy
+# Run with environment variable for config
+CONFIG_FILE=config.json ./ai-proxy
 
 # Run with request logging
-SSELOG_DIR=./logs ./ai-proxy
+./ai-proxy --config-file config.json --sse-log-dir ./logs
+
+# Run with custom port
+./ai-proxy --config-file config.json --port 3000
 ```
 
 ### Example Requests
@@ -148,7 +214,7 @@ SSELOG_DIR=./logs ./ai-proxy
 curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "moonshotai/Kimi-K2.5-TEE",
+    "model": "kimi-k2.5",
     "messages": [{"role": "user", "content": "Hello"}],
     "stream": true
   }'
@@ -161,6 +227,49 @@ curl -X POST http://localhost:8080/v1/messages \
   -H "Content-Type: application/json" \
   -H "Anthropic-Version: 2023-06-01" \
   -d '{
+    "model": "claude-3-opus",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
+  }'
+```
+
+#### OpenAI Responses API
+
+```bash
+curl -X POST http://localhost:8080/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-3-opus",
+    "input": [{"role": "user", "content": "Hello"}],
+    "stream": true
+  }'
+```
+
+#### Count Tokens
+
+```bash
+curl -X POST http://localhost:8080/v1/messages/count_tokens \
+  -H "Content-Type: application/json" \
+  -H "Anthropic-Version: 2023-06-01" \
+  -d '{
+    "model": "claude-3-opus",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+### Cross-Provider Examples
+
+The unified architecture enables seamless cross-provider calls:
+
+**Use Anthropic SDK with an OpenAI backend:**
+
+```bash
+# Request uses Anthropic format, routes to OpenAI provider based on model
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Anthropic-Version: 2023-06-01" \
+  -d '{
     "model": "kimi-k2.5",
     "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello"}],
@@ -168,32 +277,15 @@ curl -X POST http://localhost:8080/v1/messages \
   }'
 ```
 
-#### OpenAI-to-Anthropic Bridge
-
-Use Anthropic SDK with an OpenAI-compatible backend:
+**Use OpenAI SDK with an Anthropic backend:**
 
 ```bash
-curl -X POST http://localhost:8080/v1/openai-to-anthropic/messages \
+# Request uses OpenAI Chat format, routes to Anthropic provider based on model
+curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Anthropic-Version: 2023-06-01" \
   -d '{
-    "model": "gpt-4",
-    "max_tokens": 1024,
+    "model": "claude-3-opus",
     "messages": [{"role": "user", "content": "Hello"}],
-    "stream": true
-  }'
-```
-
-#### Anthropic-to-OpenAI Responses Bridge
-
-Use OpenAI SDK (Responses API) with an Anthropic backend:
-
-```bash
-curl -X POST http://localhost:8080/v1/anthropic-to-openai/responses \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-3-5-sonnet-20241022",
-    "input": [{"role": "user", "content": "Hello"}],
     "stream": true
   }'
 ```
@@ -203,7 +295,7 @@ curl -X POST http://localhost:8080/v1/anthropic-to-openai/responses \
 When `SSELOG_DIR` is set, all requests are captured to structured JSON files:
 
 ```bash
-SSELOG_DIR=./logs ./ai-proxy
+./ai-proxy --config-file config.json --sse-log-dir ./logs
 
 # Logs are organized by date
 ls logs/$(date +%Y-%m-%d)/
@@ -226,14 +318,26 @@ ai-proxy/
 │   └── handlers/           # HTTP request handlers
 │       ├── health.go       # Health check endpoint
 │       ├── models.go       # Models listing endpoint
-│       ├── completions.go  # OpenAI chat completions
-│       ├── messages.go     # Anthropic messages endpoint
-│       ├── bridge.go       # OpenAI-to-Anthropic bridge
-│       ├── anthropic_to_openai.go  # Anthropic-to-OpenAI bridge
+│       ├── completions.go  # OpenAI chat completions (unified)
+│       ├── messages.go     # Anthropic messages (unified)
+│       ├── responses.go    # OpenAI Responses API (unified)
 │       ├── count_tokens.go # Token counting endpoint
-│       └── common.go       # Shared handler utilities
+│       ├── common.go       # Shared handler utilities
+│       └── interface.go    # Handler interface definition
 ├── config/                 # Configuration loading
-│   └── config.go
+│   ├── config.go           # Config struct and accessors
+│   ├── schema.go           # JSON schema definitions
+│   ├── loader.go           # Config file loading
+│   └── cli.go              # CLI flag parsing
+├── router/                 # Model routing
+│   └── router.go           # Model-to-provider resolution
+├── convert/                # Format conversion
+│   ├── interface.go        # Converter interface
+│   ├── common.go           # Shared conversion utilities
+│   ├── chat_to_anthropic.go    # OpenAI Chat → Anthropic
+│   ├── anthropic_to_chat.go    # Anthropic → OpenAI Chat
+│   ├── responses_to_anthropic.go # Responses → Anthropic
+│   └── responses_to_chat.go    # Responses → OpenAI Chat
 ├── logging/                # Logging utilities
 │   └── logging.go
 ├── proxy/                  # Upstream API client
@@ -243,20 +347,22 @@ ai-proxy/
 │   ├── interface.go        # Transformer interface
 │   ├── passthrough.go      # Pass-through transformer
 │   └── toolcall/           # Tool call format transformation
-│       ├── transformer.go  # OpenAI transformer state machine
-│       ├── anthropic_transformer.go  # Anthropic transformer
-│       ├── responses_transformer.go   # OpenAI Responses API transformer
+│       ├── openai_transformer.go      # OpenAI format transformer
+│       ├── anthropic_transformer.go   # Anthropic format transformer
+│       ├── responses_transformer.go   # Responses API transformer
 │       ├── parser.go       # Token parsing
 │       ├── tokens.go       # Special token definitions
 │       ├── formatter.go    # Output formatting
-│       ├── anthropic.go    # Anthropic format support
 │       ├── openai.go       # OpenAI format support
+│       ├── anthropic.go    # Anthropic format support
 │       └── common.go       # Shared utilities
 ├── types/                  # Type definitions
 │   ├── openai.go           # OpenAI API types
 │   ├── openai_responses.go # OpenAI Responses API types
 │   ├── anthropic.go        # Anthropic API types
 │   └── sse.go              # Server-Sent Events types
+├── tokens/                 # Token counting
+│   └── counter.go          # Token counter implementation
 └── capture/                # Request/response capture
     ├── storage.go          # Log storage management
     ├── writer.go           # JSON log writer
@@ -309,13 +415,17 @@ The `ToolCallTransformer` implements a 5-state machine (`IDLE → IN_SECTION →
 
 ### Format Conversions
 
-| Conversion | Request Transform | Response Transform |
-|------------|-------------------|-------------------|
-| OpenAI → OpenAI | None (pass-through) | Tool call normalization |
-| Anthropic → Anthropic | None (pass-through) | Tool call normalization |
-| Anthropic → OpenAI → Anthropic | Anthropic to OpenAI | OpenAI to Anthropic |
-| OpenAI Responses → Anthropic → OpenAI Responses | Responses to Anthropic | Anthropic to Responses |
+| Endpoint | Provider Type | Request Transform | Response Transform |
+|----------|---------------|-------------------|-------------------|
+| `/v1/chat/completions` | OpenAI | None (pass-through) | Tool call normalization* |
+| `/v1/chat/completions` | Anthropic | OpenAI → Anthropic | Anthropic → OpenAI |
+| `/v1/messages` | Anthropic | None (pass-through) | Tool call normalization* |
+| `/v1/messages` | OpenAI | Anthropic → OpenAI | OpenAI → Anthropic |
+| `/v1/responses` | OpenAI | Responses → Chat | Chat → Responses |
+| `/v1/responses` | Anthropic | Responses → Anthropic | Anthropic → Responses |
+
+*Tool call normalization only applies when `tool_call_transform: true` is set for the model.
 
 ## License
 
-MIT
+GPL v3

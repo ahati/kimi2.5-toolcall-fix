@@ -322,8 +322,9 @@ func TestHandleUpstreamError(t *testing.T) {
 
 			handleUpstreamError(c, resp)
 
-			if w.Code != http.StatusBadGateway {
-				t.Errorf("expected status %d, got %d", http.StatusBadGateway, w.Code)
+			// Status code should be preserved from upstream
+			if w.Code != tt.statusCode {
+				t.Errorf("expected status %d, got %d", tt.statusCode, w.Code)
 			}
 
 			var response map[string]interface{}
@@ -336,9 +337,9 @@ func TestHandleUpstreamError(t *testing.T) {
 				t.Fatal("expected error object in response")
 			}
 
-			expectedMsg := "Upstream error: " + tt.upstreamBody
-			if errObj["message"] != expectedMsg {
-				t.Errorf("expected message %q, got %q", expectedMsg, errObj["message"])
+			// Message should be the upstream body directly
+			if errObj["message"] != tt.upstreamBody {
+				t.Errorf("expected message %q, got %q", tt.upstreamBody, errObj["message"])
 			}
 		})
 	}
@@ -483,8 +484,9 @@ func TestHandle_UpstreamNon200Status(t *testing.T) {
 
 	Handle(h)(c)
 
-	if w.Code != http.StatusBadGateway {
-		t.Errorf("expected status %d, got %d", http.StatusBadGateway, w.Code)
+	// Status code should be preserved from upstream (429, not 502)
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("expected status %d, got %d", http.StatusTooManyRequests, w.Code)
 	}
 }
 
@@ -640,11 +642,19 @@ func TestProxyRequest_BadUpstreamURL(t *testing.T) {
 
 func TestNewCompletionsHandler(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "openai",
+					Type:    "openai",
+					BaseURL: "https://api.example.com/v1/chat/completions",
+					APIKey:  "test-key",
+				},
+			},
+		},
 	}
 
-	handler := NewCompletionsHandler(cfg)
+	handler := NewCompletionsHandler(cfg, nil)
 	if handler == nil {
 		t.Error("expected non-nil handler")
 	}
@@ -652,23 +662,19 @@ func TestNewCompletionsHandler(t *testing.T) {
 
 func TestNewMessagesHandler(t *testing.T) {
 	cfg := &config.Config{
-		AnthropicUpstreamURL: "https://api.anthropic.com/v1/messages",
-		AnthropicAPIKey:      "test-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "anthropic",
+					Type:    "anthropic",
+					BaseURL: "https://api.anthropic.com/v1/messages",
+					APIKey:  "test-key",
+				},
+			},
+		},
 	}
 
-	handler := NewMessagesHandler(cfg)
-	if handler == nil {
-		t.Error("expected non-nil handler")
-	}
-}
-
-func TestNewBridgeHandler(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
-	}
-
-	handler := NewBridgeHandler(cfg)
+	handler := NewMessagesHandler(cfg, nil)
 	if handler == nil {
 		t.Error("expected non-nil handler")
 	}
@@ -676,8 +682,16 @@ func TestNewBridgeHandler(t *testing.T) {
 
 func TestNewModelsHandler(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIUpstreamURL:    "https://api.example.com/v1/chat/completions",
-		OpenAIUpstreamAPIKey: "test-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "openai",
+					Type:    "openai",
+					BaseURL: "https://api.example.com/v1/chat/completions",
+					APIKey:  "test-key",
+				},
+			},
+		},
 	}
 
 	handler := NewModelsHandler(cfg)

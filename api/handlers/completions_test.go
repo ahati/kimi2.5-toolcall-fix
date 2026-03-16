@@ -87,18 +87,35 @@ func TestCompletionsHandler_TransformRequest(t *testing.T) {
 
 func TestCompletionsHandler_UpstreamURL(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIUpstreamURL: "https://api.example.com/v1/chat/completions",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "openai",
+					Type:    "openai",
+					BaseURL: "https://api.example.com/v1/chat/completions",
+				},
+			},
+		},
 	}
 	h := &CompletionsHandler{cfg: cfg}
 
-	if got := h.UpstreamURL(); got != cfg.OpenAIUpstreamURL {
-		t.Errorf("UpstreamURL() = %v, want %v", got, cfg.OpenAIUpstreamURL)
+	expectedURL := "https://api.example.com/v1/chat/completions"
+	if got := h.UpstreamURL(); got != expectedURL {
+		t.Errorf("UpstreamURL() = %v, want %v", got, expectedURL)
 	}
 }
 
 func TestCompletionsHandler_ResolveAPIKey(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIUpstreamAPIKey: "test-api-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:   "openai",
+					Type:   "openai",
+					APIKey: "test-api-key",
+				},
+			},
+		},
 	}
 	h := &CompletionsHandler{cfg: cfg}
 
@@ -107,8 +124,8 @@ func TestCompletionsHandler_ResolveAPIKey(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 
 	got := h.ResolveAPIKey(c)
-	if got != cfg.OpenAIUpstreamAPIKey {
-		t.Errorf("ResolveAPIKey() = %v, want %v", got, cfg.OpenAIUpstreamAPIKey)
+	if got != "test-api-key" {
+		t.Errorf("ResolveAPIKey() = %v, want %v", got, "test-api-key")
 	}
 }
 

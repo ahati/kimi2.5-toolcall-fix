@@ -177,7 +177,15 @@ func TestCountTokensHandler_UpstreamURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
-				AnthropicUpstreamURL: tt.baseURL,
+				AppConfig: &config.Schema{
+					Providers: []config.Provider{
+						{
+							Name:    "anthropic",
+							Type:    "anthropic",
+							BaseURL: tt.baseURL,
+						},
+					},
+				},
 			}
 			h := &CountTokensHandler{cfg: cfg}
 
@@ -191,7 +199,15 @@ func TestCountTokensHandler_UpstreamURL(t *testing.T) {
 
 func TestCountTokensHandler_ResolveAPIKey(t *testing.T) {
 	cfg := &config.Config{
-		AnthropicAPIKey: "test-api-key-123",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:   "anthropic",
+					Type:   "anthropic",
+					APIKey: "test-api-key-123",
+				},
+			},
+		},
 	}
 	h := &CountTokensHandler{cfg: cfg}
 
@@ -312,8 +328,16 @@ func TestCountTokensHandler_EndToEnd(t *testing.T) {
 	// In production, this would call the real upstream API
 
 	cfg := &config.Config{
-		AnthropicUpstreamURL: "https://api.anthropic.com/v1/messages",
-		AnthropicAPIKey:      "test-key",
+		AppConfig: &config.Schema{
+			Providers: []config.Provider{
+				{
+					Name:    "anthropic",
+					Type:    "anthropic",
+					BaseURL: "https://api.anthropic.com/v1/messages",
+					APIKey:  "test-key",
+				},
+			},
+		},
 	}
 
 	handler := NewCountTokensHandler(cfg)
