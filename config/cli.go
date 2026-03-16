@@ -13,9 +13,11 @@ var ErrConfigFileRequired = errors.New("config file required: use --config-file 
 
 // CLIFlags holds the parsed command-line flags.
 type CLIFlags struct {
-	ConfigFile string
-	SSELogDir  string
-	Port       string
+	ConfigFile            string
+	SSELogDir             string
+	Port                  string
+	ConversationStoreSize int
+	ConversationStoreTTL  string
 }
 
 // ParseFlags parses CLI flags and returns the parsed flags.
@@ -29,12 +31,16 @@ func ParseFlags() (CLIFlags, error) {
 	configFilePath := flag.String("config-file", "", "Path to configuration file")
 	sseLogDir := flag.String("sse-log-dir", "", "Directory for SSE request/response logging")
 	port := flag.String("port", "", "Server port (default: 8080)")
+	conversationStoreSize := flag.Int("conversation-store-size", 0, "Max conversations in memory (default: 1000)")
+	conversationStoreTTL := flag.String("conversation-store-ttl", "", "Conversation TTL duration (default: 24h)")
 
 	flag.Parse()
 
 	flags := CLIFlags{
-		SSELogDir: *sseLogDir,
-		Port:      *port,
+		SSELogDir:             *sseLogDir,
+		Port:                  *port,
+		ConversationStoreSize: *conversationStoreSize,
+		ConversationStoreTTL:  *conversationStoreTTL,
 	}
 
 	if *configFilePath != "" {

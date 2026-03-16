@@ -8,6 +8,7 @@ import (
 
 	"ai-proxy/api"
 	"ai-proxy/config"
+	"ai-proxy/conversation"
 	"ai-proxy/logging"
 )
 
@@ -33,6 +34,13 @@ func main() {
 
 	// Initialize logging early so subsequent messages are captured
 	logging.Init()
+
+	// Initialize conversation store for previous_response_id support
+	conversation.InitDefaultStore(conversation.Config{
+		MaxSize: cfg.ConversationStoreSize,
+		TTL:     cfg.ConversationStoreTTL,
+	})
+	logging.InfoMsg("Conversation store initialized: maxSize=%d, ttl=%v", cfg.ConversationStoreSize, cfg.ConversationStoreTTL)
 
 	// Initialize storage for request capture if logging is enabled
 	storage := api.InitStorage(cfg.SSELogDir)

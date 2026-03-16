@@ -4,6 +4,7 @@ package config
 
 import (
 	"os"
+	"time"
 )
 
 // Config holds all configuration settings for the proxy server.
@@ -23,6 +24,12 @@ type Config struct {
 	// AppConfig holds the loaded JSON configuration schema.
 	// Contains provider definitions, model mappings, and fallback settings.
 	AppConfig *Schema
+	// ConversationStoreSize is the maximum number of conversations to store in memory.
+	// Default: 1000. When the limit is reached, oldest conversations are evicted.
+	ConversationStoreSize int
+	// ConversationStoreTTL is the time-to-live for stored conversations.
+	// Default: 24 hours. Conversations older than this are automatically removed.
+	ConversationStoreTTL time.Duration
 }
 
 // Load reads configuration from command-line flags, environment variables, and JSON config file.
@@ -39,8 +46,10 @@ func Load() *Config {
 		// If config file is required but not provided, return config with error info
 		// The caller should check AppConfig == nil
 		return &Config{
-			Port:      getEnvOrFlag("PORT", "", "8080"),
-			SSELogDir: getEnvOrFlag("SSELOG_DIR", "", ""),
+			Port:                  getEnvOrFlag("PORT", "", "8080"),
+			SSELogDir:             getEnvOrFlag("SSELOG_DIR", "", ""),
+			ConversationStoreSize: parseConversationStoreSize(flags.ConversationStoreSize),
+			ConversationStoreTTL:  parseConversationStoreTTL(flags.ConversationStoreTTL),
 		}
 	}
 
@@ -50,18 +59,22 @@ func Load() *Config {
 	if err != nil {
 		// Return config with nil AppConfig, caller should handle error
 		return &Config{
-			Port:       getEnvOrFlag("PORT", flags.Port, "8080"),
-			SSELogDir:  getEnvOrFlag("SSELOG_DIR", flags.SSELogDir, ""),
-			ConfigFile: flags.ConfigFile,
+			Port:                  getEnvOrFlag("PORT", flags.Port, "8080"),
+			SSELogDir:             getEnvOrFlag("SSELOG_DIR", flags.SSELogDir, ""),
+			ConfigFile:            flags.ConfigFile,
+			ConversationStoreSize: parseConversationStoreSize(flags.ConversationStoreSize),
+			ConversationStoreTTL:  parseConversationStoreTTL(flags.ConversationStoreTTL),
 		}
 	}
 
 	// Build config with precedence: flag > env var > default
 	return &Config{
-		Port:       getEnvOrFlag("PORT", flags.Port, "8080"),
-		SSELogDir:  getEnvOrFlag("SSELOG_DIR", flags.SSELogDir, ""),
-		ConfigFile: flags.ConfigFile,
-		AppConfig:  appConfig,
+		Port:                  getEnvOrFlag("PORT", flags.Port, "8080"),
+		SSELogDir:             getEnvOrFlag("SSELOG_DIR", flags.SSELogDir, ""),
+		ConfigFile:            flags.ConfigFile,
+		AppConfig:             appConfig,
+		ConversationStoreSize: parseConversationStoreSize(flags.ConversationStoreSize),
+		ConversationStoreTTL:  parseConversationStoreTTL(flags.ConversationStoreTTL),
 	}
 }
 
@@ -158,4 +171,26 @@ func getEnvOrFlag(envKey, flagValue, defaultValue string) string {
 	}
 	// Default is the fallback when neither flag nor env is set
 	return defaultValue
+}
+
+// parseConversationStoreSize parses the conversation store size.
+// If the value is 0 or negative, returns the default of 1000.
+func parseConversationStoreSize(size int) int {
+	if size <= 0 {
+		return 1000
+	}
+	return size
+}
+
+// parseConversationStoreTTL parses the conversation store TTL duration string.
+// If the string is empty or invalid, returns the default of 24 hours.
+func parseConversationStoreTTL(ttlStr string) time.Duration {
+	if ttlStr == "" {
+		return 24 * time.Hour
+	}
+	ttl, err := time.ParseDuration(ttlStr)
+	if err != nil {
+		return 24 * time.Hour
+	}
+	return ttl
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-proxy/conversation"
 	"ai-proxy/types"
 
 	"github.com/tmaxmax/go-sse"
@@ -34,7 +35,16 @@ func (c *ResponsesToChatConverter) Convert(body []byte) ([]byte, error) {
 }
 
 // convertRequest transforms a ResponsesRequest to ChatCompletionRequest.
+// When previous_response_id is provided, it fetches the conversation history
+// from the store and prepends it to the current input.
 func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *types.ChatCompletionRequest {
+	// Fetch conversation history if previous_response_id is provided
+	if req.PreviousResponseID != "" {
+		if hist := conversation.GetFromDefault(req.PreviousResponseID); hist != nil {
+			req.Input = prependHistoryToInput(hist, req.Input)
+		}
+	}
+
 	chatReq := &types.ChatCompletionRequest{
 		Model:     req.Model,
 		MaxTokens: req.MaxOutputTokens,
@@ -46,26 +56,6 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 		StreamOptions: &types.StreamOptions{
 			IncludeUsage: true,
 		},
-	}
-
-	// TODO: Handle previous_response_id for multi-turn conversations.
-	// The Responses API uses previous_response_id to fetch conversation history
-	// from server-side storage. However, the Chat Completions API requires
-	// an explicit messages array with the full conversation context.
-	//
-	// To properly support previous_response_id, we would need:
-	// 1. A conversation store keyed by response_id (e.g., Redis, database)
-	// 2. Fetch prior messages when previous_response_id is provided
-	// 3. Append current input to the fetched messages
-	//
-	// Current behavior: previous_response_id is ignored. Clients must provide
-	// the full conversation context in the input array when using this proxy.
-	// This is a known limitation when converting from Responses API to
-	// Chat Completions API format.
-	if req.PreviousResponseID != "" {
-		// Intentionally not returning an error - the request will proceed
-		// with only the current input, which may result in a single-turn
-		// conversation rather than the expected multi-turn context.
 	}
 
 	// Convert parallel_tool_calls if set

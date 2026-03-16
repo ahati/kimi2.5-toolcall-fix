@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"ai-proxy/conversation"
 	"ai-proxy/types"
 )
 
@@ -24,11 +25,20 @@ func (c *ResponsesToAnthropicConverter) Convert(body []byte) ([]byte, error) {
 
 // TransformResponsesToAnthropic converts an OpenAI ResponsesRequest to an Anthropic MessageRequest.
 // This handles the translation of all request fields including input, tools, and parameters.
+// When previous_response_id is provided, it fetches the conversation history from the store
+// and prepends it to the current input.
 func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 	// Parse the OpenAI Responses API format request
 	var openReq types.ResponsesRequest
 	if err := json.Unmarshal(body, &openReq); err != nil {
 		return nil, err
+	}
+
+	// Fetch conversation history if previous_response_id is provided
+	if openReq.PreviousResponseID != "" {
+		if hist := conversation.GetFromDefault(openReq.PreviousResponseID); hist != nil {
+			openReq.Input = prependHistoryToInput(hist, openReq.Input)
+		}
 	}
 
 	// Build the Anthropic format request using the client-provided model name
@@ -45,22 +55,6 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 		Temperature: openReq.Temperature,
 		TopP:        openReq.TopP,
 	}
-
-	// TODO: Handle previous_response_id for multi-turn conversations.
-	// The Responses API uses previous_response_id to fetch conversation history
-	// from server-side storage. However, the Anthropic Messages API requires
-	// an explicit messages array with the full conversation context.
-	//
-	// To properly support previous_response_id, we would need:
-	// 1. A conversation store keyed by response_id (e.g., Redis, database)
-	// 2. Fetch prior messages when previous_response_id is provided
-	// 3. Append current input to the fetched messages
-	//
-	// Current behavior: previous_response_id is ignored. Clients must provide
-	// the full conversation context in the input array when using this proxy.
-	// This is a known limitation when converting from Responses API to
-	// Anthropic Messages API format.
-	_ = openReq.PreviousResponseID // Acknowledge field exists but is not used
 
 	// Combine instructions with developer messages from input
 	systemParts := []string{}
@@ -312,5 +306,97 @@ func convertReasoningToThinking(reasoning *types.ReasoningConfig, maxTokens int)
 		Type:         "enabled",
 		BudgetTokens: budgetTokens,
 	}
+}
+
+// prependHistoryToInput prepends conversation history to the current input.
+// It converts the stored conversation (input/output items) into the input format
+// expected by the Responses API, then appends the current input.
+func prependHistoryToInput(hist *conversation.Conversation, currentInput interface{}) interface{} {
+	// Build a slice to hold all input items
+	var items []interface{}
+
+	// First, add all input items from history
+	for _, item := range hist.Input {
+		// Convert to map[string]interface{} for consistent handling
+		itemMap := map[string]interface{}{
+			"type": item.Type,
+		}
+		if item.Role != "" {
+			itemMap["role"] = item.Role
+		}
+		if item.Content != nil {
+			itemMap["content"] = item.Content
+		}
+		if item.CallID != "" {
+			itemMap["call_id"] = item.CallID
+		}
+		if item.Name != "" {
+			itemMap["name"] = item.Name
+		}
+		if item.Arguments != "" {
+			itemMap["arguments"] = item.Arguments
+		}
+		if item.Output != "" {
+			itemMap["output"] = item.Output
+		}
+		items = append(items, itemMap)
+	}
+
+	// Then, convert output items to input format for the assistant's responses
+	for _, output := range hist.Output {
+		switch output.Type {
+		case "message":
+			// Convert assistant message output to input format
+			if output.Role == "assistant" {
+				itemMap := map[string]interface{}{
+					"type": "message",
+					"role": "assistant",
+				}
+				if len(output.Content) > 0 {
+					// Convert OutputContent to content parts
+					contentParts := make([]interface{}, len(output.Content))
+					for i, c := range output.Content {
+						contentParts[i] = map[string]interface{}{
+							"type": c.Type,
+							"text": c.Text,
+						}
+					}
+					itemMap["content"] = contentParts
+				}
+				items = append(items, itemMap)
+			}
+		case "function_call":
+			// Include function_call output as function_call input
+			items = append(items, map[string]interface{}{
+				"type":      "function_call",
+				"call_id":   output.CallID,
+				"name":      output.Name,
+				"arguments": output.Arguments,
+			})
+		}
+	}
+
+	// Finally, append the current input
+	switch v := currentInput.(type) {
+	case string:
+		// String input becomes a user message
+		items = append(items, map[string]interface{}{
+			"type":    "message",
+			"role":    "user",
+			"content": v,
+		})
+	case []interface{}:
+		// Already an array of items
+		items = append(items, v...)
+	default:
+		// Try to handle other formats by wrapping as user message
+		items = append(items, map[string]interface{}{
+			"type":    "message",
+			"role":    "user",
+			"content": currentInput,
+		})
+	}
+
+	return items
 }
 

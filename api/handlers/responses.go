@@ -41,6 +41,8 @@ type ResponsesHandler struct {
 	// originalModel is the model name from the original request.
 	// Preserved for response transformation.
 	originalModel string
+	// inputItems stores the parsed input items for conversation storage.
+	inputItems []types.InputItem
 }
 
 // NewResponsesHandler creates a Gin handler for the /v1/responses endpoint.
@@ -82,6 +84,9 @@ func (h *ResponsesHandler) ValidateRequest(body []byte) error {
 	// Store the resolved route for use in other methods
 	h.route = route
 	h.originalModel = req.Model
+
+	// Parse and store input items for conversation storage
+	h.inputItems = parseInputItems(req.Input)
 
 	return nil
 }
@@ -198,9 +203,13 @@ func (h *ResponsesHandler) CreateTransformer(w io.Writer) transform.SSETransform
 
 	switch h.route.Provider.Type {
 	case "openai":
-		return convert.NewChatToResponsesTransformer(w)
+		t := convert.NewChatToResponsesTransformer(w)
+		t.SetInputItems(h.inputItems)
+		return t
 	case "anthropic":
-		return toolcall.NewResponsesTransformer(w)
+		t := toolcall.NewResponsesTransformer(w)
+		t.SetInputItems(h.inputItems)
+		return t
 	default:
 		return transform.NewPassthroughTransformer(w)
 	}
@@ -220,7 +229,8 @@ func (h *ResponsesHandler) WriteError(c *gin.Context, status int, msg string) {
 //
 // @note This handler uses the first OpenAI or Anthropic provider from the configuration.
 type ResponsesHandlerNoRouter struct {
-	cfg *config.Config
+	cfg        *config.Config
+	inputItems []types.InputItem
 }
 
 // NewResponsesHandlerNoRouter creates a Gin handler for the /v1/responses endpoint
@@ -243,6 +253,8 @@ func (h *ResponsesHandlerNoRouter) ValidateRequest(body []byte) error {
 	if req.Model == "" {
 		return fmt.Errorf("model is required")
 	}
+	// Parse and store input items for conversation storage
+	h.inputItems = parseInputItems(req.Input)
 	return nil
 }
 
@@ -308,12 +320,69 @@ func (h *ResponsesHandlerNoRouter) ForwardHeaders(c *gin.Context, req *http.Requ
 // CreateTransformer builds an SSE transformer based on the provider type.
 func (h *ResponsesHandlerNoRouter) CreateTransformer(w io.Writer) transform.SSETransformer {
 	if h.cfg.GetAnthropicUpstreamURL() != "" {
-		return toolcall.NewResponsesTransformer(w)
+		t := toolcall.NewResponsesTransformer(w)
+		t.SetInputItems(h.inputItems)
+		return t
 	}
-	return convert.NewChatToResponsesTransformer(w)
+	t := convert.NewChatToResponsesTransformer(w)
+	t.SetInputItems(h.inputItems)
+	return t
 }
 
 // WriteError sends an error response in OpenAI Responses API format.
 func (h *ResponsesHandlerNoRouter) WriteError(c *gin.Context, status int, msg string) {
 	sendOpenAIResponsesError(c, status, msg)
+}
+
+// parseInputItems converts the input interface from a ResponsesRequest to a slice of InputItems.
+// This is needed for conversation storage to preserve the original input.
+func parseInputItems(input interface{}) []types.InputItem {
+	if input == nil {
+		return nil
+	}
+
+	// Handle string input
+	if s, ok := input.(string); ok {
+		return []types.InputItem{
+			{Type: "message", Role: "user", Content: s},
+		}
+	}
+
+	// Handle array input
+	if arr, ok := input.([]interface{}); ok {
+		items := make([]types.InputItem, 0, len(arr))
+		for _, item := range arr {
+			if m, ok := item.(map[string]interface{}); ok {
+				inputItem := types.InputItem{}
+				if t, ok := m["type"].(string); ok {
+					inputItem.Type = t
+				}
+				if r, ok := m["role"].(string); ok {
+					inputItem.Role = r
+				}
+				if c, ok := m["content"]; ok {
+					inputItem.Content = c
+				}
+				if id, ok := m["id"].(string); ok {
+					inputItem.ID = id
+				}
+				if callID, ok := m["call_id"].(string); ok {
+					inputItem.CallID = callID
+				}
+				if name, ok := m["name"].(string); ok {
+					inputItem.Name = name
+				}
+				if args, ok := m["arguments"].(string); ok {
+					inputItem.Arguments = args
+				}
+				if output, ok := m["output"].(string); ok {
+					inputItem.Output = output
+				}
+				items = append(items, inputItem)
+			}
+		}
+		return items
+	}
+
+	return nil
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"ai-proxy/conversation"
+	"ai-proxy/logging"
 	"ai-proxy/types"
 
 	"github.com/tmaxmax/go-sse"
@@ -36,6 +38,9 @@ type ChatToResponsesTransformer struct {
 	messageStarted bool // track if message item has been emitted
 	completed      bool // track if response.completed has been emitted
 	toolCalls []map[string]interface{}
+
+	// Input items for conversation storage
+	inputItems []types.InputItem
 }
 
 type chatToRespToolCallState struct {
@@ -50,6 +55,12 @@ func NewChatToResponsesTransformer(w io.Writer) *ChatToResponsesTransformer {
 		created:        time.Now().Unix(),
 		sequenceNumber: 0,
 	}
+}
+
+// SetInputItems sets the input items for conversation storage.
+// This should be called before streaming starts to capture the original request input.
+func (t *ChatToResponsesTransformer) SetInputItems(items []types.InputItem) {
+	t.inputItems = items
 }
 
 func (t *ChatToResponsesTransformer) nextSeq() int {
@@ -399,7 +410,93 @@ func (t *ChatToResponsesTransformer) handleFinish() error {
 		return err
 	}
 	t.completed = true
+
+	// Store conversation for previous_response_id support
+	t.storeConversation(outputItems)
+
 	return nil
+}
+
+// storeConversation saves the conversation to the default store for previous_response_id support.
+// This enables multi-turn conversations without re-sending the entire history.
+func (t *ChatToResponsesTransformer) storeConversation(outputItems []map[string]interface{}) {
+	// Only store if we have a response ID and the store is initialized
+	if t.responseID == "" {
+		return
+	}
+
+	// Convert outputItems to types.OutputItem slice
+	outputs := make([]types.OutputItem, 0, len(outputItems))
+	for _, item := range outputItems {
+		outputItem := convertChatToOutputItem(item)
+		if outputItem != nil {
+			outputs = append(outputs, *outputItem)
+		}
+	}
+
+	// Store the conversation
+	conv := &conversation.Conversation{
+		ID:     t.responseID,
+		Input:  t.inputItems,
+		Output: outputs,
+	}
+	conversation.StoreInDefault(conv)
+	logging.DebugMsg("[%s] Stored conversation with %d input items and %d output items",
+		t.responseID, len(t.inputItems), len(outputs))
+}
+
+// convertChatToOutputItem converts a map[string]interface{} to types.OutputItem.
+func convertChatToOutputItem(item map[string]interface{}) *types.OutputItem {
+	if item == nil {
+		return nil
+	}
+
+	itemType, _ := item["type"].(string)
+	if itemType == "" {
+		return nil
+	}
+
+	output := &types.OutputItem{
+		Type: itemType,
+	}
+
+	if id, ok := item["id"].(string); ok {
+		output.ID = id
+	}
+	if status, ok := item["status"].(string); ok {
+		output.Status = status
+	}
+	if role, ok := item["role"].(string); ok {
+		output.Role = role
+	}
+	if callID, ok := item["call_id"].(string); ok {
+		output.CallID = callID
+	}
+	if name, ok := item["name"].(string); ok {
+		output.Name = name
+	}
+	if args, ok := item["arguments"].(string); ok {
+		output.Arguments = args
+	}
+
+	// Handle content array for message type
+	if itemType == "message" {
+		if content, ok := item["content"].([]map[string]interface{}); ok {
+			output.Content = make([]types.OutputContent, 0, len(content))
+			for _, part := range content {
+				contentItem := types.OutputContent{}
+				if partType, ok := part["type"].(string); ok {
+					contentItem.Type = partType
+				}
+				if text, ok := part["text"].(string); ok {
+					contentItem.Text = text
+				}
+				output.Content = append(output.Content, contentItem)
+			}
+		}
+	}
+
+	return output
 }
 
 func (t *ChatToResponsesTransformer) writeEvent(event map[string]interface{}) error {
