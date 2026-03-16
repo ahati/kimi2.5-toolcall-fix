@@ -33,6 +33,9 @@ type ResponsesRequest struct {
 	Reasoning *ReasoningConfig `json:"reasoning,omitempty"`
 	// ParallelToolCalls enables parallel tool calling.
 	ParallelToolCalls bool `json:"parallel_tool_calls,omitempty"`
+	// ResponseFormat specifies the format of the response.
+	// Use for JSON mode or structured outputs.
+	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 }
 
 // ReasoningConfig represents reasoning configuration for supported models.

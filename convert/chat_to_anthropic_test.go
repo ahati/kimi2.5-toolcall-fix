@@ -719,6 +719,426 @@ func TestChatToAnthropicTransformer_MultipleToolCalls(t *testing.T) {
 	}
 }
 
+// TestChatToAnthropicConverter_TemperatureBoundaries tests temperature boundary values (0.0 and 2.0).
+// Category A1: Temperature boundary conditions (MEDIUM)
+func TestChatToAnthropicConverter_TemperatureBoundaries(t *testing.T) {
+	tests := []struct {
+		name        string
+		temperature float64
+	}{
+		{
+			name:        "minimum temperature 0.0",
+			temperature: 0.0,
+		},
+		{
+			name:        "maximum temperature 2.0",
+			temperature: 2.0,
+		},
+		{
+			name:        "temperature slightly above 0",
+			temperature: 0.001,
+		},
+		{
+			name:        "temperature slightly below 2.0",
+			temperature: 1.999,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewChatToAnthropicConverter()
+			input := types.ChatCompletionRequest{
+				Model: "claude-3-opus",
+				Messages: []types.Message{
+					{Role: "user", Content: "Hello"},
+				},
+				Temperature: tt.temperature,
+				MaxTokens:   1024,
+			}
+
+			inputJSON, _ := json.Marshal(input)
+			result, err := converter.Convert(inputJSON)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var anthReq types.MessageRequest
+			if err := json.Unmarshal(result, &anthReq); err != nil {
+				t.Fatalf("failed to parse result: %v", err)
+			}
+
+			if anthReq.Temperature != tt.temperature {
+				t.Errorf("expected temperature %f, got %f", tt.temperature, anthReq.Temperature)
+			}
+		})
+	}
+}
+
+// TestChatToAnthropicConverter_StopSequencesSpecialChars tests stop sequences with special characters.
+// Category A1: Stop sequences with special chars (MEDIUM)
+func TestChatToAnthropicConverter_StopSequencesSpecialChars(t *testing.T) {
+	tests := []struct {
+		name        string
+		stop        interface{}
+		expected    []string
+	}{
+		{
+			name:     "stop with newline",
+			stop:     "\n",
+			expected: []string{"\n"},
+		},
+		{
+			name:     "stop with tab",
+			stop:     "\t",
+			expected: []string{"\t"},
+		},
+		{
+			name:     "stop with carriage return",
+			stop:     "\r",
+			expected: []string{"\r"},
+		},
+		{
+			name:     "stop with quotes",
+			stop:     `"`,
+			expected: []string{`"`},
+		},
+		{
+			name:     "stop with backslash",
+			stop:     `\`,
+			expected: []string{`\`},
+		},
+		{
+			name:     "stop with unicode",
+			stop:     "\u0048\u0065\u006c\u006c\u006f", // "Hello" in unicode escapes
+			expected: []string{"Hello"},
+		},
+		{
+			name:     "multiple stops with special chars",
+			stop:     []string{"\n", "\t", "STOP"},
+			expected: []string{"\n", "\t", "STOP"},
+		},
+		{
+			name:     "stop with emoji",
+			stop:     "👋",
+			expected: []string{"👋"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewChatToAnthropicConverter()
+			input := types.ChatCompletionRequest{
+				Model: "claude-3-opus",
+				Messages: []types.Message{
+					{Role: "user", Content: "Hello"},
+				},
+				Stop:      tt.stop,
+				MaxTokens: 1024,
+			}
+
+			inputJSON, _ := json.Marshal(input)
+			result, err := converter.Convert(inputJSON)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var anthReq types.MessageRequest
+			if err := json.Unmarshal(result, &anthReq); err != nil {
+				t.Fatalf("failed to parse result: %v", err)
+			}
+
+			if len(anthReq.StopSequences) != len(tt.expected) {
+				t.Errorf("expected %d stop sequences, got %d", len(tt.expected), len(anthReq.StopSequences))
+			}
+		})
+	}
+}
+
+// TestChatToAnthropicConverter_MultipleStopSequences tests multiple stop sequences (array handling).
+// Category A3: Multiple stop sequences (array handling) (MEDIUM)
+func TestChatToAnthropicConverter_MultipleStopSequences(t *testing.T) {
+	tests := []struct {
+		name     string
+		stop     interface{}
+		expected int // expected number of stop sequences
+	}{
+		{
+			name:     "empty stop sequences",
+			stop:     []string{},
+			expected: 0,
+		},
+		{
+			name:     "single stop in array",
+			stop:     []string{"STOP"},
+			expected: 1,
+		},
+		{
+			name:     "multiple stop sequences",
+			stop:     []string{"STOP", "END", "HALT"},
+			expected: 3,
+		},
+		{
+			name:     "stop sequences with empty strings filtered",
+			stop:     []string{"STOP", "", "END"},
+			expected: 2,
+		},
+		{
+			name:     "stop sequences as []interface{}",
+			stop:     []interface{}{"STOP", "END"},
+			expected: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewChatToAnthropicConverter()
+			input := types.ChatCompletionRequest{
+				Model: "claude-3-opus",
+				Messages: []types.Message{
+					{Role: "user", Content: "Hello"},
+				},
+				Stop:      tt.stop,
+				MaxTokens: 1024,
+			}
+
+			inputJSON, _ := json.Marshal(input)
+			result, err := converter.Convert(inputJSON)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var anthReq types.MessageRequest
+			if err := json.Unmarshal(result, &anthReq); err != nil {
+				t.Fatalf("failed to parse result: %v", err)
+			}
+
+			if len(anthReq.StopSequences) != tt.expected {
+				t.Errorf("expected %d stop sequences, got %d", tt.expected, len(anthReq.StopSequences))
+			}
+		})
+	}
+}
+
+// TestChatToAnthropicConverter_ToolChoiceRequired tests tool choice "required" (force tool use).
+// Category A3: Tool choice "required" (force tool use) (MEDIUM)
+func TestChatToAnthropicConverter_ToolChoiceRequired(t *testing.T) {
+	tests := []struct {
+		name             string
+		toolChoice       interface{}
+		expectedType     string
+		expectedName     string
+	}{
+		{
+			name:         "tool choice required",
+			toolChoice:   "required",
+			expectedType: "any",
+		},
+		{
+			name:         "tool choice auto",
+			toolChoice:   "auto",
+			expectedType: "auto",
+		},
+		{
+			name:         "tool choice none",
+			toolChoice:   "none",
+			expectedType: "",
+		},
+		{
+			name:         "tool choice function object",
+			toolChoice:   map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": "get_weather"}},
+			expectedType: "tool",
+			expectedName: "get_weather",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewChatToAnthropicConverter()
+			input := types.ChatCompletionRequest{
+				Model: "claude-3-opus",
+				Messages: []types.Message{
+					{Role: "user", Content: "Hello"},
+				},
+				ToolChoice: tt.toolChoice,
+				Tools: []types.Tool{
+					{
+						Type: "function",
+						Function: types.ToolFunction{
+							Name:        "get_weather",
+							Description: "Get weather info",
+							Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+						},
+					},
+				},
+				MaxTokens: 1024,
+			}
+
+			inputJSON, _ := json.Marshal(input)
+			result, err := converter.Convert(inputJSON)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var anthReq types.MessageRequest
+			if err := json.Unmarshal(result, &anthReq); err != nil {
+				t.Fatalf("failed to parse result: %v", err)
+			}
+
+			if tt.expectedType == "" {
+				// For "none", tool_choice should be nil
+				if anthReq.ToolChoice != nil {
+					t.Errorf("expected nil tool_choice for 'none', got %+v", anthReq.ToolChoice)
+				}
+			} else {
+				if anthReq.ToolChoice == nil {
+					t.Fatalf("expected tool_choice, got nil")
+				}
+				if anthReq.ToolChoice.Type != tt.expectedType {
+					t.Errorf("expected tool_choice type %s, got %s", tt.expectedType, anthReq.ToolChoice.Type)
+				}
+				if tt.expectedName != "" && anthReq.ToolChoice.Name != tt.expectedName {
+					t.Errorf("expected tool_choice name %s, got %s", tt.expectedName, anthReq.ToolChoice.Name)
+				}
+			}
+		})
+	}
+}
+
+// TestChatToAnthropicTransformer_ContentFilterFinishReason tests content_filter finish reason handling.
+// Category B3: content_filter finish reason (MEDIUM)
+func TestChatToAnthropicTransformer_ContentFilterFinishReason(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewChatToAnthropicTransformer(&buf)
+
+	// First chunk with content
+	chunk1 := types.Chunk{
+		ID:    "chatcmpl-123",
+		Model: "claude-3-opus",
+		Choices: []types.Choice{
+			{
+				Index: 0,
+				Delta: types.Delta{
+					Role:    "assistant",
+					Content: "Hello",
+				},
+			},
+		},
+	}
+	data1, _ := json.Marshal(chunk1)
+	transformer.Transform(&sse.Event{Data: string(data1)})
+
+	// Second chunk with content_filter finish reason
+	chunk2 := types.Chunk{
+		ID:    "chatcmpl-123",
+		Model: "claude-3-opus",
+		Choices: []types.Choice{
+			{
+				Index: 0,
+				Delta: types.Delta{
+					Content: " world",
+				},
+				FinishReason: ptr("content_filter"),
+			},
+		},
+	}
+	data2, _ := json.Marshal(chunk2)
+	transformer.Transform(&sse.Event{Data: string(data2)})
+
+	// Usage chunk
+	usageChunk := types.Chunk{
+		ID:      "chatcmpl-123",
+		Model:   "claude-3-opus",
+		Choices: []types.Choice{},
+		Usage: &types.Usage{
+			PromptTokens:     10,
+			CompletionTokens: 5,
+		},
+	}
+	usageData, _ := json.Marshal(usageChunk)
+	transformer.Transform(&sse.Event{Data: string(usageData)})
+
+	transformer.Close()
+
+	output := buf.String()
+
+	// content_filter should map to end_turn
+	if !contains(output, `"stop_reason":"end_turn"`) {
+		t.Errorf("expected stop_reason 'end_turn' for content_filter, got: %s", output)
+	}
+
+	// Should still have the content
+	if !contains(output, `"text":"Hello"`) {
+		t.Error("expected content 'Hello' to be present")
+	}
+}
+
+// TestChatToAnthropicTransformer_DeltaWithContentAndToolCalls tests delta with both content and tool_calls.
+// Category B3: Delta with both content and tool_calls (HIGH)
+func TestChatToAnthropicTransformer_DeltaWithContentAndToolCalls(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewChatToAnthropicTransformer(&buf)
+
+	// First chunk - text content
+	chunk1 := types.Chunk{
+		ID:    "chatcmpl-123",
+		Model: "claude-3-opus",
+		Choices: []types.Choice{
+			{
+				Index: 0,
+				Delta: types.Delta{
+					Role:    "assistant",
+					Content: "Let me check",
+				},
+			},
+		},
+	}
+	data1, _ := json.Marshal(chunk1)
+	transformer.Transform(&sse.Event{Data: string(data1)})
+
+	// Second chunk - tool call
+	chunk2 := types.Chunk{
+		ID:    "chatcmpl-123",
+		Model: "claude-3-opus",
+		Choices: []types.Choice{
+			{
+				Index: 0,
+				Delta: types.Delta{
+					ToolCalls: []types.ToolCall{
+						{
+							Index: 0,
+							ID:    "call_abc",
+							Type:  "function",
+							Function: types.Function{
+								Name:      "get_weather",
+								Arguments: `{"city":"Paris"}`,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	data2, _ := json.Marshal(chunk2)
+	transformer.Transform(&sse.Event{Data: string(data2)})
+
+	transformer.Close()
+
+	output := buf.String()
+
+	// Should have both text and tool_use content
+	if !contains(output, `"type":"text"`) {
+		t.Error("expected text content block")
+	}
+	if !contains(output, `"type":"tool_use"`) {
+		t.Error("expected tool_use content block")
+	}
+
+	// Verify stop_reason is tool_use
+	if !contains(output, `"stop_reason":"tool_use"`) {
+		t.Error("expected stop_reason tool_use")
+	}
+}
+
 // TestChatToAnthropicTransformer_FinishReasonMapping tests finish reason conversion.
 func TestChatToAnthropicTransformer_FinishReasonMapping(t *testing.T) {
 	tests := []struct {

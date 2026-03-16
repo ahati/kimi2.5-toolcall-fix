@@ -48,6 +48,26 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 		},
 	}
 
+	// TODO: Handle previous_response_id for multi-turn conversations.
+	// The Responses API uses previous_response_id to fetch conversation history
+	// from server-side storage. However, the Chat Completions API requires
+	// an explicit messages array with the full conversation context.
+	//
+	// To properly support previous_response_id, we would need:
+	// 1. A conversation store keyed by response_id (e.g., Redis, database)
+	// 2. Fetch prior messages when previous_response_id is provided
+	// 3. Append current input to the fetched messages
+	//
+	// Current behavior: previous_response_id is ignored. Clients must provide
+	// the full conversation context in the input array when using this proxy.
+	// This is a known limitation when converting from Responses API to
+	// Chat Completions API format.
+	if req.PreviousResponseID != "" {
+		// Intentionally not returning an error - the request will proceed
+		// with only the current input, which may result in a single-turn
+		// conversation rather than the expected multi-turn context.
+	}
+
 	// Convert parallel_tool_calls if set
 	if req.ParallelToolCalls {
 		chatReq.ParallelToolCalls = &req.ParallelToolCalls
@@ -63,6 +83,9 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 
 	// Convert tools
 	chatReq.Tools = c.convertTools(req.Tools)
+
+	// Convert response_format
+	chatReq.ResponseFormat = req.ResponseFormat
 
 	return chatReq
 }

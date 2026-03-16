@@ -2,8 +2,10 @@ package toolcall
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"ai-proxy/logging"
 	"ai-proxy/transform"
@@ -567,7 +569,12 @@ func (t *ResponsesTransformer) handleMessageStart(event types.Event) error {
 	// to avoid ID collision with the response itself
 	messageItemID := t.messageID
 	if messageItemID == "" {
-		messageItemID = "msg_" + t.responseID[5:] // fallback: derive from response ID
+		// Safe fallback: derive from response ID or generate unique ID
+		if len(t.responseID) > 5 {
+			messageItemID = "msg_" + t.responseID[5:] // derive from response ID
+		} else {
+			messageItemID = fmt.Sprintf("msg_%d_%d", time.Now().UnixMilli(), t.sequenceNumber)
+		}
 	}
 	t.currentItem = map[string]interface{}{
 		"type":    "message",

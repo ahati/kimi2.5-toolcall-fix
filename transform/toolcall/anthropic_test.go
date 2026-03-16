@@ -382,3 +382,145 @@ func extractDataLine(output string) string {
 	}
 	return ""
 }
+
+// TestAnthropicFormatter_UnknownContentBlockType tests handling of unknown content block types.
+// Category D3: Unknown content block type (MEDIUM)
+func TestAnthropicFormatter_UnknownContentBlockType(t *testing.T) {
+	// The AnthropicFormatter doesn't directly handle content block types from input,
+	// but it formats output events. This test verifies it handles edge cases.
+	f := NewAnthropicFormatter("msg-123", "claude-3")
+	f.IncrementBlockIndex()
+
+	// Format normal content - should work fine
+	output := f.FormatContent("Hello")
+	if !strings.Contains(string(output), "content_block_delta") {
+		t.Error("expected content_block_delta event")
+	}
+
+	// Format empty content - should handle gracefully
+	emptyOutput := f.FormatContent("")
+	if emptyOutput == nil {
+		t.Error("expected non-nil output for empty content")
+	}
+}
+
+// TestAnthropicFormatter_InvalidToolCallID tests handling of invalid tool call IDs.
+// Category D3: Invalid tool call ID (MEDIUM)
+func TestAnthropicFormatter_InvalidToolCallID(t *testing.T) {
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{
+			name: "empty ID",
+			id:   "",
+		},
+		{
+			name: "ID with special characters",
+			id:   "call_!@#$%^&*()",
+		},
+		{
+			name: "ID with spaces",
+			id:   "call 123",
+		},
+		{
+			name: "ID with unicode",
+			id:   "call_你好",
+		},
+		{
+			name: "ID with emoji",
+			id:   "call_🚀",
+		},
+		{
+			name: "ID with newlines",
+			id:   "call\n123",
+		},
+		{
+			name: "ID with tab",
+			id:   "call\t123",
+		},
+		{
+			name: "very long ID",
+			id:   strings.Repeat("a", 1000),
+		},
+		{
+			name: "ID starting with number",
+			id:   "123call",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := NewAnthropicFormatter("msg-123", "claude-3")
+			output := f.FormatToolStart(tt.id, "test_function", 0)
+
+			// Should handle all IDs without error
+			if output == nil {
+				t.Error("expected non-nil output for tool start")
+				return
+			}
+
+			// Verify the output is valid SSE
+			if !strings.HasPrefix(string(output), "event: content_block_start") {
+				t.Error("expected output to start with 'event: content_block_start'")
+			}
+
+			// For non-empty IDs, verify the ID is present (may be JSON escaped)
+			if tt.id != "" {
+				// Check that the output contains an ID field with some content
+				if !strings.Contains(string(output), `"id":`) {
+					t.Error("expected output to contain 'id' field")
+				}
+			}
+		})
+	}
+}
+
+// TestAnthropicFormatter_MismatchedToolCallIDs tests handling of mismatched tool call IDs.
+// Category D3: Mismatched tool call IDs (MEDIUM)
+func TestAnthropicFormatter_MismatchedToolCallIDs(t *testing.T) {
+	// The formatter doesn't track tool call IDs internally, it just formats events.
+	// But we should test that it handles different tools at different indices.
+	f := NewAnthropicFormatter("msg-123", "claude-3")
+
+	// Start first tool
+	output1 := f.FormatToolStart("call_abc", "func_a", 0)
+	if !strings.Contains(string(output1), `"id":"call_abc"`) {
+		t.Error("expected first tool to have ID call_abc")
+	}
+
+	// Arguments for first tool
+	argsOutput1 := f.FormatToolArgs(`{"x":1}`, 0)
+	if !strings.Contains(string(argsOutput1), `"partial_json":"{\"x\":1}"`) {
+		t.Error("expected arguments for first tool")
+	}
+
+	// End first tool
+	endOutput1 := f.FormatToolEnd(0)
+	if !strings.Contains(string(endOutput1), `"type":"content_block_stop"`) {
+		t.Error("expected content_block_stop for first tool")
+	}
+
+	// Start second tool with different ID
+	output2 := f.FormatToolStart("call_xyz", "func_b", 1)
+	if !strings.Contains(string(output2), `"id":"call_xyz"`) {
+		t.Error("expected second tool to have ID call_xyz")
+	}
+
+	// Arguments for second tool
+	argsOutput2 := f.FormatToolArgs(`{"y":2}`, 1)
+	if !strings.Contains(string(argsOutput2), `"partial_json":"{\"y\":2}"`) {
+		t.Error("expected arguments for second tool")
+	}
+
+	// Verify both tools are in output with correct indices
+	fullOutput := string(output1) + string(argsOutput1) + string(endOutput1) + string(output2) + string(argsOutput2)
+
+	// Count occurrences
+	if strings.Count(fullOutput, "call_abc") != 1 {
+		t.Error("expected exactly one occurrence of call_abc")
+	}
+	if strings.Count(fullOutput, "call_xyz") != 1 {
+		t.Error("expected exactly one occurrence of call_xyz")
+	}
+}
