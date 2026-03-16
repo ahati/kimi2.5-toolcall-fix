@@ -947,6 +947,84 @@ func TestResponsesTransformer_HandleMessageStop(t *testing.T) {
 	}
 }
 
+// TestResponsesTransformer_HandleMessageStop_OnlyToolCalls tests message stop with only tool calls (no text).
+// This verifies that assistant messages are properly emitted even when the model only returns tool calls.
+func TestResponsesTransformer_HandleMessageStop_OnlyToolCalls(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewResponsesTransformer(&buf)
+
+	// Setup: message_start
+	msgStart := types.Event{
+		Type: "message_start",
+		Message: &types.MessageInfo{
+			ID:    "msg_abc",
+			Model: "claude-3",
+		},
+	}
+	data, _ := json.Marshal(msgStart)
+	transformer.Transform(&sse.Event{Data: string(data)})
+	buf.Reset()
+
+	// Send tool_use content block (no text)
+	cbStart := types.Event{
+		Type:  "content_block_start",
+		Index: intPtr(0),
+		ContentBlock: json.RawMessage(`{"type":"tool_use","id":"tool_123","name":"exec_command"}`),
+	}
+	data, _ = json.Marshal(cbStart)
+	transformer.Transform(&sse.Event{Data: string(data)})
+
+	// Send tool input delta
+	cbDelta := types.Event{
+		Type:  "content_block_delta",
+		Index: intPtr(0),
+		Delta: json.RawMessage(`{"type":"input_json_delta","partial_json":"{\"cmd\":\"ls\"}"}`),
+	}
+	data, _ = json.Marshal(cbDelta)
+	transformer.Transform(&sse.Event{Data: string(data)})
+
+	// End content block
+	cbStop := types.Event{
+		Type:  "content_block_stop",
+		Index: intPtr(0),
+	}
+	data, _ = json.Marshal(cbStop)
+	transformer.Transform(&sse.Event{Data: string(data)})
+
+	buf.Reset()
+
+	// Send message_stop
+	msgStop := types.Event{Type: "message_stop"}
+	data, _ = json.Marshal(msgStop)
+	err := transformer.Transform(&sse.Event{Data: string(data)})
+
+	if err != nil {
+		t.Errorf("Transform returned error: %v", err)
+	}
+
+	result := buf.String()
+
+	// Should contain the assistant message output_item.done
+	if !strings.Contains(result, `"type":"response.output_item.done"`) {
+		t.Error("Result should contain response.output_item.done event for assistant message")
+	}
+
+	// Should contain the function_call output_item.done
+	if !strings.Contains(result, `"type":"function_call"`) {
+		t.Error("Result should contain function_call in output")
+	}
+
+	// Should contain response.completed
+	if !strings.Contains(result, `"type":"response.completed"`) {
+		t.Error("Result should contain response.completed event")
+	}
+
+	// Verify the assistant message is included in response.completed output
+	if !strings.Contains(result, `"role":"assistant"`) {
+		t.Error("Result should contain assistant role in output")
+	}
+}
+
 // TestResponsesTransformer_HandlePing tests ping handling.
 func TestResponsesTransformer_HandlePing(t *testing.T) {
 	var buf bytes.Buffer

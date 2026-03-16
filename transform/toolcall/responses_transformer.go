@@ -812,9 +812,10 @@ func (t *ResponsesTransformer) handleMessageDelta(event types.Event) error {
 
 func (t *ResponsesTransformer) handleMessageStop(event types.Event) error {
 	// Emit message item completion if there's a message item with content.
-	// Even if messageItemEmitted is false but we have text content, we should emit.
+	// This includes text content OR tool calls (model can respond with just tool calls).
 	hasTextContent := t.textContent.Len() > 0
-	if t.itemAdded && t.currentItem != nil && hasTextContent {
+	hasToolCalls := len(t.outputItems) > 0
+	if t.itemAdded && t.currentItem != nil && (hasTextContent || hasToolCalls) {
 		// If message item wasn't emitted but we have text, emit it now
 		if !t.messageItemEmitted {
 			if err := t.emitMessageItemAdded(); err != nil {
