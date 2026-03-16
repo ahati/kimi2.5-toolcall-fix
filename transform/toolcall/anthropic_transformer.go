@@ -14,14 +14,14 @@ import (
 )
 
 type AnthropicTransformer struct {
-	sseWriter   *transform.SSEWriter
-	formatter   *AnthropicFormatter
-	state       anthropicState
-	buf         string
-	toolIndex   int
-	blockIndex  int
-	currentID   string
-	messageID   string
+	sseWriter  *transform.SSEWriter
+	formatter  *AnthropicFormatter
+	state      anthropicState
+	buf        string
+	toolIndex  int
+	blockIndex int
+	currentID  string
+	messageID  string
 
 	inThinking       bool
 	inText           bool

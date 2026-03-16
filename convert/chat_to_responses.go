@@ -31,13 +31,15 @@ type ChatToResponsesTransformer struct {
 	finishReason string
 	usage        *types.Usage
 
-	inReasoning    bool
-	reasoningIndex int
-	sequenceNumber int
+	inReasoning          bool
+	sequenceNumber       int
+	reasoningID          string
+	reasoningOutputIndex int
+	summaryIndex         int
 
 	messageStarted bool // track if message item has been emitted
 	completed      bool // track if response.completed has been emitted
-	toolCalls []map[string]interface{}
+	toolCalls      []map[string]interface{}
 
 	// Input items for conversation storage
 	inputItems []types.InputItem
@@ -88,6 +90,15 @@ func (t *ChatToResponsesTransformer) Transform(event *sse.Event) error {
 func (t *ChatToResponsesTransformer) handleChunk(chunk *types.Chunk) error {
 	if t.responseID == "" && chunk.ID != "" {
 		t.responseID = "resp_" + chunk.ID
+		t.model = chunk.Model
+		if err := t.emitResponseCreated(); err != nil {
+			return err
+		}
+	}
+
+	// Ensure response.created is emitted before any content
+	if t.responseID == "" {
+		t.responseID = fmt.Sprintf("resp_%d", t.created)
 		t.model = chunk.Model
 		if err := t.emitResponseCreated(); err != nil {
 			return err
@@ -162,6 +173,13 @@ func (t *ChatToResponsesTransformer) emitResponseCreated() error {
 }
 
 func (t *ChatToResponsesTransformer) emitTextDelta(text string) error {
+	// Finalize reasoning before emitting text (transition from reasoning to text)
+	if t.inReasoning {
+		if err := t.finalizeReasoning(); err != nil {
+			return err
+		}
+	}
+
 	if !t.messageStarted {
 		if err := t.emitMessageItemAdded(); err != nil {
 			return err
@@ -182,24 +200,103 @@ func (t *ChatToResponsesTransformer) emitTextDelta(text string) error {
 	return t.writeEvent(event)
 }
 
+// finalizeReasoning emits the done events for reasoning when transitioning to text or finishing.
+func (t *ChatToResponsesTransformer) finalizeReasoning() error {
+	if !t.inReasoning {
+		return nil
+	}
+
+	reasoningText := t.reasoningBuilder.String()
+
+	// Emit response.reasoning_summary_text.done
+	textDoneEvent := map[string]interface{}{
+		"type":            "response.reasoning_summary_text.done",
+		"sequence_number": t.nextSeq(),
+		"item_id":         t.reasoningID,
+		"text":            reasoningText,
+		"output_index":    t.reasoningOutputIndex,
+		"summary_index":   t.summaryIndex,
+	}
+	if err := t.writeEvent(textDoneEvent); err != nil {
+		return err
+	}
+
+	// Emit response.reasoning_summary_part.done
+	partDoneEvent := map[string]interface{}{
+		"type":            "response.reasoning_summary_part.done",
+		"sequence_number": t.nextSeq(),
+		"item_id":         t.reasoningID,
+		"output_index":    t.reasoningOutputIndex,
+		"summary_index":   t.summaryIndex,
+		"part": map[string]interface{}{
+			"type": "summary_text",
+			"text": reasoningText,
+		},
+	}
+	if err := t.writeEvent(partDoneEvent); err != nil {
+		return err
+	}
+
+	// Emit response.output_item.done with full summary
+	itemDoneEvent := map[string]interface{}{
+		"type":            "response.output_item.done",
+		"sequence_number": t.nextSeq(),
+		"item_id":         t.reasoningID,
+		"output_index":    t.reasoningOutputIndex,
+		"item": map[string]interface{}{
+			"type": "reasoning",
+			"id":   t.reasoningID,
+			"summary": []map[string]interface{}{
+				{"type": "summary_text", "text": reasoningText},
+			},
+		},
+	}
+	if err := t.writeEvent(itemDoneEvent); err != nil {
+		return err
+	}
+
+	// Mark reasoning as finalized
+	t.inReasoning = false
+
+	return nil
+}
+
 func (t *ChatToResponsesTransformer) emitReasoningDelta(text string) error {
 	if !t.inReasoning {
 		t.inReasoning = true
-		t.reasoningIndex = t.contentIndex
+		t.reasoningOutputIndex = t.contentIndex
 		t.contentIndex++
+		t.summaryIndex = 0
+		t.reasoningID = fmt.Sprintf("rs_%s", t.responseID[5:])
 
-		reasoningID := fmt.Sprintf("rs_%s", t.responseID[5:])
+		// Emit response.output_item.added for reasoning
 		event := map[string]interface{}{
 			"type":            "response.output_item.added",
 			"sequence_number": t.nextSeq(),
-			"output_index":    t.reasoningIndex,
+			"output_index":    t.reasoningOutputIndex,
 			"item": map[string]interface{}{
 				"type":    "reasoning",
-				"id":      reasoningID,
+				"id":      t.reasoningID,
 				"summary": []interface{}{},
 			},
 		}
 		if err := t.writeEvent(event); err != nil {
+			return err
+		}
+
+		// Emit response.reasoning_summary_part.added
+		partAddedEvent := map[string]interface{}{
+			"type":            "response.reasoning_summary_part.added",
+			"sequence_number": t.nextSeq(),
+			"item_id":         t.reasoningID,
+			"output_index":    t.reasoningOutputIndex,
+			"summary_index":   t.summaryIndex,
+			"part": map[string]interface{}{
+				"type": "summary_text",
+				"text": "",
+			},
+		}
+		if err := t.writeEvent(partAddedEvent); err != nil {
 			return err
 		}
 	}
@@ -209,7 +306,10 @@ func (t *ChatToResponsesTransformer) emitReasoningDelta(text string) error {
 	event := map[string]interface{}{
 		"type":            "response.reasoning_summary_text.delta",
 		"sequence_number": t.nextSeq(),
+		"item_id":         t.reasoningID,
 		"delta":           text,
+		"output_index":    t.reasoningOutputIndex,
+		"summary_index":   t.summaryIndex,
 	}
 	return t.writeEvent(event)
 }
@@ -217,7 +317,8 @@ func (t *ChatToResponsesTransformer) emitReasoningDelta(text string) error {
 func (t *ChatToResponsesTransformer) emitMessageItemAdded() error {
 	messageID := fmt.Sprintf("msg_%s", t.responseID[5:])
 	outputIndex := 0
-	if t.inReasoning {
+	// If reasoning was emitted, message comes after it
+	if t.reasoningID != "" {
 		outputIndex = 1
 	}
 	t.contentIndex = outputIndex
@@ -251,6 +352,13 @@ func (t *ChatToResponsesTransformer) emitContentPartAdded() error {
 }
 
 func (t *ChatToResponsesTransformer) handleToolCalls(toolCalls []types.ToolCall) error {
+	// Finalize reasoning before handling tool calls (transition from reasoning to tools)
+	if t.inReasoning {
+		if err := t.finalizeReasoning(); err != nil {
+			return err
+		}
+	}
+
 	for _, tc := range toolCalls {
 		// In OpenAI streaming format, subsequent tool call chunks have empty ID.
 		// Only create a new tool call when we have a non-empty ID.
@@ -263,9 +371,6 @@ func (t *ChatToResponsesTransformer) handleToolCalls(toolCalls []types.ToolCall)
 			}
 
 			outputIndex := t.contentIndex
-			if t.inReasoning {
-				outputIndex++
-			}
 			t.toolCallIndex = outputIndex
 			t.contentIndex = outputIndex + 1
 
@@ -341,6 +446,13 @@ func (t *ChatToResponsesTransformer) handleFinish() error {
 		return nil // Already emitted response.completed
 	}
 
+	// Finalize reasoning if still in progress
+	if t.inReasoning {
+		if err := t.finalizeReasoning(); err != nil {
+			return err
+		}
+	}
+
 	if t.currentToolCall != nil {
 		if err := t.emitToolCallDone(); err != nil {
 			return err
@@ -349,29 +461,69 @@ func (t *ChatToResponsesTransformer) handleFinish() error {
 
 	var outputItems []map[string]interface{}
 
-	if t.inReasoning {
-		reasoningID := fmt.Sprintf("rs_%s", t.responseID[5:])
+	if t.reasoningID != "" && t.reasoningBuilder.Len() > 0 {
 		outputItems = append(outputItems, map[string]interface{}{
 			"type": "reasoning",
-			"id":   reasoningID,
+			"id":   t.reasoningID,
 			"summary": []map[string]interface{}{
 				{"type": "summary_text", "text": t.reasoningBuilder.String()},
 			},
 		})
 	}
 
+	// Message comes before tool calls (matches streaming output_index)
+	if t.contentBuilder.Len() > 0 || t.messageStarted {
+		messageID := fmt.Sprintf("msg_%s", t.responseID[5:])
+		finalText := t.contentBuilder.String()
+
+		// Emit done events for message
+		if t.messageStarted {
+			if err := t.writeEvent(map[string]interface{}{
+				"type":            "response.output_text.done",
+				"sequence_number": t.nextSeq(),
+				"text":            finalText,
+			}); err != nil {
+				return err
+			}
+
+			if err := t.writeEvent(map[string]interface{}{
+				"type":            "response.content_part.done",
+				"sequence_number": t.nextSeq(),
+				"output_index":    t.contentIndex,
+				"part":            map[string]interface{}{"type": "output_text", "text": finalText},
+			}); err != nil {
+				return err
+			}
+
+			if err := t.writeEvent(map[string]interface{}{
+				"type":            "response.output_item.done",
+				"sequence_number": t.nextSeq(),
+				"output_index":    t.contentIndex,
+				"item": map[string]interface{}{
+					"type":    "message",
+					"id":      messageID,
+					"status":  "completed",
+					"role":    "assistant",
+					"content": []map[string]interface{}{{"type": "output_text", "text": finalText}},
+				},
+			}); err != nil {
+				return err
+			}
+		}
+
+		outputItems = append(outputItems, map[string]interface{}{
+			"type":    "message",
+			"id":      messageID,
+			"status":  "completed",
+			"role":    "assistant",
+			"content": []map[string]interface{}{{"type": "output_text", "text": finalText}},
+		})
+	}
+
+	// Tool calls come after message (matches streaming output_index)
 	for _, tc := range t.toolCalls {
 		outputItems = append(outputItems, tc)
 	}
-
-	messageID := fmt.Sprintf("msg_%s", t.responseID[5:])
-	outputItems = append(outputItems, map[string]interface{}{
-		"type":    "message",
-		"id":      messageID,
-		"status":  "completed",
-		"role":    "assistant",
-		"content": []map[string]interface{}{{"type": "output_text", "text": t.contentBuilder.String()}},
-	})
 
 	response := map[string]interface{}{
 		"id":     t.responseID,
@@ -554,5 +706,13 @@ func (t *ChatToResponsesTransformer) Close() error {
 			return err
 		}
 	}
+
+	// If we have pending content or finish reason, emit response.completed
+	if t.finishReason != "" || t.messageStarted || t.contentBuilder.Len() > 0 {
+		if err := t.handleFinish(); err != nil {
+			return err
+		}
+	}
+
 	return t.Flush()
 }

@@ -195,7 +195,7 @@ func TestErrorHandling_EmptyStringContent(t *testing.T) {
 			},
 		},
 		{
-			name: "empty content in message",
+			name:  "empty content in message",
 			input: `{"model": "gpt-4", "input": [{"type": "message", "role": "user", "content": ""}]}`,
 			validate: func(t *testing.T, output []byte) {
 				var req types.ChatCompletionRequest
@@ -207,7 +207,7 @@ func TestErrorHandling_EmptyStringContent(t *testing.T) {
 			},
 		},
 		{
-			name: "empty content parts",
+			name:  "empty content parts",
 			input: `{"model": "gpt-4", "input": [{"type": "message", "role": "user", "content": []}]}`,
 			validate: func(t *testing.T, output []byte) {
 				var req types.ChatCompletionRequest
@@ -219,7 +219,7 @@ func TestErrorHandling_EmptyStringContent(t *testing.T) {
 			},
 		},
 		{
-			name: "empty text in content part",
+			name:  "empty text in content part",
 			input: `{"model": "gpt-4", "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": ""}]}]}`,
 			validate: func(t *testing.T, output []byte) {
 				var req types.ChatCompletionRequest
@@ -269,7 +269,7 @@ func TestErrorHandling_NullContent(t *testing.T) {
 			},
 		},
 		{
-			name: "null content in message",
+			name:  "null content in message",
 			input: `{"model": "gpt-4", "input": [{"type": "message", "role": "user", "content": null}]}`,
 			validate: func(t *testing.T, output []byte) {
 				var req types.ChatCompletionRequest
@@ -283,7 +283,7 @@ func TestErrorHandling_NullContent(t *testing.T) {
 			},
 		},
 		{
-			name: "null text in content part",
+			name:  "null text in content part",
 			input: `{"model": "gpt-4", "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": null}]}]}`,
 			validate: func(t *testing.T, output []byte) {
 				var req types.ChatCompletionRequest
@@ -295,7 +295,7 @@ func TestErrorHandling_NullContent(t *testing.T) {
 			},
 		},
 		{
-			name: "null in array items",
+			name:  "null in array items",
 			input: `{"model": "gpt-4", "input": [null, {"type": "message", "role": "user", "content": "hello"}, null]}`,
 			validate: func(t *testing.T, output []byte) {
 				var req types.ChatCompletionRequest
@@ -330,23 +330,23 @@ func TestErrorHandling_InvalidToolJSONSchema(t *testing.T) {
 		input string
 	}{
 		{
-			name: "invalid JSON in tool parameters",
+			name:  "invalid JSON in tool parameters",
 			input: `{"model": "gpt-4", "input": "hello", "tools": [{"type": "function", "name": "test", "parameters": {invalid}}]}`,
 		},
 		{
-			name: "circular reference in parameters",
+			name:  "circular reference in parameters",
 			input: `{"model": "gpt-4", "input": "hello", "tools": [{"type": "function", "name": "test", "parameters": {"$ref": "#"}}]}`,
 		},
 		{
-			name: "non-object parameters",
+			name:  "non-object parameters",
 			input: `{"model": "gpt-4", "input": "hello", "tools": [{"type": "function", "name": "test", "parameters": "string"}]}`,
 		},
 		{
-			name: "null parameters",
+			name:  "null parameters",
 			input: `{"model": "gpt-4", "input": "hello", "tools": [{"type": "function", "name": "test", "parameters": null}]}`,
 		},
 		{
-			name: "tool without type",
+			name:  "tool without type",
 			input: `{"model": "gpt-4", "input": "hello", "tools": [{"name": "test", "parameters": {}}]}`,
 		},
 	}
@@ -675,10 +675,10 @@ func TestErrorHandling_ExtremeValues(t *testing.T) {
 // This documents current behavior; validation could be added if needed.
 func TestErrorHandling_InvalidMessageRoles(t *testing.T) {
 	tests := []struct {
-		name          string
-		input         string
-		expectedRole  string // expected role after conversion (if different)
-		currentRole   string // current actual behavior
+		name         string
+		input        string
+		expectedRole string // expected role after conversion (if different)
+		currentRole  string // current actual behavior
 	}{
 		{
 			name:  "unknown role",
@@ -976,8 +976,8 @@ func TestErrorHandling_UpstreamConnectionReset(t *testing.T) {
 				{
 					Type: "response.created",
 					Response: &types.ResponsesResponse{
-						ID:    "resp_123",
-						Model: "gpt-4",
+						ID:     "resp_123",
+						Model:  "gpt-4",
 						Status: "in_progress",
 					},
 				},

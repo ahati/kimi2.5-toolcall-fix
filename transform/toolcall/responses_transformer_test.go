@@ -967,8 +967,8 @@ func TestResponsesTransformer_HandleMessageStop_OnlyToolCalls(t *testing.T) {
 
 	// Send tool_use content block (no text)
 	cbStart := types.Event{
-		Type:  "content_block_start",
-		Index: intPtr(0),
+		Type:         "content_block_start",
+		Index:        intPtr(0),
 		ContentBlock: json.RawMessage(`{"type":"tool_use","id":"tool_123","name":"exec_command"}`),
 	}
 	data, _ = json.Marshal(cbStart)

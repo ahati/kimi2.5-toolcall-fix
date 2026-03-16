@@ -226,8 +226,8 @@ func (c *MaxTokensConverter) ResolveMaxTokens(maxTokens int) int {
 
 // Global converters for convenience
 var (
-	DefaultToolChoiceConverter = NewToolChoiceConverter()
-	DefaultStopConverter       = NewStopConverter()
+	DefaultToolChoiceConverter     = NewToolChoiceConverter()
+	DefaultStopConverter           = NewStopConverter()
 	DefaultResponseFormatConverter = NewResponseFormatConverter()
 )
 

@@ -36,7 +36,7 @@
       "prefer_websockets": false
     },
     {
-      "slug": "qwen3-max",
+      "slug": "qwen3-max-2026-01-23",
       "display_name": "Qwen 3 Max",
       "description": "Alibaba Qwen 3 Max via Anthropic endpoint",
       "default_reasoning_level": "medium",

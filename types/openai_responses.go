@@ -40,6 +40,9 @@ type ResponsesRequest struct {
 
 // ReasoningConfig represents reasoning configuration for supported models.
 type ReasoningConfig struct {
+	// Effort controls the model's reasoning effort level.
+	// Values: "low", "medium", "high"
+	Effort string `json:"effort,omitempty"`
 	// Summary determines whether to return reasoning summary.
 	// Values: "concise", "detailed", or omitted for no summary.
 	Summary string `json:"summary,omitempty"`

@@ -80,6 +80,10 @@ type ChatCompletionRequest struct {
 	// Service tier for the request.
 	ServiceTier string `json:"service_tier,omitempty"`
 
+	// ReasoningEffort controls the model's reasoning effort.
+	// Values: "low", "medium", "high". Only for reasoning models (o1, o3, etc.)
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
 	// Deprecated: System field is non-standard. Use a system message in Messages array instead.
 	// Kept for backwards compatibility with existing clients.
 	System string `json:"system,omitempty"`
@@ -134,27 +138,16 @@ type Message struct {
 // ToolCall represents a function call made by the model.
 // When the model decides to call a tool, it generates a ToolCall object.
 type ToolCall struct {
-	// ID is a unique identifier for this tool call.
-	// Used to correlate tool responses with their calls.
-	ID string `json:"id"`
-	// Type is the type of tool call.
-	// Currently only "function" is supported.
-	Type string `json:"type"`
-	// Index is the position of this tool call in the streaming response.
-	// Used for incremental updates during streaming.
-	Index int `json:"index"`
-	// Function contains the function name and arguments to call.
+	ID       string   `json:"id,omitempty"`
+	Type     string   `json:"type,omitempty"`
+	Index    int      `json:"index"`
 	Function Function `json:"function"`
 }
 
 // Function represents the function details within a tool call.
 // Contains the function name and JSON-encoded arguments.
 type Function struct {
-	// Name is the name of the function to call.
-	// Must match a function name in the tools list.
-	Name string `json:"name"`
-	// Arguments is a JSON-encoded string of function arguments.
-	// Must be parsed by the caller to get actual argument values.
+	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments"`
 }
 

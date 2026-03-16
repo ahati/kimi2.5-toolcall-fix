@@ -33,7 +33,7 @@
     "kimi-k2.5": {
       "provider": "alibaba_anthropic",
       "model": "kimi-k2.5",
-      "tool_call_transform": true
+      "tool_call_transform": false
     },
     "gpt-5.4": {
       "provider": "alibaba_anthropic",

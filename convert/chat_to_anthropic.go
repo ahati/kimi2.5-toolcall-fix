@@ -112,19 +112,19 @@ type ChatToAnthropicTransformer struct {
 	model           string
 	started         bool
 	blockIndex      int
-	contentOpen     bool  // Track if a content block (thinking/text) is open
+	contentOpen     bool   // Track if a content block (thinking/text) is open
 	contentType     string // Track the type of current content block: "thinking" or "text"
-	deltaSent       bool // Track if message_delta was already sent
-	messageStopSent bool // Track if message_stop was already sent
+	deltaSent       bool   // Track if message_delta was already sent
+	messageStopSent bool   // Track if message_stop was already sent
 
 	// Tool call tracking
 	toolCalls     map[int]*chatToolCallState // index -> state
 	currentToolID int
 
 	// Usage tracking - captured from final upstream chunk
-	promptTokens     int
-	completionTokens int
-	cacheReadTokens  int
+	promptTokens      int
+	completionTokens  int
+	cacheReadTokens   int
 	cacheCreateTokens int
 
 	// Finish reason tracking - delay message_delta until we have usage
@@ -258,10 +258,8 @@ func (t *ChatToAnthropicTransformer) handleChunk(chunk types.Chunk) error {
 // handleToolCalls processes tool call deltas from OpenAI format.
 func (t *ChatToAnthropicTransformer) handleToolCalls(toolCalls []types.ToolCall) error {
 	for _, tc := range toolCalls {
-		// Check if this is a new tool call
 		state, exists := t.toolCalls[tc.Index]
 		if !exists {
-			// Close any open content block (thinking/text) before starting tool_use
 			if t.contentOpen {
 				if err := t.writeEvent("content_block_stop", map[string]interface{}{
 					"index": t.blockIndex - 1,
@@ -271,8 +269,8 @@ func (t *ChatToAnthropicTransformer) handleToolCalls(toolCalls []types.ToolCall)
 				t.contentOpen = false
 			}
 
-			// New tool call - calculate block index and emit content_block_start
-			blockIdx := t.blockIndex + len(t.toolCalls)
+			blockIdx := t.blockIndex
+			t.blockIndex++
 			state = &chatToolCallState{
 				id:       tc.ID,
 				name:     tc.Function.Name,
@@ -280,13 +278,11 @@ func (t *ChatToAnthropicTransformer) handleToolCalls(toolCalls []types.ToolCall)
 			}
 			t.toolCalls[tc.Index] = state
 
-			// Emit content_block_start for tool_use
 			if err := t.emitToolUseStart(blockIdx, tc.ID, tc.Function.Name); err != nil {
 				return err
 			}
 		}
 
-		// Emit arguments delta
 		if tc.Function.Arguments != "" {
 			state.args.WriteString(tc.Function.Arguments)
 			if err := t.emitInputJSONDelta(state.blockIdx, tc.Function.Arguments); err != nil {
@@ -549,10 +545,12 @@ func (t *ChatToAnthropicTransformer) Close() error {
 					"stop_reason":   stopReason,
 					"stop_sequence": nil,
 				},
-				"usage": map[string]interface{}{
+			}
+			if t.promptTokens > 0 || t.completionTokens > 0 {
+				eventData["usage"] = map[string]interface{}{
 					"input_tokens":  t.promptTokens,
 					"output_tokens": t.completionTokens,
-				},
+				}
 			}
 			if err := t.writeEvent("message_delta", eventData); err != nil {
 				return err

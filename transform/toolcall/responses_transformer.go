@@ -17,23 +17,23 @@ import (
 
 // Usage tracks token usage from Anthropic API.
 type Usage struct {
-	InputTokens             int
-	OutputTokens            int
-	CacheReadInputTokens    int
+	InputTokens              int
+	OutputTokens             int
+	CacheReadInputTokens     int
 	CacheCreationInputTokens int
 }
 
 // ResponsesTransformer converts Anthropic SSE events to OpenAI Responses API format.
 type ResponsesTransformer struct {
-	sseWriter   *transform.SSEWriter
-	formatter   *ResponsesFormatter
-	parser      *Parser
-	messageID   string
-	model       string
-	blockIndex  int
-	toolIndex   int
-	currentID   string
-	responseID  string
+	sseWriter  *transform.SSEWriter
+	formatter  *ResponsesFormatter
+	parser     *Parser
+	messageID  string
+	model      string
+	blockIndex int
+	toolIndex  int
+	currentID  string
+	responseID string
 
 	// State flags
 	inToolCall  bool
@@ -354,10 +354,11 @@ func (f *ResponsesFormatter) FormatResponseCompleted(outputItems []map[string]in
 
 	// Add usage if available
 	if usage != nil {
+		totalInputTokens := usage.InputTokens + usage.CacheReadInputTokens
 		usageData := map[string]interface{}{
-			"input_tokens":  usage.InputTokens,
+			"input_tokens":  totalInputTokens,
 			"output_tokens": usage.OutputTokens,
-			"total_tokens":  usage.InputTokens + usage.OutputTokens,
+			"total_tokens":  totalInputTokens + usage.OutputTokens,
 		}
 		// Include cache tokens if available
 		if usage.CacheReadInputTokens > 0 {

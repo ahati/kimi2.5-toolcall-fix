@@ -77,6 +77,11 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 	// Convert response_format
 	chatReq.ResponseFormat = req.ResponseFormat
 
+	// Forward reasoning effort to Chat Completions
+	if req.Reasoning != nil && req.Reasoning.Effort != "" {
+		chatReq.ReasoningEffort = req.Reasoning.Effort
+	}
+
 	return chatReq
 }
 
@@ -319,36 +324,6 @@ func (c *ResponsesToChatConverter) convertInputItemToMessage(itemMap map[string]
 	return msg
 }
 
-// convertFunctionCallToMessage converts a function_call input item to an assistant message with tool_calls.
-func (c *ResponsesToChatConverter) convertFunctionCallToMessage(itemMap map[string]interface{}) *types.Message {
-	name, _ := itemMap["name"].(string)
-	arguments, _ := itemMap["arguments"].(string)
-	callID, _ := itemMap["call_id"].(string)
-	if callID == "" {
-		callID, _ = itemMap["id"].(string)
-	}
-
-	if name == "" {
-		return nil
-	}
-
-	msg := &types.Message{
-		Role: "assistant",
-		ToolCalls: []types.ToolCall{
-			{
-				ID:   callID,
-				Type: "function",
-				Function: types.Function{
-					Name:      name,
-					Arguments: arguments,
-				},
-			},
-		},
-	}
-
-	return msg
-}
-
 // convertFunctionCallOutputToMessage converts a function_call_output input item to a tool message.
 func (c *ResponsesToChatConverter) convertFunctionCallOutputToMessage(itemMap map[string]interface{}) *types.Message {
 	callID, _ := itemMap["call_id"].(string)
@@ -508,34 +483,34 @@ func (c *ResponsesToChatConverter) convertTool(tool *types.ResponsesTool) *types
 type ResponsesToChatTransformer struct {
 	w io.Writer
 
-	// Response state
 	responseID string
 	model      string
 	created    int64
 
-	// Content tracking
 	contentIndex    int
 	toolCallIndex   int
 	currentToolCall *responsesToolCallState
 
-	// Content builders
 	contentBuilder strings.Builder
 
-	// Finish reason
 	finishReason string
+
+	toolNames map[string]string
 }
 
 type responsesToolCallState struct {
 	id        string
 	name      string
 	arguments strings.Builder
+	firstSent bool
 }
 
 // NewResponsesToChatTransformer creates a new transformer for Responses to Chat format.
 func NewResponsesToChatTransformer(w io.Writer) *ResponsesToChatTransformer {
 	return &ResponsesToChatTransformer{
-		w:       w,
-		created: time.Now().Unix(),
+		w:         w,
+		created:   time.Now().Unix(),
+		toolNames: make(map[string]string),
 	}
 }
 
@@ -602,12 +577,12 @@ func (t *ResponsesToChatTransformer) handleOutputItemAdded(event *types.Response
 		return nil
 	}
 
-	// Handle function_call output items
 	if event.OutputItem.Type == "function_call" {
 		t.currentToolCall = &responsesToolCallState{
 			id:   event.OutputItem.ID,
 			name: event.OutputItem.Name,
 		}
+		t.toolNames[event.OutputItem.ID] = event.OutputItem.Name
 		t.toolCallIndex++
 	}
 
@@ -642,31 +617,35 @@ func (t *ResponsesToChatTransformer) handleFunctionCallArgsDelta(event *types.Re
 	}
 
 	if t.currentToolCall == nil {
-		// Create tool call state if not exists
+		name := t.toolNames[event.ItemID]
 		t.currentToolCall = &responsesToolCallState{
-			id: event.ItemID,
+			id:   event.ItemID,
+			name: name,
 		}
 		t.toolCallIndex++
 	}
 
 	t.currentToolCall.arguments.WriteString(event.Delta)
 
-	// Send incremental tool call chunk
+	tc := types.ToolCall{
+		Index: t.toolCallIndex - 1,
+		Function: types.Function{
+			Arguments: event.Delta,
+		},
+	}
+	if !t.currentToolCall.firstSent {
+		tc.ID = t.currentToolCall.id
+		tc.Type = "function"
+		tc.Function.Name = t.currentToolCall.name
+		t.currentToolCall.firstSent = true
+	}
+
 	chunk := t.createChunk()
 	chunk.Choices = []types.Choice{
 		{
 			Index: 0,
 			Delta: types.Delta{
-				ToolCalls: []types.ToolCall{
-					{
-						ID:    t.currentToolCall.id,
-						Type:  "function",
-						Index: t.toolCallIndex - 1,
-						Function: types.Function{
-							Arguments: event.Delta,
-						},
-					},
-				},
+				ToolCalls: []types.ToolCall{tc},
 			},
 		},
 	}

@@ -51,7 +51,7 @@ type Store struct {
 
 // entry represents an element in the LRU list.
 type entry struct {
-	key         string
+	key          string
 	conversation *Conversation
 }
 
@@ -126,7 +126,7 @@ func (s *Store) Store(conv *Conversation) {
 
 	// Add new entry at front
 	elem := s.lru.PushFront(&entry{
-		key:         conv.ID,
+		key:          conv.ID,
 		conversation: conv,
 	})
 	s.data[conv.ID] = elem
