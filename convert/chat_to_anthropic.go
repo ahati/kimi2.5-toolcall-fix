@@ -214,6 +214,7 @@ func (t *ChatToAnthropicTransformer) handleChunk(chunk types.Chunk) error {
 			// Capture cache tokens
 			if chunk.Usage.PromptTokensDetails != nil {
 				t.cacheReadTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+				t.cacheCreateTokens = chunk.Usage.PromptTokensDetails.CacheCreationInputTokens
 			}
 			// Now emit message_delta with the stored finish_reason and usage
 			if t.finishReason != "" {
@@ -534,7 +535,7 @@ func (t *ChatToAnthropicTransformer) Close() error {
 			}
 		}
 
-		// Emit message_delta if we have any content
+		// Emit message_delta if we have any content or tool calls
 		if t.blockIndex > 0 || len(t.toolCalls) > 0 {
 			stopReason := "end_turn"
 			if len(t.toolCalls) > 0 {
@@ -558,6 +559,7 @@ func (t *ChatToAnthropicTransformer) Close() error {
 		}
 	}
 
+	// Always emit message_stop to properly close the stream
 	t.messageStopSent = true
 	return t.writeEvent("message_stop", nil)
 }

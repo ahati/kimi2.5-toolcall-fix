@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"ai-proxy/conversation"
+	"ai-proxy/logging"
 	"ai-proxy/types"
 )
 
@@ -38,6 +39,8 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 	if openReq.PreviousResponseID != "" {
 		if hist := conversation.GetFromDefault(openReq.PreviousResponseID); hist != nil {
 			openReq.Input = prependHistoryToInput(hist, openReq.Input)
+		} else {
+			logging.InfoMsg("Warning: Previous response ID not found in conversation store: %s", openReq.PreviousResponseID)
 		}
 	}
 
@@ -45,7 +48,7 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 	// Anthropic requires max_tokens, so use a default if not provided
 	maxTokens := openReq.MaxOutputTokens
 	if maxTokens == 0 {
-		maxTokens = 16384 // Default max tokens (16k) for Anthropic API
+		maxTokens = 65536 // Default max tokens (64k) for Anthropic API
 	}
 	anthReq := types.MessageRequest{
 		Model:     openReq.Model,
@@ -58,8 +61,11 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 
 	// Combine instructions with developer messages from input
 	systemParts := []string{}
+	seenContent := make(map[string]bool) // Track content to avoid duplicates
+
 	if openReq.Instructions != "" {
 		systemParts = append(systemParts, openReq.Instructions)
+		seenContent[openReq.Instructions] = true
 	}
 
 	// Extract developer messages from input array
@@ -68,8 +74,11 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 			if msg, ok := item.(map[string]interface{}); ok {
 				if role, ok := msg["role"].(string); ok && (role == "developer" || role == "system") {
 					content := extractContentFromInput(msg["content"])
-					if content != "" {
+					// Normalize content for deduplication
+					normalizedContent := strings.TrimSpace(content)
+					if content != "" && !seenContent[normalizedContent] {
 						systemParts = append(systemParts, content)
+						seenContent[normalizedContent] = true
 					}
 				}
 			}
@@ -172,14 +181,23 @@ func convertInputToAnthropicMessages(input interface{}) []types.MessageInput {
 				case "function_call_output":
 					callID, _ := msg["call_id"].(string)
 					output, _ := msg["output"].(string)
+					isError, _ := msg["is_error"].(bool)
+
+					// Generate unique ID for tool_result if not provided
+					resultID := callID
+					if id, ok := msg["id"].(string); ok && id != "" {
+						resultID = id
+					}
 
 					messages = append(messages, types.MessageInput{
 						Role: "user",
 						Content: []map[string]interface{}{
 							{
 								"type":        "tool_result",
+								"id":          resultID,
 								"tool_use_id": callID,
 								"content":     output,
+								"is_error":    isError,
 							},
 						},
 					})
@@ -228,6 +246,16 @@ func extractContentFromInput(content interface{}) string {
 						result.WriteString("\n")
 					}
 					result.WriteString("[Image attached]")
+				case "input_file":
+					// File attachments not supported by Anthropic text API - add placeholder
+					if fileData, ok := partMap["file_data"].(map[string]interface{}); ok {
+						if filename, ok := fileData["filename"].(string); ok {
+							if result.Len() > 0 {
+								result.WriteString("\n")
+							}
+							result.WriteString("[File attached: " + filename + "]")
+						}
+					}
 				}
 			}
 		}

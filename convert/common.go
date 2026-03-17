@@ -3,6 +3,7 @@
 package convert
 
 import (
+	"ai-proxy/logging"
 	"ai-proxy/types"
 	"encoding/json"
 	"strings"
@@ -274,6 +275,10 @@ func extractTextFromBlock(block map[string]interface{}) string {
 		if thinking, ok := block["thinking"].(string); ok {
 			return thinking
 		}
+	default:
+		if partType != "" {
+			logging.DebugMsg("Unknown content block type: %s", partType)
+		}
 	}
 	return ""
 }
@@ -303,6 +308,14 @@ func ConvertContentBlocks(blocks []interface{}) (string, []types.ToolCall, strin
 					textContent.WriteString("\n")
 				}
 				textContent.WriteString(text)
+			}
+		case "thinking":
+			// Include thinking content as part of text (with prefix)
+			if thinking, ok := m["thinking"].(string); ok && thinking != "" {
+				if textContent.Len() > 0 {
+					textContent.WriteString("\n")
+				}
+				textContent.WriteString("[Thinking: " + thinking + "]")
 			}
 		case "tool_use":
 			if id, ok := m["id"].(string); ok {

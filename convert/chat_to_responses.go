@@ -262,6 +262,11 @@ func (t *ChatToResponsesTransformer) finalizeReasoning() error {
 }
 
 func (t *ChatToResponsesTransformer) emitReasoningDelta(text string) error {
+	// Mark that we've started emitting content
+	if !t.messageStarted {
+		t.messageStarted = true
+	}
+
 	if !t.inReasoning {
 		t.inReasoning = true
 		t.reasoningOutputIndex = t.contentIndex
@@ -540,10 +545,15 @@ func (t *ChatToResponsesTransformer) handleFinish() error {
 			"total_tokens":  t.usage.TotalTokens,
 		}
 		// Include cache tokens if available
-		if t.usage.PromptTokensDetails != nil && t.usage.PromptTokensDetails.CachedTokens > 0 {
-			usageData["input_tokens_details"] = map[string]interface{}{
-				"cached_tokens": t.usage.PromptTokensDetails.CachedTokens,
+		if t.usage.PromptTokensDetails != nil && (t.usage.PromptTokensDetails.CachedTokens > 0 || t.usage.PromptTokensDetails.CacheCreationInputTokens > 0) {
+			inputTokensDetails := map[string]interface{}{}
+			if t.usage.PromptTokensDetails.CachedTokens > 0 {
+				inputTokensDetails["cached_tokens"] = t.usage.PromptTokensDetails.CachedTokens
 			}
+			if t.usage.PromptTokensDetails.CacheCreationInputTokens > 0 {
+				inputTokensDetails["cache_creation_input_tokens"] = t.usage.PromptTokensDetails.CacheCreationInputTokens
+			}
+			usageData["input_tokens_details"] = inputTokensDetails
 		}
 		if t.usage.CompletionTokensDetails != nil && t.usage.CompletionTokensDetails.ReasoningTokens > 0 {
 			usageData["output_tokens_details"] = map[string]interface{}{

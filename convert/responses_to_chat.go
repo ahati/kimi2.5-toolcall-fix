@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ai-proxy/conversation"
+	"ai-proxy/logging"
 	"ai-proxy/types"
 
 	"github.com/tmaxmax/go-sse"
@@ -42,12 +43,19 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 	if req.PreviousResponseID != "" {
 		if hist := conversation.GetFromDefault(req.PreviousResponseID); hist != nil {
 			req.Input = prependHistoryToInput(hist, req.Input)
+		} else {
+			logging.InfoMsg("Warning: Previous response ID not found in conversation store: %s", req.PreviousResponseID)
 		}
+	}
+
+	maxTokens := req.MaxOutputTokens
+	if maxTokens == 0 {
+		maxTokens = 65536 // Default max tokens (64k) for OpenAI-compatible APIs
 	}
 
 	chatReq := &types.ChatCompletionRequest{
 		Model:     req.Model,
-		MaxTokens: req.MaxOutputTokens,
+		MaxTokens: maxTokens,
 		// Force streaming mode - this proxy only supports SSE streaming
 		Stream:      true,
 		Temperature: req.Temperature,
@@ -73,6 +81,9 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 
 	// Convert tools
 	chatReq.Tools = c.convertTools(req.Tools)
+
+	// Convert tool_choice
+	chatReq.ToolChoice = req.ToolChoice
 
 	// Convert response_format
 	chatReq.ResponseFormat = req.ResponseFormat
@@ -362,6 +373,16 @@ func (c *ResponsesToChatConverter) extractTextFromParts(parts []interface{}) str
 				}
 				result.WriteString(text)
 			}
+		case "input_file":
+			// File attachments - extract filename as placeholder
+			if fileData, ok := partMap["file_data"].(map[string]interface{}); ok {
+				if filename, ok := fileData["filename"].(string); ok {
+					if result.Len() > 0 {
+						result.WriteString("\n")
+					}
+					result.WriteString("[File attached: " + filename + "]")
+				}
+			}
 		}
 	}
 	return result.String()
@@ -374,7 +395,7 @@ func (c *ResponsesToChatConverter) hasNonTextParts(parts []interface{}) bool {
 			continue
 		}
 		partType, _ := partMap["type"].(string)
-		if partType != "input_text" && partType != "text" && partType != "output_text" {
+		if partType != "input_text" && partType != "text" && partType != "output_text" && partType != "input_file" {
 			return true
 		}
 	}
@@ -416,6 +437,16 @@ func (c *ResponsesToChatConverter) convertContentParts(parts []interface{}) []in
 						"url": imageURL,
 					},
 				})
+			}
+		case "input_file":
+			// Convert input_file to text placeholder
+			if fileData, ok := partMap["file_data"].(map[string]interface{}); ok {
+				if filename, ok := fileData["filename"].(string); ok {
+					result = append(result, map[string]interface{}{
+						"type": "text",
+						"text": "[File attached: " + filename + "]",
+					})
+				}
 			}
 		default:
 			// Pass through other content types
@@ -617,12 +648,12 @@ func (t *ResponsesToChatTransformer) handleFunctionCallArgsDelta(event *types.Re
 	}
 
 	if t.currentToolCall == nil {
+		t.toolCallIndex++
 		name := t.toolNames[event.ItemID]
 		t.currentToolCall = &responsesToolCallState{
 			id:   event.ItemID,
 			name: name,
 		}
-		t.toolCallIndex++
 	}
 
 	t.currentToolCall.arguments.WriteString(event.Delta)

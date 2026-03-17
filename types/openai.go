@@ -257,6 +257,8 @@ type Usage struct {
 type PromptTokensDetails struct {
 	// CachedTokens is the number of tokens read from cache.
 	CachedTokens int `json:"cached_tokens,omitempty"`
+	// CacheCreationInputTokens is the number of tokens used to create the cache.
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 }
 
 // CompletionTokensDetails contains detailed completion token information.

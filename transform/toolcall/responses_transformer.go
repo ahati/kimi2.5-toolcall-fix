@@ -157,7 +157,7 @@ func (t *ResponsesTransformer) getOutputIndexForReasoning() int {
 			count++
 		}
 	}
-	return count - 1 // -1 because we just appended the item
+	return count
 }
 
 // getOutputIndexForToolCall returns the output index for a tool call item.
@@ -169,7 +169,7 @@ func (t *ResponsesTransformer) getOutputIndexForToolCall() int {
 			count++
 		}
 	}
-	return count - 1 // -1 because we just appended the item
+	return count
 }
 
 // FormatResponseCreated formats a response.created event.
