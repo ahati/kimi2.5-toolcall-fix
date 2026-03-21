@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-proxy/conversation"
 	"ai-proxy/types"
 
 	"github.com/tmaxmax/go-sse"
@@ -58,8 +59,46 @@ func TestResponsesToChatConverter_Convert(t *testing.T) {
 				if err := json.Unmarshal(output, &req); err != nil {
 					t.Fatalf("Failed to parse output: %v", err)
 				}
-				if req.System != "You are a helpful assistant." {
-					t.Errorf("Expected system message, got %s", req.System)
+				if len(req.Messages) != 2 {
+					t.Fatalf("Expected 2 messages, got %d", len(req.Messages))
+				}
+				if req.Messages[0].Role != "system" {
+					t.Errorf("Expected first message role system, got %s", req.Messages[0].Role)
+				}
+				if req.Messages[0].Content != "You are a helpful assistant." {
+					t.Errorf("Expected prepended system content, got %v", req.Messages[0].Content)
+				}
+				if req.Messages[1].Role != "user" {
+					t.Errorf("Expected second message role user, got %s", req.Messages[1].Role)
+				}
+			},
+		},
+		{
+			name: "flat tool_choice object",
+			input: `{
+				"model": "gpt-4o",
+				"input": "Hello",
+				"tool_choice": {"type": "function", "name": "search"}
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				choice, ok := req.ToolChoice.(map[string]interface{})
+				if !ok {
+					t.Fatalf("Expected tool_choice to be an object, got %T", req.ToolChoice)
+				}
+				if choice["type"] != "function" {
+					t.Errorf("Expected tool_choice type function, got %v", choice["type"])
+				}
+				function, ok := choice["function"].(map[string]interface{})
+				if !ok {
+					t.Fatalf("Expected nested function object, got %T", choice["function"])
+				}
+				if function["name"] != "search" {
+					t.Errorf("Expected function name search, got %v", function["name"])
 				}
 			},
 		},
@@ -184,6 +223,27 @@ func TestResponsesToChatConverter_Convert(t *testing.T) {
 				}
 				if !req.Stream {
 					t.Error("Expected stream to be true")
+				}
+			},
+		},
+		{
+			name: "input without stream still forces upstream streaming",
+			input: `{
+				"model": "gpt-4o",
+				"input": "Hello",
+				"stream": false
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if !req.Stream {
+					t.Error("Expected upstream stream to be forced true")
+				}
+				if req.StreamOptions == nil || !req.StreamOptions.IncludeUsage {
+					t.Error("Expected stream_options.include_usage to be enabled")
 				}
 			},
 		},
@@ -1176,12 +1236,48 @@ func TestResponsesToChatConverter_ResponseFormat_JSONSchema(t *testing.T) {
 // TestResponsesToChatConverter_PreviousResponseID tests previous_response_id handling.
 // Category A2 (Responses → Chat): HIGH priority
 func TestResponsesToChatConverter_PreviousResponseID(t *testing.T) {
+	oldStore := conversation.DefaultStore
+	conversation.DefaultStore = conversation.NewStore(conversation.Config{})
+	t.Cleanup(func() {
+		conversation.DefaultStore = oldStore
+	})
+
+	conversation.StoreInDefault(&conversation.Conversation{
+		ID: "resp_prev123",
+		Input: []types.InputItem{
+			{Type: "message", Role: "user", Content: "Earlier question?"},
+		},
+		Output: []types.OutputItem{
+			{
+				Type: "message",
+				Role: "assistant",
+				Content: []types.OutputContent{
+					{Type: "output_text", Text: "Earlier answer."},
+				},
+			},
+		},
+	})
+
+	conversation.StoreInDefault(&conversation.Conversation{
+		ID: "resp_abc456",
+		Input: []types.InputItem{
+			{Type: "message", Role: "user", Content: "Start here."},
+		},
+		Output: []types.OutputItem{
+			{
+				Type: "message",
+				Role: "assistant",
+				Content: []types.OutputContent{
+					{Type: "output_text", Text: "You are helpful."},
+				},
+			},
+		},
+	})
+
 	tests := []struct {
 		name     string
 		input    string
 		wantErr  bool
-		skip     bool
-		skipMsg  string
 		validate func(t *testing.T, output []byte)
 	}{
 		{
@@ -1192,18 +1288,22 @@ func TestResponsesToChatConverter_PreviousResponseID(t *testing.T) {
 				"previous_response_id": "resp_prev123"
 			}`,
 			wantErr: false,
-			skip:    true,
-			skipMsg: "IMPLEMENTATION GAP: previous_response_id not handled in ResponsesToChatConverter - state management needed",
 			validate: func(t *testing.T, output []byte) {
-				// When implemented, this should validate that previous_response_id
-				// is used to fetch and include conversation history
 				var req types.ChatCompletionRequest
 				if err := json.Unmarshal(output, &req); err != nil {
 					t.Fatalf("Failed to parse output: %v", err)
 				}
-				// For now, just verify the request is valid
-				if req.Model != "gpt-4o" {
-					t.Errorf("Expected model gpt-4o, got %s", req.Model)
+				if len(req.Messages) != 3 {
+					t.Fatalf("Expected 3 messages, got %d", len(req.Messages))
+				}
+				if req.Messages[0].Role != "user" || req.Messages[0].Content != "Earlier question?" {
+					t.Fatalf("Expected history user message first, got %+v", req.Messages[0])
+				}
+				if req.Messages[1].Role != "assistant" || req.Messages[1].Content != "Earlier answer." {
+					t.Fatalf("Expected history assistant message second, got %+v", req.Messages[1])
+				}
+				if req.Messages[2].Role != "user" || req.Messages[2].Content != "What about tomorrow?" {
+					t.Fatalf("Expected current user message last, got %+v", req.Messages[2])
 				}
 			},
 		},
@@ -1216,16 +1316,25 @@ func TestResponsesToChatConverter_PreviousResponseID(t *testing.T) {
 				"previous_response_id": "resp_abc456"
 			}`,
 			wantErr: false,
-			skip:    true,
-			skipMsg: "IMPLEMENTATION GAP: previous_response_id not handled in ResponsesToChatConverter - state management needed",
 			validate: func(t *testing.T, output []byte) {
 				var req types.ChatCompletionRequest
 				if err := json.Unmarshal(output, &req); err != nil {
 					t.Fatalf("Failed to parse output: %v", err)
 				}
-				// System should still be set even with previous_response_id
-				if req.System != "You are helpful." {
-					t.Errorf("Expected system message preserved, got %s", req.System)
+				if len(req.Messages) != 4 {
+					t.Fatalf("Expected 4 messages, got %d", len(req.Messages))
+				}
+				if req.Messages[0].Role != "system" || req.Messages[0].Content != "You are helpful." {
+					t.Fatalf("Expected prepended system message first, got %+v", req.Messages[0])
+				}
+				if req.Messages[1].Role != "user" || req.Messages[1].Content != "Start here." {
+					t.Fatalf("Expected history user message second, got %+v", req.Messages[1])
+				}
+				if req.Messages[2].Role != "assistant" || req.Messages[2].Content != "You are helpful." {
+					t.Fatalf("Expected history assistant message third, got %+v", req.Messages[2])
+				}
+				if req.Messages[3].Role != "user" || req.Messages[3].Content != "Continue" {
+					t.Fatalf("Expected current user message last, got %+v", req.Messages[3])
 				}
 			},
 		},
@@ -1233,9 +1342,6 @@ func TestResponsesToChatConverter_PreviousResponseID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.skip {
-				t.Skip(tt.skipMsg)
-			}
 			converter := NewResponsesToChatConverter()
 			output, err := converter.Convert([]byte(tt.input))
 
@@ -1655,33 +1761,30 @@ func TestResponsesToChatConverter_SystemUserAssistantFlow(t *testing.T) {
 				if err := json.Unmarshal(output, &req); err != nil {
 					t.Fatalf("Failed to parse output: %v", err)
 				}
-				// Should have instructions as system
-				if req.System != "You are a helpful math tutor." {
-					t.Errorf("Expected system message, got %s", req.System)
+				if len(req.Messages) != 4 {
+					t.Fatalf("Expected 4 messages, got %d", len(req.Messages))
 				}
-				// Should have 3 messages in order
-				if len(req.Messages) != 3 {
-					t.Errorf("Expected 3 messages, got %d", len(req.Messages))
-					return
+				if req.Messages[0].Role != "system" || req.Messages[0].Content != "You are a helpful math tutor." {
+					t.Errorf("Expected prepended system message, got %+v", req.Messages[0])
 				}
-				// Verify order: user, assistant, user
-				if req.Messages[0].Role != "user" {
-					t.Errorf("Expected message 1 role 'user', got %s", req.Messages[0].Role)
+				// Verify order: system, user, assistant, user
+				if req.Messages[1].Role != "user" {
+					t.Errorf("Expected message 2 role 'user', got %s", req.Messages[1].Role)
 				}
-				if req.Messages[0].Content != "What is 2+2?" {
-					t.Errorf("Expected message 1 content, got %v", req.Messages[0].Content)
-				}
-				if req.Messages[1].Role != "assistant" {
-					t.Errorf("Expected message 2 role 'assistant', got %s", req.Messages[1].Role)
-				}
-				if req.Messages[1].Content != "2+2 equals 4." {
+				if req.Messages[1].Content != "What is 2+2?" {
 					t.Errorf("Expected message 2 content, got %v", req.Messages[1].Content)
 				}
-				if req.Messages[2].Role != "user" {
-					t.Errorf("Expected message 3 role 'user', got %s", req.Messages[2].Role)
+				if req.Messages[2].Role != "assistant" {
+					t.Errorf("Expected message 3 role 'assistant', got %s", req.Messages[2].Role)
 				}
-				if req.Messages[2].Content != "What about 3+3?" {
+				if req.Messages[2].Content != "2+2 equals 4." {
 					t.Errorf("Expected message 3 content, got %v", req.Messages[2].Content)
+				}
+				if req.Messages[3].Role != "user" {
+					t.Errorf("Expected message 4 role 'user', got %s", req.Messages[3].Role)
+				}
+				if req.Messages[3].Content != "What about 3+3?" {
+					t.Errorf("Expected message 4 content, got %v", req.Messages[3].Content)
 				}
 			},
 		},
@@ -1926,6 +2029,437 @@ func TestResponsesToChatConverter_ReasoningEffort(t *testing.T) {
 				}
 				if req.ReasoningEffort != "" {
 					t.Errorf("Expected ReasoningEffort to be empty, got %q", req.ReasoningEffort)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewResponsesToChatConverter()
+			output, err := converter.Convert([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("Convert returned error: %v", err)
+			}
+			tt.validate(t, output)
+		})
+	}
+}
+
+// TestResponsesToChatConverter_RefusalContentType tests refusal content type handling.
+func TestResponsesToChatConverter_RefusalContentType(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		validate func(t *testing.T, output []byte)
+	}{
+		{
+			name: "refusal content treated as text",
+			input: `{
+				"model": "gpt-4o",
+				"input": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "refusal", "text": "I cannot help with that request."}
+						]
+					}
+				]
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if len(req.Messages) != 1 {
+					t.Fatalf("Expected 1 message, got %d", len(req.Messages))
+				}
+				content, ok := req.Messages[0].Content.(string)
+				if !ok {
+					t.Fatalf("Expected content to be string, got %T", req.Messages[0].Content)
+				}
+				if content != "I cannot help with that request." {
+					t.Errorf("Expected refusal text as content, got %q", content)
+				}
+			},
+		},
+		{
+			name: "mixed refusal and output_text in assistant message",
+			input: `{
+				"model": "gpt-4o",
+				"input": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "output_text", "text": "Here is some info."},
+							{"type": "refusal", "text": "But I cannot do more."}
+						]
+					}
+				]
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if len(req.Messages) != 1 {
+					t.Fatalf("Expected 1 message, got %d", len(req.Messages))
+				}
+				content, ok := req.Messages[0].Content.(string)
+				if !ok {
+					t.Fatalf("Expected content to be string, got %T", req.Messages[0].Content)
+				}
+				expected := "Here is some info.\nBut I cannot do more."
+				if content != expected {
+					t.Errorf("Expected combined content %q, got %q", expected, content)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewResponsesToChatConverter()
+			output, err := converter.Convert([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("Convert returned error: %v", err)
+			}
+			tt.validate(t, output)
+		})
+	}
+}
+
+// TestResponsesToChatConverter_InputFileContentType tests input_file content type handling.
+func TestResponsesToChatConverter_InputFileContentType(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		validate func(t *testing.T, output []byte)
+	}{
+		{
+			name: "input_file with filename converted to placeholder",
+			input: `{
+				"model": "gpt-4o",
+				"input": [
+					{
+						"type": "message",
+						"role": "user",
+						"content": [
+							{"type": "input_text", "text": "Check this file:"},
+							{"type": "input_file", "file_data": {"filename": "document.pdf"}}
+						]
+					}
+				]
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if len(req.Messages) != 1 {
+					t.Fatalf("Expected 1 message, got %d", len(req.Messages))
+				}
+				// When there are only text-like parts, content is returned as a string
+				content, ok := req.Messages[0].Content.(string)
+				if !ok {
+					t.Fatalf("Expected content to be string, got %T", req.Messages[0].Content)
+				}
+				// Check that file placeholder is present in the string
+				if !strings.Contains(content, "[File attached: document.pdf]") {
+					t.Errorf("Expected file placeholder in content, got %q", content)
+				}
+				if !strings.Contains(content, "Check this file:") {
+					t.Errorf("Expected text content in content, got %q", content)
+				}
+			},
+		},
+		{
+			name: "input_file only in message",
+			input: `{
+				"model": "gpt-4o",
+				"input": [
+					{
+						"type": "message",
+						"role": "user",
+						"content": [
+							{"type": "input_file", "file_data": {"filename": "data.csv"}}
+						]
+					}
+				]
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if len(req.Messages) != 1 {
+					t.Fatalf("Expected 1 message, got %d", len(req.Messages))
+				}
+				content, ok := req.Messages[0].Content.(string)
+				if !ok {
+					t.Fatalf("Expected content to be string, got %T", req.Messages[0].Content)
+				}
+				if content != "[File attached: data.csv]" {
+					t.Errorf("Expected file placeholder, got %q", content)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewResponsesToChatConverter()
+			output, err := converter.Convert([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("Convert returned error: %v", err)
+			}
+			tt.validate(t, output)
+		})
+	}
+}
+
+// TestResponsesToChatConverter_CombinedMessageWithToolCalls tests that a message
+// with embedded tool_calls (from prependHistoryToInput) is correctly converted
+// to a single assistant message with both content and tool_calls.
+// This is critical for fixing the bug where assistant message + function_call
+// would result in two assistant messages instead of one.
+func TestResponsesToChatConverter_CombinedMessageWithToolCalls(t *testing.T) {
+	oldStore := conversation.DefaultStore
+	conversation.DefaultStore = conversation.NewStore(conversation.Config{})
+	t.Cleanup(func() {
+		conversation.DefaultStore = oldStore
+	})
+
+	// Store a conversation where the model responded with both text and a tool call
+	conversation.StoreInDefault(&conversation.Conversation{
+		ID: "resp_combined",
+		Input: []types.InputItem{
+			{Type: "message", Role: "user", Content: "Review the code"},
+		},
+		Output: []types.OutputItem{
+			{
+				Type: "message",
+				Role: "assistant",
+				Content: []types.OutputContent{
+					{Type: "output_text", Text: "I'll review the code."},
+				},
+			},
+			{
+				Type:      "function_call",
+				CallID:    "call_123",
+				Name:      "read_file",
+				Arguments: `{"path": "main.go"}`,
+			},
+		},
+	})
+
+	tests := []struct {
+		name     string
+		input    string
+		validate func(t *testing.T, output []byte)
+	}{
+		{
+			name: "previous_response_id with combined message and tool_call",
+			input: `{
+				"model": "gpt-4o",
+				"previous_response_id": "resp_combined",
+				"input": [
+					{
+						"type": "function_call_output",
+						"call_id": "call_123",
+						"output": "package main\n\nfunc main() {}"
+					}
+				]
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+
+				// Should have exactly 3 messages:
+				// 1. user message from history
+				// 2. assistant message with content AND tool_calls (combined)
+				// 3. tool message (function_call_output)
+				if len(req.Messages) != 3 {
+					t.Fatalf("Expected 3 messages, got %d: %+v", len(req.Messages), req.Messages)
+				}
+
+				// Check user message
+				if req.Messages[0].Role != "user" {
+					t.Errorf("Expected message 0 to be user, got %s", req.Messages[0].Role)
+				}
+
+				// Check assistant message has BOTH content and tool_calls
+				if req.Messages[1].Role != "assistant" {
+					t.Errorf("Expected message 1 to be assistant, got %s", req.Messages[1].Role)
+				}
+				if req.Messages[1].Content == nil || req.Messages[1].Content == "" {
+					t.Error("Expected assistant message to have content")
+				}
+				if len(req.Messages[1].ToolCalls) != 1 {
+					t.Fatalf("Expected assistant message to have 1 tool_call, got %d", len(req.Messages[1].ToolCalls))
+				}
+				if req.Messages[1].ToolCalls[0].ID != "call_123" {
+					t.Errorf("Expected tool_call ID to be call_123, got %s", req.Messages[1].ToolCalls[0].ID)
+				}
+
+				// Check tool message
+				if req.Messages[2].Role != "tool" {
+					t.Errorf("Expected message 2 to be tool, got %s", req.Messages[2].Role)
+				}
+				if req.Messages[2].ToolCallID != "call_123" {
+					t.Errorf("Expected tool message ToolCallID to be call_123, got %s", req.Messages[2].ToolCallID)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewResponsesToChatConverter()
+			output, err := converter.Convert([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("Convert returned error: %v", err)
+			}
+			tt.validate(t, output)
+		})
+	}
+}
+
+// TestResponsesToChatConverter_SeparateFunctionCallMergedWithAssistant tests that
+// when Codex sends function_call and message(assistant) as separate items,
+// they are correctly merged into a single assistant message.
+// This is the main bug fix: Codex sends these items separately but Chat Completions
+// API requires them combined.
+func TestResponsesToChatConverter_SeparateFunctionCallMergedWithAssistant(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		validate func(t *testing.T, output []byte)
+	}{
+		{
+			name: "function_call merged with following assistant message",
+			input: `{
+				"model": "gpt-4o",
+				"input": [
+					{"type": "message", "role": "user", "content": "Review the code"},
+					{"type": "function_call", "call_id": "call_abc", "name": "read_file", "arguments": "{\"path\": \"main.go\"}"},
+					{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I'll read the file."}]},
+					{"type": "function_call_output", "call_id": "call_abc", "output": "file contents here"}
+				]
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+
+				// Should have exactly 3 messages:
+				// 1. user message
+				// 2. assistant message with BOTH content AND tool_calls (merged)
+				// 3. tool message
+				if len(req.Messages) != 3 {
+					t.Fatalf("Expected 3 messages, got %d: %+v", len(req.Messages), req.Messages)
+				}
+
+				// Check user message
+				if req.Messages[0].Role != "user" {
+					t.Errorf("Expected message 0 to be user, got %s", req.Messages[0].Role)
+				}
+
+				// Check assistant message has BOTH content and tool_calls
+				if req.Messages[1].Role != "assistant" {
+					t.Errorf("Expected message 1 to be assistant, got %s", req.Messages[1].Role)
+				}
+				if req.Messages[1].Content == nil || req.Messages[1].Content == "" {
+					t.Error("Expected assistant message to have content")
+				}
+				if len(req.Messages[1].ToolCalls) != 1 {
+					t.Fatalf("Expected assistant message to have 1 tool_call, got %d", len(req.Messages[1].ToolCalls))
+				}
+				if req.Messages[1].ToolCalls[0].ID != "call_abc" {
+					t.Errorf("Expected tool_call ID to be call_abc, got %s", req.Messages[1].ToolCalls[0].ID)
+				}
+				if req.Messages[1].ToolCalls[0].Function.Name != "read_file" {
+					t.Errorf("Expected tool_call name to be read_file, got %s", req.Messages[1].ToolCalls[0].Function.Name)
+				}
+
+				// Check tool message
+				if req.Messages[2].Role != "tool" {
+					t.Errorf("Expected message 2 to be tool, got %s", req.Messages[2].Role)
+				}
+				if req.Messages[2].ToolCallID != "call_abc" {
+					t.Errorf("Expected tool message ToolCallID to be call_abc, got %s", req.Messages[2].ToolCallID)
+				}
+			},
+		},
+		{
+			name: "multiple function_calls merged with following assistant message",
+			input: `{
+				"model": "gpt-4o",
+				"input": [
+					{"type": "message", "role": "user", "content": "Run tests"},
+					{"type": "function_call", "call_id": "call_1", "name": "exec", "arguments": "{\"cmd\": \"go test\"}"},
+					{"type": "function_call", "call_id": "call_2", "name": "exec", "arguments": "{\"cmd\": \"go vet\"}"},
+					{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Running tests..."}]},
+					{"type": "function_call_output", "call_id": "call_1", "output": "PASS"},
+					{"type": "function_call_output", "call_id": "call_2", "output": "no issues"}
+				]
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+
+				// Should have exactly 4 messages:
+				// 1. user message
+				// 2. assistant message with content and 2 tool_calls (merged)
+				// 3. tool message for call_1
+				// 4. tool message for call_2
+				if len(req.Messages) != 4 {
+					t.Fatalf("Expected 4 messages, got %d", len(req.Messages))
+				}
+
+				// Check assistant message has 2 tool_calls
+				if len(req.Messages[1].ToolCalls) != 2 {
+					t.Fatalf("Expected assistant message to have 2 tool_calls, got %d", len(req.Messages[1].ToolCalls))
+				}
+			},
+		},
+		{
+			name: "function_call without following assistant message",
+			input: `{
+				"model": "gpt-4o",
+				"input": [
+					{"type": "message", "role": "user", "content": "Run command"},
+					{"type": "function_call", "call_id": "call_xyz", "name": "exec", "arguments": "{\"cmd\": \"ls\"}"},
+					{"type": "function_call_output", "call_id": "call_xyz", "output": "file1.txt\nfile2.txt"}
+				]
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ChatCompletionRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+
+				// Should have exactly 3 messages:
+				// 1. user message
+				// 2. assistant message with tool_calls only (no content)
+				// 3. tool message
+				if len(req.Messages) != 3 {
+					t.Fatalf("Expected 3 messages, got %d", len(req.Messages))
+				}
+
+				// Check assistant message has tool_calls but no content
+				if req.Messages[1].Role != "assistant" {
+					t.Errorf("Expected message 1 to be assistant, got %s", req.Messages[1].Role)
+				}
+				if len(req.Messages[1].ToolCalls) != 1 {
+					t.Errorf("Expected assistant message to have 1 tool_call, got %d", len(req.Messages[1].ToolCalls))
 				}
 			},
 		},

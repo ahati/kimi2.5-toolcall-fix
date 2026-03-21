@@ -36,6 +36,9 @@ type ResponsesRequest struct {
 	// ResponseFormat specifies the format of the response.
 	// Use for JSON mode or structured outputs.
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
+	// Metadata contains arbitrary metadata for the request.
+	// Used for tracking and logging purposes, including user_id.
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // ReasoningConfig represents reasoning configuration for supported models.
@@ -286,6 +289,24 @@ type OutputTokensDetails struct {
 	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
+// ResponsesEventType enumerates all Responses API SSE event names.
+type ResponsesEventType string
+
+const (
+	EventResponseCreated                    ResponsesEventType = "response.created"
+	EventResponseInProgress                 ResponsesEventType = "response.in_progress"
+	EventResponseOutputItemAdded            ResponsesEventType = "response.output_item.added"
+	EventResponseContentPartAdded           ResponsesEventType = "response.content_part.added"
+	EventResponseOutputTextDelta            ResponsesEventType = "response.output_text.delta"
+	EventResponseOutputTextDone             ResponsesEventType = "response.output_text.done"
+	EventResponseFunctionCallArgumentsDelta ResponsesEventType = "response.function_call_arguments.delta"
+	EventResponseFunctionCallArgumentsDone  ResponsesEventType = "response.function_call_arguments.done"
+	EventResponseOutputItemDone             ResponsesEventType = "response.output_item.done"
+	EventResponseCompleted                  ResponsesEventType = "response.completed"
+	EventResponseFailed                     ResponsesEventType = "response.failed"
+	EventResponseIncomplete                 ResponsesEventType = "response.incomplete"
+)
+
 // ResponsesStreamEvent represents a streaming event in the Responses API.
 type ResponsesStreamEvent struct {
 	// Type identifies the event type.
@@ -302,8 +323,14 @@ type ResponsesStreamEvent struct {
 	ContentIndex int `json:"content_index,omitempty"`
 	// Delta for delta events.
 	Delta string `json:"delta,omitempty"`
+	// OutputIndex maps Responses output_index to block index.
+	OutputIndex int `json:"output_index,omitempty"`
 	// ItemID for item-related events.
 	ItemID string `json:"item_id,omitempty"`
+	// Arguments for function_call_arguments.done events.
+	Arguments string `json:"arguments,omitempty"`
+	// Text content for text events.
+	Text string `json:"text,omitempty"`
 	// Error information.
 	Error *ResponsesError `json:"error,omitempty"`
 }

@@ -2,7 +2,10 @@
 // This file defines the JSON schema for provider and model configuration.
 package config
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 // Provider defines an upstream API provider configuration.
 // A provider represents an external API service that can handle requests.
@@ -31,6 +34,28 @@ func (p *Provider) GetAPIKey() string {
 		return p.APIKey
 	}
 	return os.Getenv(p.EnvAPIKey)
+}
+
+// GetUpstreamURL returns the full upstream URL for the given API endpoint.
+// Appends the endpoint to the base URL if not already present.
+// If the base URL already has an API endpoint path (contains "/v1/" followed by
+// additional path components), it is considered already configured and the endpoint
+// is not appended.
+//
+// @param endpoint - the API endpoint path (e.g., "/v1/messages", "/chat/completions", "/v1/responses")
+// @return string - the complete upstream URL
+func (p *Provider) GetUpstreamURL(endpoint string) string {
+	baseURL := strings.TrimSuffix(p.BaseURL, "/")
+	// If base URL already has an API endpoint path (contains /v1/ with more path after it),
+	// it's already configured - don't append anything
+	if strings.Contains(baseURL, "/v1/") {
+		return baseURL
+	}
+	// Otherwise, append the endpoint if provided
+	if endpoint != "" && !strings.HasSuffix(baseURL, endpoint) {
+		baseURL = baseURL + endpoint
+	}
+	return baseURL
 }
 
 // ModelConfig defines how a model alias maps to a specific provider and model.

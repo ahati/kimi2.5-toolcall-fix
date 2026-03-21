@@ -133,12 +133,7 @@ func (h *MessagesHandler) TransformRequest(body []byte) ([]byte, error) {
 // @return URL string for the upstream API endpoint.
 func (h *MessagesHandler) UpstreamURL() string {
 	if h.route != nil {
-		url := h.route.Provider.BaseURL
-		// For OpenAI providers, append the chat completions path if needed
-		if h.route.Provider.Type == "openai" && !strings.HasSuffix(url, "/chat/completions") {
-			url = strings.TrimSuffix(url, "/") + "/chat/completions"
-		}
-		return url
+		return h.route.Provider.GetUpstreamURL("/v1/messages")
 	}
 	// Legacy behavior - use Anthropic upstream
 	return h.cfg.GetAnthropicUpstreamURL()
@@ -294,9 +289,32 @@ func convertAnthropicMessage(anthMsg types.MessageInput) types.Message {
 		openMsg.Content = content
 	case []interface{}:
 		openMsg.Content, openMsg.ToolCalls, openMsg.ToolCallID = convertAnthropicContentBlocks(content)
+		// Only pure tool_result turns can be represented as OpenAI tool messages.
+		if openMsg.ToolCallID != "" && isPureAnthropicToolResultTurn(content) {
+			openMsg.Role = "tool"
+		}
 	}
 
 	return openMsg
+}
+
+func isPureAnthropicToolResultTurn(blocks []interface{}) bool {
+	if len(blocks) == 0 {
+		return false
+	}
+
+	for _, item := range blocks {
+		block, ok := item.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		blockType, _ := block["type"].(string)
+		if blockType != "tool_result" {
+			return false
+		}
+	}
+
+	return true
 }
 
 // convertAnthropicContentBlocks extracts text content, tool calls, and tool result IDs

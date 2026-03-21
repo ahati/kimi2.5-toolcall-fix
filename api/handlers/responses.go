@@ -9,6 +9,7 @@ import (
 
 	"ai-proxy/config"
 	"ai-proxy/convert"
+	"ai-proxy/logging"
 	"ai-proxy/router"
 	"ai-proxy/transform"
 	"ai-proxy/transform/toolcall"
@@ -135,19 +136,19 @@ func (h *ResponsesHandler) UpstreamURL() string {
 	if h.route == nil {
 		return ""
 	}
-
-	// For OpenAI providers, append the chat completions path if needed
-	if h.route.Provider.Type == "openai" {
-		baseURL := h.route.Provider.BaseURL
-		// If the base URL doesn't already end with /chat/completions, append it
-		if !strings.HasSuffix(baseURL, "/chat/completions") {
-			baseURL = strings.TrimSuffix(baseURL, "/") + "/chat/completions"
-		}
-		return baseURL
+	endpointMap := map[string]string{
+		"responses": "/v1/responses",
+		"anthropic": "/v1/messages",
+		"openai":    "/v1/chat/completions",
 	}
 
-	// For Anthropic providers, use the base URL directly
-	return h.route.Provider.BaseURL
+	endpoint, ok := endpointMap[h.route.Provider.Type]
+	if !ok {
+		// handle unknown provider
+		endpoint = "" // or return an error
+		logging.ErrorMsg("invalid provider")
+	}
+	return h.route.Provider.GetUpstreamURL(endpoint)
 }
 
 // ResolveAPIKey returns the API key for the resolved provider.
@@ -203,13 +204,21 @@ func (h *ResponsesHandler) CreateTransformer(w io.Writer) transform.SSETransform
 
 	switch h.route.Provider.Type {
 	case "openai":
+		// ChatToResponsesTransformer converts Chat Completions to Responses format
+		// Tool call extraction from markup is enabled when tool_call_transform is true
 		t := convert.NewChatToResponsesTransformer(w)
+		t.SetToolCallTransform(h.route.ToolCallTransform)
 		t.SetInputItems(h.inputItems)
 		return t
 	case "anthropic":
-		t := toolcall.NewResponsesTransformer(w)
-		t.SetInputItems(h.inputItems)
-		return t
+		// ResponsesTransformer converts Anthropic SSE to Responses format
+		// Tool call extraction from markup is enabled when tool_call_transform is true
+		if h.route.ToolCallTransform {
+			t := toolcall.NewResponsesTransformer(w)
+			t.SetInputItems(h.inputItems)
+			return t
+		}
+		return transform.NewPassthroughTransformer(w)
 	default:
 		return transform.NewPassthroughTransformer(w)
 	}

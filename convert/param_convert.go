@@ -6,6 +6,7 @@ package convert
 import (
 	"ai-proxy/types"
 	"encoding/json"
+	"strings"
 )
 
 // ResponseFormatConverter handles conversion between OpenAI response_format
@@ -79,20 +80,17 @@ func (c *ToolChoiceConverter) ConvertOpenAIToAnthropic(toolChoice interface{}) *
 
 	switch tc := toolChoice.(type) {
 	case string:
-		switch tc {
-		case "none":
-			// Anthropic doesn't have "none" - return nil and caller should clear tools
-			return nil
-		case "auto":
-			return &types.ToolChoice{Type: "auto"}
-		case "required":
-			return &types.ToolChoice{Type: "any"}
-		default:
-			return &types.ToolChoice{Type: "auto"}
-		}
+		return convertToolChoiceStringToAnthropic(tc)
 
 	case map[string]interface{}:
 		return c.convertOpenAIObjectToAnthropic(tc)
+
+	case json.RawMessage:
+		parsed, err := UnmarshalToolChoice(tc)
+		if err != nil || parsed == nil {
+			return nil
+		}
+		return c.ConvertOpenAIToAnthropic(parsed)
 	}
 
 	return nil
@@ -101,18 +99,29 @@ func (c *ToolChoiceConverter) ConvertOpenAIToAnthropic(toolChoice interface{}) *
 func (c *ToolChoiceConverter) convertOpenAIObjectToAnthropic(tc map[string]interface{}) *types.ToolChoice {
 	objType, ok := tc["type"].(string)
 	if !ok {
+		if name, ok := tc["name"].(string); ok && name != "" {
+			return &types.ToolChoice{
+				Type: "tool",
+				Name: name,
+			}
+		}
 		return nil
 	}
 
-	switch objType {
+	switch strings.ToLower(objType) {
+	case "auto":
+		return &types.ToolChoice{Type: "auto"}
+	case "any", "required":
+		return &types.ToolChoice{Type: "any"}
+	case "none":
+		return nil
 	case "function":
-		if fn, ok := tc["function"].(map[string]interface{}); ok {
-			if name, ok := fn["name"].(string); ok {
-				return &types.ToolChoice{
-					Type: "tool",
-					Name: name,
-				}
-			}
+		if name := extractToolChoiceName(tc); name != "" {
+			return &types.ToolChoice{Type: "tool", Name: name}
+		}
+	case "tool":
+		if name := extractToolChoiceName(tc); name != "" {
+			return &types.ToolChoice{Type: "tool", Name: name}
 		}
 	}
 
@@ -138,6 +147,59 @@ func (c *ToolChoiceConverter) ConvertAnthropicToOpenAI(toolChoice *types.ToolCho
 			},
 		}
 	default:
+		return "auto"
+	}
+}
+
+// ConvertResponsesToOpenAI converts a Responses tool_choice to Chat Completions form.
+func (c *ToolChoiceConverter) ConvertResponsesToOpenAI(toolChoice interface{}) interface{} {
+	if toolChoice == nil {
+		return "auto"
+	}
+
+	switch tc := toolChoice.(type) {
+	case string:
+		return tc
+	case map[string]interface{}:
+		return c.convertResponsesObjectToOpenAI(tc)
+	case json.RawMessage:
+		parsed, err := UnmarshalToolChoice(tc)
+		if err != nil || parsed == nil {
+			return "auto"
+		}
+		return c.ConvertResponsesToOpenAI(parsed)
+	case *types.ToolChoice:
+		return c.ConvertAnthropicToOpenAI(tc)
+	default:
+		return "auto"
+	}
+}
+
+func (c *ToolChoiceConverter) convertResponsesObjectToOpenAI(tc map[string]interface{}) interface{} {
+	objType, _ := tc["type"].(string)
+	switch strings.ToLower(objType) {
+	case "auto", "none", "required":
+		return strings.ToLower(objType)
+	case "function", "tool":
+		name := extractToolChoiceName(tc)
+		if name == "" {
+			return "auto"
+		}
+		return map[string]interface{}{
+			"type": "function",
+			"function": map[string]interface{}{
+				"name": name,
+			},
+		}
+	default:
+		if name := extractToolChoiceName(tc); name != "" {
+			return map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name": name,
+				},
+			}
+		}
 		return "auto"
 	}
 }
@@ -211,9 +273,20 @@ type MaxTokensConverter struct {
 	defaultTokens int
 }
 
+// DefaultAnthropicMaxTokens is the shared default for Anthropic-bound requests.
+const DefaultAnthropicMaxTokens = 32768
+
 // NewMaxTokensConverter creates a new converter with the specified default.
 func NewMaxTokensConverter(defaultTokens int) *MaxTokensConverter {
 	return &MaxTokensConverter{defaultTokens: defaultTokens}
+}
+
+// ResolveAnthropicMaxTokens resolves Anthropic max_tokens, applying the shared default.
+func ResolveAnthropicMaxTokens(maxTokens int) int {
+	if maxTokens <= 0 {
+		return DefaultAnthropicMaxTokens
+	}
+	return maxTokens
 }
 
 // ResolveMaxTokens returns the max_tokens value, applying defaults if necessary.
@@ -234,6 +307,11 @@ var (
 // ConvertToolChoiceOpenAIToAnthropic is a convenience function using the global converter.
 func ConvertToolChoiceOpenAIToAnthropic(toolChoice interface{}) *types.ToolChoice {
 	return DefaultToolChoiceConverter.ConvertOpenAIToAnthropic(toolChoice)
+}
+
+// ConvertResponsesToolChoiceToOpenAI is a convenience function using the global converter.
+func ConvertResponsesToolChoiceToOpenAI(toolChoice interface{}) interface{} {
+	return DefaultToolChoiceConverter.ConvertResponsesToOpenAI(toolChoice)
 }
 
 // ConvertToolChoiceAnthropicToOpenAI is a convenience function using the global converter.
@@ -270,4 +348,31 @@ func UnmarshalToolChoice(data json.RawMessage) (interface{}, error) {
 	}
 
 	return nil, nil
+}
+
+func convertToolChoiceStringToAnthropic(value string) *types.ToolChoice {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "none":
+		return nil
+	case "required", "any":
+		return &types.ToolChoice{Type: "any"}
+	case "auto":
+		return &types.ToolChoice{Type: "auto"}
+	default:
+		return &types.ToolChoice{Type: "auto"}
+	}
+}
+
+func extractToolChoiceName(tc map[string]interface{}) string {
+	if name, ok := tc["name"].(string); ok && name != "" {
+		return name
+	}
+
+	if fn, ok := tc["function"].(map[string]interface{}); ok {
+		if name, ok := fn["name"].(string); ok && name != "" {
+			return name
+		}
+	}
+
+	return ""
 }

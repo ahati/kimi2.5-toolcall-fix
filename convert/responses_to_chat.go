@@ -54,16 +54,16 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 	}
 
 	chatReq := &types.ChatCompletionRequest{
-		Model:     req.Model,
-		MaxTokens: maxTokens,
-		// Force streaming mode - this proxy only supports SSE streaming
+		Model:       req.Model,
+		MaxTokens:   maxTokens,
 		Stream:      true,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
-		// Request usage statistics in the final streaming chunk
-		StreamOptions: &types.StreamOptions{
-			IncludeUsage: true,
-		},
+	}
+
+	// Request usage statistics in the final streaming chunk.
+	chatReq.StreamOptions = &types.StreamOptions{
+		IncludeUsage: true,
 	}
 
 	// Convert parallel_tool_calls if set
@@ -71,19 +71,22 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 		chatReq.ParallelToolCalls = &req.ParallelToolCalls
 	}
 
-	// Convert instructions to system message
-	if req.Instructions != "" {
-		chatReq.System = req.Instructions
-	}
-
 	// Convert input to messages
 	chatReq.Messages = c.convertInput(req.Input)
+
+	// Convert instructions to a prepended system message.
+	if req.Instructions != "" {
+		chatReq.Messages = append([]types.Message{{
+			Role:    "system",
+			Content: req.Instructions,
+		}}, chatReq.Messages...)
+	}
 
 	// Convert tools
 	chatReq.Tools = c.convertTools(req.Tools)
 
-	// Convert tool_choice
-	chatReq.ToolChoice = req.ToolChoice
+	// Convert tool_choice from Responses object form to Chat object form.
+	chatReq.ToolChoice = c.convertToolChoice(req.ToolChoice)
 
 	// Convert response_format
 	chatReq.ResponseFormat = req.ResponseFormat
@@ -93,7 +96,39 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 		chatReq.ReasoningEffort = req.Reasoning.Effort
 	}
 
+	// Convert metadata.user_id to user field
+	if req.Metadata != nil {
+		if userID, ok := req.Metadata["user_id"]; ok {
+			if s, ok := userID.(string); ok && s != "" {
+				chatReq.User = s
+			}
+		}
+	}
+
 	return chatReq
+}
+
+func (c *ResponsesToChatConverter) convertToolChoice(toolChoice interface{}) interface{} {
+	if toolChoice == nil {
+		return nil
+	}
+
+	raw, err := json.Marshal(toolChoice)
+	if err != nil {
+		return toolChoice
+	}
+
+	converted := ResponsesToolChoiceToChat(raw)
+	if len(converted) == 0 {
+		return toolChoice
+	}
+
+	var out interface{}
+	if err := json.Unmarshal(converted, &out); err != nil {
+		return toolChoice
+	}
+
+	return out
 }
 
 // convertInput transforms Responses API input to Chat Completions messages.
@@ -131,12 +166,37 @@ func (c *ResponsesToChatConverter) convertInput(input interface{}) []types.Messa
 	}
 }
 
-// convertInputItems converts an array of raw input items to messages.
-// Consecutive function_call items are grouped into a single assistant message with multiple tool_calls.
-func (c *ResponsesToChatConverter) convertInputItems(items []interface{}) []types.Message {
-	messages := make([]types.Message, 0, len(items))
+// inputItemGroup represents a logical grouping of input items
+// that should become a single Chat Completions message.
+// This handles the case where Codex sends function_call and message separately.
+type inputItemGroup struct {
+	itemType   string          // "message", "merged_assistant", "assistant_tool_calls", or "function_call_output"
+	message    *types.Message  // Parsed message content (for message items)
+	toolCalls  []types.ToolCall // Tool calls to merge (for function_call items)
+	toolOutput *types.Message  // Tool output message (for function_call_output items)
+}
 
-	var pendingToolCalls []types.ToolCall
+// groupProcessor holds state during input item processing.
+type groupProcessor struct {
+	groups           []inputItemGroup
+	pendingToolCalls []types.ToolCall
+	converter        *ResponsesToChatConverter
+}
+
+// convertInputItems converts an array of raw input items to messages.
+// It uses a two-phase approach: grouping then conversion.
+func (c *ResponsesToChatConverter) convertInputItems(items []interface{}) []types.Message {
+	groups := c.groupInputItems(items)
+	return c.convertGroupsToMessages(groups)
+}
+
+// groupInputItems iterates over input items and delegates to handlers.
+// Phase 1: Group related items that should become a single message.
+func (c *ResponsesToChatConverter) groupInputItems(items []interface{}) []inputItemGroup {
+	p := &groupProcessor{
+		groups:    make([]inputItemGroup, 0, len(items)),
+		converter: c,
+	}
 
 	for _, item := range items {
 		itemMap, ok := item.(map[string]interface{})
@@ -144,56 +204,159 @@ func (c *ResponsesToChatConverter) convertInputItems(items []interface{}) []type
 			continue
 		}
 
-		itemType, _ := itemMap["type"].(string)
-		switch itemType {
-		case "message":
-			// Flush any pending tool calls before adding a message
-			if len(pendingToolCalls) > 0 {
-				messages = append(messages, types.Message{
-					Role:      "assistant",
-					ToolCalls: pendingToolCalls,
-				})
-				pendingToolCalls = nil
-			}
-			msg := c.convertInputItemToMessage(itemMap)
-			if msg != nil {
-				messages = append(messages, *msg)
-			}
+		switch itemType, _ := itemMap["type"].(string); itemType {
 		case "function_call":
-			// Accumulate tool calls instead of creating separate messages
-			tc := c.extractToolCall(itemMap)
-			if tc != nil {
-				pendingToolCalls = append(pendingToolCalls, *tc)
-			}
+			p.handleFunctionCallItem(itemMap)
+		case "message":
+			p.handleMessageItem(itemMap)
 		case "function_call_output":
-			// Flush any pending tool calls before adding tool output
-			if len(pendingToolCalls) > 0 {
-				messages = append(messages, types.Message{
-					Role:      "assistant",
-					ToolCalls: pendingToolCalls,
-				})
-				pendingToolCalls = nil
-			}
-			msg := c.convertFunctionCallOutputToMessage(itemMap)
-			if msg != nil {
-				messages = append(messages, *msg)
-			}
+			p.handleFunctionCallOutputItem(itemMap)
 		}
 	}
 
-	// Flush any remaining pending tool calls
-	if len(pendingToolCalls) > 0 {
-		messages = append(messages, types.Message{
+	p.flushPendingToolCalls()
+	return p.groups
+}
+
+// handleFunctionCallItem accumulates function_call items into pendingToolCalls.
+func (p *groupProcessor) handleFunctionCallItem(itemMap map[string]interface{}) {
+	if tc := p.converter.parseFunctionCallItem(itemMap); tc != nil {
+		p.pendingToolCalls = append(p.pendingToolCalls, *tc)
+	}
+}
+
+// handleMessageItem handles message items, merging with pending tool calls if assistant.
+func (p *groupProcessor) handleMessageItem(itemMap map[string]interface{}) {
+	role, _ := itemMap["role"].(string)
+
+	// Check if this message has embedded tool_calls (combined format from prependHistoryToInput)
+	if toolCallsRaw, ok := itemMap["tool_calls"]; ok && role == "assistant" {
+		// Flush any pending tool calls first (they're orphaned)
+		if len(p.pendingToolCalls) > 0 {
+			p.flushPendingToolCalls()
+		}
+		// This is already a combined message with tool_calls
+		msg := &types.Message{
 			Role:      "assistant",
-			ToolCalls: pendingToolCalls,
+			ToolCalls: p.converter.extractToolCallsFromArray(toolCallsRaw),
+		}
+		if content, ok := itemMap["content"]; ok {
+			msg.Content = p.converter.convertContentToValue(content)
+		}
+		p.groups = append(p.groups, inputItemGroup{
+			itemType: "message",
+			message:  msg,
 		})
+		return
+	}
+
+	msg := p.converter.parseMessageItem(itemMap)
+
+	// If this is an assistant message and we have pending tool calls, MERGE them
+	if role == "assistant" && len(p.pendingToolCalls) > 0 {
+		p.groups = append(p.groups, inputItemGroup{
+			itemType:  "merged_assistant",
+			message:   msg,
+			toolCalls: p.pendingToolCalls,
+		})
+		p.pendingToolCalls = nil
+		return
+	}
+
+	// Flush any pending tool calls first (no assistant message to merge with)
+	if len(p.pendingToolCalls) > 0 {
+		p.flushPendingToolCalls()
+	}
+
+	// Add message as its own group
+	if msg != nil {
+		p.groups = append(p.groups, inputItemGroup{
+			itemType: "message",
+			message:  msg,
+		})
+	}
+}
+
+// handleFunctionCallOutputItem handles function_call_output items.
+func (p *groupProcessor) handleFunctionCallOutputItem(itemMap map[string]interface{}) {
+	// Flush any pending tool calls first
+	if len(p.pendingToolCalls) > 0 {
+		p.flushPendingToolCalls()
+	}
+
+	// Add tool output as its own group
+	if toolMsg := p.converter.parseFunctionCallOutputItem(itemMap); toolMsg != nil {
+		p.groups = append(p.groups, inputItemGroup{
+			itemType:   "function_call_output",
+			toolOutput: toolMsg,
+		})
+	}
+}
+
+// flushPendingToolCalls adds accumulated tool calls as a standalone group.
+func (p *groupProcessor) flushPendingToolCalls() {
+	if len(p.pendingToolCalls) == 0 {
+		return
+	}
+	p.groups = append(p.groups, inputItemGroup{
+		itemType:  "assistant_tool_calls",
+		toolCalls: p.pendingToolCalls,
+	})
+	p.pendingToolCalls = nil
+}
+
+// convertGroupsToMessages converts grouped items to Chat Completions messages.
+// Phase 2: Convert each group to its final message representation.
+func (c *ResponsesToChatConverter) convertGroupsToMessages(groups []inputItemGroup) []types.Message {
+	messages := make([]types.Message, 0, len(groups))
+
+	for _, group := range groups {
+		switch group.itemType {
+		case "merged_assistant":
+			// Combined assistant message with both content and tool_calls
+			msg := *group.message
+			msg.ToolCalls = group.toolCalls
+			messages = append(messages, msg)
+
+		case "assistant_tool_calls":
+			// Assistant message with only tool_calls (no content)
+			messages = append(messages, types.Message{
+				Role:      "assistant",
+				ToolCalls: group.toolCalls,
+			})
+
+		case "message":
+			messages = append(messages, *group.message)
+
+		case "function_call_output":
+			messages = append(messages, *group.toolOutput)
+		}
 	}
 
 	return messages
 }
 
-// extractToolCall extracts a ToolCall from a function_call input item map.
-func (c *ResponsesToChatConverter) extractToolCall(itemMap map[string]interface{}) *types.ToolCall {
+// parseMessageItem extracts a Message from a message input item.
+func (c *ResponsesToChatConverter) parseMessageItem(itemMap map[string]interface{}) *types.Message {
+	role, _ := itemMap["role"].(string)
+	if role == "" {
+		role = "user"
+	}
+	if role == "developer" {
+		role = "system"
+	}
+
+	msg := &types.Message{Role: role}
+
+	if content, ok := itemMap["content"]; ok {
+		msg.Content = c.convertContentToValue(content)
+	}
+
+	return msg
+}
+
+// parseFunctionCallItem extracts a ToolCall from a function_call input item.
+func (c *ResponsesToChatConverter) parseFunctionCallItem(itemMap map[string]interface{}) *types.ToolCall {
 	name, _ := itemMap["name"].(string)
 	arguments, _ := itemMap["arguments"].(string)
 	callID, _ := itemMap["call_id"].(string)
@@ -215,128 +378,8 @@ func (c *ResponsesToChatConverter) extractToolCall(itemMap map[string]interface{
 	}
 }
 
-// convertInputItemsFromTyped converts typed InputItem array to messages.
-// Handles message, function_call, and function_call_output input items.
-func (c *ResponsesToChatConverter) convertInputItemsFromTyped(items []types.InputItem) []types.Message {
-	messages := make([]types.Message, 0, len(items))
-
-	var pendingToolCalls []types.ToolCall
-
-	for _, item := range items {
-		switch item.Type {
-		case "message":
-			// Flush any pending tool calls before adding a message
-			if len(pendingToolCalls) > 0 {
-				messages = append(messages, types.Message{
-					Role:      "assistant",
-					ToolCalls: pendingToolCalls,
-				})
-				pendingToolCalls = nil
-			}
-
-			role := item.Role
-			if role == "developer" {
-				role = "system"
-			}
-
-			msg := types.Message{
-				Role: role,
-			}
-
-			switch content := item.Content.(type) {
-			case string:
-				msg.Content = content
-			case []interface{}:
-				msg.Content = c.convertContent(content)
-			default:
-				msg.Content = item.Content
-			}
-
-			messages = append(messages, msg)
-
-		case "function_call":
-			// Accumulate tool calls
-			callID := item.CallID
-			if callID == "" {
-				callID = item.ID
-			}
-			if item.Name != "" {
-				pendingToolCalls = append(pendingToolCalls, types.ToolCall{
-					ID:   callID,
-					Type: "function",
-					Function: types.Function{
-						Name:      item.Name,
-						Arguments: item.Arguments,
-					},
-				})
-			}
-
-		case "function_call_output":
-			// Flush any pending tool calls before adding tool output
-			if len(pendingToolCalls) > 0 {
-				messages = append(messages, types.Message{
-					Role:      "assistant",
-					ToolCalls: pendingToolCalls,
-				})
-				pendingToolCalls = nil
-			}
-
-			callID := item.CallID
-			if callID == "" {
-				callID = item.ToolCallID
-			}
-			if callID != "" {
-				messages = append(messages, types.Message{
-					Role:       "tool",
-					ToolCallID: callID,
-					Content:    item.Output,
-				})
-			}
-		}
-	}
-
-	// Flush any remaining pending tool calls
-	if len(pendingToolCalls) > 0 {
-		messages = append(messages, types.Message{
-			Role:      "assistant",
-			ToolCalls: pendingToolCalls,
-		})
-	}
-
-	return messages
-}
-
-// convertInputItemToMessage converts a single input item map to a Message.
-func (c *ResponsesToChatConverter) convertInputItemToMessage(itemMap map[string]interface{}) *types.Message {
-	role, _ := itemMap["role"].(string)
-	if role == "" {
-		role = "user"
-	}
-
-	if role == "developer" {
-		role = "system"
-	}
-
-	msg := &types.Message{
-		Role: role,
-	}
-
-	if content, ok := itemMap["content"]; ok {
-		switch v := content.(type) {
-		case string:
-			msg.Content = v
-		case []interface{}:
-			msg.Content = c.convertContent(v)
-		default:
-			msg.Content = content
-		}
-	}
-
-	return msg
-}
-
-// convertFunctionCallOutputToMessage converts a function_call_output input item to a tool message.
-func (c *ResponsesToChatConverter) convertFunctionCallOutputToMessage(itemMap map[string]interface{}) *types.Message {
+// parseFunctionCallOutputItem extracts a tool Message from a function_call_output input item.
+func (c *ResponsesToChatConverter) parseFunctionCallOutputItem(itemMap map[string]interface{}) *types.Message {
 	callID, _ := itemMap["call_id"].(string)
 	if callID == "" {
 		callID, _ = itemMap["tool_call_id"].(string)
@@ -347,13 +390,84 @@ func (c *ResponsesToChatConverter) convertFunctionCallOutputToMessage(itemMap ma
 		return nil
 	}
 
-	msg := &types.Message{
+	return &types.Message{
 		Role:       "tool",
 		ToolCallID: callID,
 		Content:    output,
 	}
+}
 
-	return msg
+// extractToolCallsFromArray extracts ToolCall slice from a tool_calls array.
+func (c *ResponsesToChatConverter) extractToolCallsFromArray(toolCallsRaw interface{}) []types.ToolCall {
+	if toolCallsRaw == nil {
+		return nil
+	}
+
+	var toolCalls []types.ToolCall
+
+	switch v := toolCallsRaw.(type) {
+	case []interface{}:
+		for _, tc := range v {
+			if tcMap, ok := tc.(map[string]interface{}); ok {
+				if extracted := c.parseFunctionCallItem(tcMap); extracted != nil {
+					toolCalls = append(toolCalls, *extracted)
+				}
+			}
+		}
+	}
+
+	return toolCalls
+}
+
+// convertContentToValue converts content to an appropriate value for Message.Content.
+func (c *ResponsesToChatConverter) convertContentToValue(content interface{}) interface{} {
+	if content == nil {
+		return nil
+	}
+
+	switch v := content.(type) {
+	case string:
+		return v
+	case []interface{}:
+		return c.convertContent(v)
+	default:
+		return content
+	}
+}
+
+// convertInputItemsFromTyped converts typed InputItem array to messages.
+// It uses the same merge logic as convertInputItems for consistency.
+func (c *ResponsesToChatConverter) convertInputItemsFromTyped(items []types.InputItem) []types.Message {
+	// Convert typed items to generic format for grouping
+	genericItems := make([]interface{}, len(items))
+	for i, item := range items {
+		itemMap := map[string]interface{}{"type": item.Type}
+		if item.Role != "" {
+			itemMap["role"] = item.Role
+		}
+		if item.Content != nil {
+			itemMap["content"] = item.Content
+		}
+		if item.CallID != "" {
+			itemMap["call_id"] = item.CallID
+		}
+		if item.ID != "" {
+			itemMap["id"] = item.ID
+		}
+		if item.Name != "" {
+			itemMap["name"] = item.Name
+		}
+		if item.Arguments != "" {
+			itemMap["arguments"] = item.Arguments
+		}
+		if item.Output != "" {
+			itemMap["output"] = item.Output
+		}
+		genericItems[i] = itemMap
+	}
+
+	// Reuse the same grouping logic
+	return c.convertInputItems(genericItems)
 }
 
 // convertContentParts converts Responses API content parts to Chat format.
@@ -366,7 +480,7 @@ func (c *ResponsesToChatConverter) extractTextFromParts(parts []interface{}) str
 		}
 		partType, _ := partMap["type"].(string)
 		switch partType {
-		case "input_text", "text", "output_text":
+		case "input_text", "text", "output_text", "refusal":
 			if text, ok := partMap["text"].(string); ok {
 				if result.Len() > 0 {
 					result.WriteString("\n")
@@ -395,7 +509,7 @@ func (c *ResponsesToChatConverter) hasNonTextParts(parts []interface{}) bool {
 			continue
 		}
 		partType, _ := partMap["type"].(string)
-		if partType != "input_text" && partType != "text" && partType != "output_text" && partType != "input_file" {
+		if partType != "input_text" && partType != "text" && partType != "output_text" && partType != "input_file" && partType != "refusal" {
 			return true
 		}
 	}
@@ -420,8 +534,8 @@ func (c *ResponsesToChatConverter) convertContentParts(parts []interface{}) []in
 
 		partType, _ := partMap["type"].(string)
 		switch partType {
-		case "input_text", "output_text":
-			// Convert input_text and output_text to text
+		case "input_text", "output_text", "refusal":
+			// Convert input_text, output_text, and refusal to text
 			if text, ok := partMap["text"].(string); ok {
 				result = append(result, map[string]interface{}{
 					"type": "text",

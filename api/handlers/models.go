@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"ai-proxy/config"
-	"ai-proxy/proxy"
 
 	"github.com/gin-gonic/gin"
 )
@@ -62,7 +61,7 @@ func (h *ModelsHandler) Handle(c *gin.Context) {
 	modelsURL := h.buildModelsURL()
 
 	// Create HTTP client for upstream request
-	client := proxy.NewClient(modelsURL, apiKey)
+	client := newUpstreamClient(modelsURL, apiKey)
 	// Ensure connection resources are released
 	defer client.Close()
 

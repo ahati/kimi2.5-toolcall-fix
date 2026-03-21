@@ -38,12 +38,12 @@ go mod tidy
 
 ### Imports
 
-Group imports: standard library, external packages (github.com), then internal packages (ai-proxy/...). Blank lines between groups. No import aliases unless necessary.
+Group imports: standard library, external packages (github.com), then internal packages (ai-proxy/...). Blank lines between groups. No import aliases.
 
 ```go
 import (
     "context"
-    "fmt"
+    "encoding/json"
     "io"
 
     "github.com/gin-gonic/gin"
@@ -93,16 +93,29 @@ func readBody(c *gin.Context) ([]byte, error) {
 }
 ```
 
+### Documentation Comments
+
+Use structured doc comments with annotations on exported functions:
+
+```go
+// FunctionName does something.
+//
+// @param name - description
+// @return description
+// @pre precondition if any
+// @post postcondition if any
+// @note additional notes
+```
+
 ### Context
 
 - Pass `context.Context` as first parameter for functions making HTTP requests or I/O
 - Use `c.Request.Context()` to get request context in handlers
-- Respect context cancellation in long-running operations
 
 ### HTTP Handlers
 
 - Use Gin framework for HTTP handlers
-- Return appropriate HTTP status codes
+- Handlers implement the `Handler` interface with methods: `ValidateRequest`, `TransformRequest`, `UpstreamURL`, `ResolveAPIKey`, `ForwardHeaders`, `CreateTransformer`, `WriteError`
 - Always close response bodies
 
 ### Testing
@@ -110,7 +123,7 @@ func readBody(c *gin.Context) ([]byte, error) {
 - Tests in `*_test.go` files in same package
 - Use table-driven tests when testing multiple cases
 - Test naming: `TestFunctionName_Scenario` (e.g., `TestChatToResponsesTransformer_ToolCalls`)
-- Use `t.Fatalf` or `t.Errorf` for failures
+- Use `t.Fatalf` for fatal failures, `t.Errorf` for non-fatal
 
 ```go
 func TestFunctionName_Scenario(t *testing.T) {
@@ -139,7 +152,8 @@ func TestFunctionName_Scenario(t *testing.T) {
 
 ### Logging
 
-- Use `ai-proxy/logging` package: `logging.InfoMsg` and `logging.ErrorMsg`
+- Use `ai-proxy/logging` package
+- Functions: `logging.InfoMsg`, `logging.ErrorMsg`, `logging.DebugMsg`
 
 ## Project Structure
 
@@ -147,17 +161,18 @@ func TestFunctionName_Scenario(t *testing.T) {
 ├── main.go              # Entry point
 ├── api/
 │   ├── server.go        # Server setup and routing
-│   ├── middleware.go   # Capture middleware
-│   └── handlers/       # HTTP endpoint handlers
+│   ├── middleware.go    # Capture middleware
+│   └── handlers/        # HTTP endpoint handlers
 ├── capture/             # Request/response capture and logging
 ├── config/              # Configuration loading (JSON + flags + env)
 ├── convert/             # Format conversions (OpenAI↔Anthropic↔Responses)
+├── conversation/        # Conversation store for previous_response_id
 ├── logging/             # Logging utilities
 ├── proxy/               # Upstream API client
 ├── router/              # Model-to-provider routing
 ├── tokens/              # Token counting utilities
 ├── transform/           # SSE stream transformations
-│   └── toolcall/       # Tool call parsing and formatting
+│   └── toolcall/        # Tool call parsing and formatting
 └── types/               # Shared types (OpenAI, Anthropic, SSE)
 ```
 
@@ -170,18 +185,6 @@ func TestFunctionName_Scenario(t *testing.T) {
 | POST | `/v1/chat/completions` | OpenAI-compatible chat completions |
 | POST | `/v1/messages` | Anthropic Messages API |
 | POST | `/v1/responses` | OpenAI Responses API |
-
-## Common Tasks
-
-### Adding a new endpoint
-
-1. Add handler in `api/handlers/`
-2. Register route in `api/server.go`
-
-### Modifying SSE handling
-
-- SSE parsing via `github.com/tmaxmax/go-sse`
-- Transformers implement `transform.SSETransformer` interface
 
 ## Git Conventions
 

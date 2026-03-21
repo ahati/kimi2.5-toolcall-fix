@@ -41,9 +41,10 @@ type ResponsesTransformer struct {
 	inReasoning bool
 
 	// Content builders
-	textContent      strings.Builder
-	toolArgs         strings.Builder
-	reasoningContent strings.Builder
+	textContent          strings.Builder
+	toolArgs             strings.Builder
+	reasoningContent     strings.Builder
+	extractedToolArgs    strings.Builder // Args for tool calls extracted from thinking content
 
 	// Output tracking
 	outputIndex     int    // Current output index counter (0-indexed)
@@ -679,6 +680,11 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 		var thinkingDelta types.ThinkingDelta
 		if err := json.Unmarshal(event.Delta, &thinkingDelta); err == nil && thinkingDelta.Type == "thinking_delta" {
 			if t.inReasoning {
+				// Check if content contains tool call markup
+				if !t.parser.IsIdle() || t.parser.tokens.ContainsAny(thinkingDelta.Thinking) {
+					return t.processThinkingWithToolCalls(thinkingDelta.Thinking)
+				}
+				// Normal thinking content - pass through
 				t.reasoningContent.WriteString(thinkingDelta.Thinking)
 				reasoningID := t.getReasoningID()
 				seqNum := t.nextSequenceNumber()
@@ -698,6 +704,86 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 	}
 
 	return nil
+}
+
+// processThinkingWithToolCalls handles thinking content that contains tool call markup.
+// It extracts tool calls and emits appropriate Responses API events.
+func (t *ResponsesTransformer) processThinkingWithToolCalls(text string) error {
+	logging.InfoMsg("[%s] Tool call markup detected in thinking content, extracting tool calls", t.messageID)
+
+	events := t.parser.Parse(text)
+	for _, e := range events {
+		if err := t.writeParserEvent(e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeParserEvent converts a parser Event to Responses API format.
+func (t *ResponsesTransformer) writeParserEvent(e Event) error {
+	switch e.Type {
+	case EventContent:
+		// Regular thinking content - emit as reasoning summary delta
+		if e.Text != "" {
+			t.reasoningContent.WriteString(e.Text)
+			reasoningID := t.getReasoningID()
+			seqNum := t.nextSequenceNumber()
+			return t.write(t.formatter.FormatReasoningSummaryDelta(reasoningID, e.Text, t.reasoningOutputIndex, t.summaryIndex, seqNum))
+		}
+	case EventToolStart:
+		// Start a new function_call output item
+		t.extractedToolArgs.Reset() // Reset args builder for new tool call
+		return t.emitToolCallStart(e.ID, e.Name)
+	case EventToolArgs:
+		// Accumulate and emit function call arguments delta
+		t.extractedToolArgs.WriteString(e.Args)
+		seqNum := t.nextSequenceNumber()
+		return t.write(t.formatter.FormatFunctionCallArgsDelta(e.ID, e.ID, e.Args, t.toolCallOutputIndex, seqNum))
+	case EventToolEnd:
+		// End the function_call output item
+		args := t.extractedToolArgs.String()
+		return t.emitToolCallEnd(e.ID, e.Name, args)
+	case EventSectionEnd:
+		// Tool calls section ended - continue with reasoning if there's more content
+	}
+	return nil
+}
+
+// emitToolCallStart emits the necessary events to start a function_call output item.
+// It may need to close the current reasoning item first if it has no content.
+func (t *ResponsesTransformer) emitToolCallStart(id, name string) error {
+	// If we're in reasoning and have accumulated content, keep the reasoning item.
+	// If we're in reasoning but have no content, we can close it.
+
+	// Start new function_call output item
+	outputIdx := t.outputIndex
+	t.toolCallOutputIndex = outputIdx
+	t.outputIndex++
+	t.currentID = id
+	t.currentToolName = name
+	t.inToolCall = true
+
+	seqNum := t.nextSequenceNumber()
+	return t.write(t.formatter.FormatFunctionCallItemAdded(id, name, outputIdx, seqNum))
+}
+
+// emitToolCallEnd emits the necessary events to end a function_call output item.
+func (t *ResponsesTransformer) emitToolCallEnd(id, name, args string) error {
+	t.inToolCall = false
+
+	// Track tool call in output items
+	toolItem := map[string]interface{}{
+		"type":      "function_call",
+		"id":        id,
+		"call_id":   id,
+		"name":      name,
+		"arguments": args,
+	}
+	t.outputItems = append(t.outputItems, toolItem)
+
+	seqNum := t.nextSequenceNumber()
+	return t.write(t.formatter.FormatFunctionCallItemDone(id, name, args, t.toolCallOutputIndex, seqNum))
 }
 
 func (t *ResponsesTransformer) handleContentBlockStop(event types.Event) error {
@@ -730,6 +816,20 @@ func (t *ResponsesTransformer) handleContentBlockStop(event types.Event) error {
 
 	if t.inReasoning {
 		t.inReasoning = false
+
+		// Flush any remaining parser state (in case tool calls were being parsed)
+		for {
+			events := t.parser.Parse("")
+			if len(events) == 0 {
+				break
+			}
+			for _, e := range events {
+				if err := t.writeParserEvent(e); err != nil {
+					return err
+				}
+			}
+		}
+
 		summary := t.reasoningContent.String()
 		reasoningID := t.getReasoningID()
 		outputIdx := t.reasoningOutputIndex

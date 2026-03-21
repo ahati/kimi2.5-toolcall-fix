@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"ai-proxy/config"
+	"ai-proxy/router"
 
 	"github.com/gin-gonic/gin"
 )
@@ -102,6 +104,62 @@ func TestCompletionsHandler_UpstreamURL(t *testing.T) {
 	expectedURL := "https://api.example.com/v1/chat/completions"
 	if got := h.UpstreamURL(); got != expectedURL {
 		t.Errorf("UpstreamURL() = %v, want %v", got, expectedURL)
+	}
+}
+
+func TestCompletionsHandler_UpstreamURL_AnthropicProvider(t *testing.T) {
+	tests := []struct {
+		name         string
+		provider     config.Provider
+		routeModel   string
+		wantEndpoint string
+	}{
+		{
+			name: "OpenAI provider uses /chat/completions",
+			provider: config.Provider{
+				Name:    "openai",
+				Type:    "openai",
+				BaseURL: "https://api.openai.com/v1",
+			},
+			routeModel:   "gpt-4",
+			wantEndpoint: "/chat/completions",
+		},
+		{
+			name: "Anthropic provider uses /v1/messages",
+			provider: config.Provider{
+				Name:    "anthropic",
+				Type:    "anthropic",
+				BaseURL: "https://api.anthropic.com",
+			},
+			routeModel:   "claude-3-opus",
+			wantEndpoint: "/v1/messages",
+		},
+		{
+			name: "Anthropic provider with existing /v1/messages in base URL",
+			provider: config.Provider{
+				Name:    "anthropic",
+				Type:    "anthropic",
+				BaseURL: "https://api.anthropic.com/v1/messages",
+			},
+			routeModel:   "claude-3-opus",
+			wantEndpoint: "/v1/messages",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &CompletionsHandler{
+				route: &router.ResolvedRoute{
+					Provider: tt.provider,
+					Model:    tt.routeModel,
+				},
+			}
+
+			got := h.UpstreamURL()
+			if !strings.HasSuffix(got, tt.wantEndpoint) {
+				t.Errorf("UpstreamURL() = %v, want endpoint %v", got, tt.wantEndpoint)
+			}
+		})
 	}
 }
 

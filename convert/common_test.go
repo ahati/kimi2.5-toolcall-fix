@@ -3,6 +3,7 @@ package convert
 import (
 	"ai-proxy/types"
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -107,7 +108,7 @@ func TestConvertAnthropicMessagesToOpenAI(t *testing.T) {
 			expected: []types.Message{
 				{
 					Role:       "user",
-					Content:    "",
+					Content:    "Sunny, 25°C",
 					ToolCallID: "call_123",
 				},
 			},
@@ -211,6 +212,69 @@ func TestConvertOpenAIMessagesToAnthropic(t *testing.T) {
 			expected: []types.MessageInput{
 				{
 					Role: "assistant",
+				},
+			},
+		},
+		{
+			name: "consecutive tool messages are batched",
+			input: []types.Message{
+				{
+					Role:       "tool",
+					Content:    "Result 1",
+					ToolCallID: "call_1",
+				},
+				{
+					Role:       "tool",
+					Content:    "Result 2",
+					ToolCallID: "call_2",
+				},
+			},
+			expected: []types.MessageInput{
+				{
+					Role: "user",
+					Content: []interface{}{
+						map[string]interface{}{
+							"type":        "tool_result",
+							"tool_use_id": "call_1",
+							"content":     "Result 1",
+						},
+						map[string]interface{}{
+							"type":        "tool_result",
+							"tool_use_id": "call_2",
+							"content":     "Result 2",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "tool messages separated by other messages are not batched",
+			input: []types.Message{
+				{
+					Role:       "tool",
+					Content:    "Result 1",
+					ToolCallID: "call_1",
+				},
+				{
+					Role:    "assistant",
+					Content: "Let me check that.",
+				},
+				{
+					Role:       "tool",
+					Content:    "Result 2",
+					ToolCallID: "call_2",
+				},
+			},
+			expected: []types.MessageInput{
+				{
+					Role: "user",
+				},
+				{
+					Role:    "assistant",
+					Content: "Let me check that.",
+				},
+				{
+					Role: "user",
 				},
 			},
 		},
@@ -547,7 +611,7 @@ func TestConvertContentBlocks(t *testing.T) {
 					"content":     "Sunny",
 				},
 			},
-			expectedText:       "",
+			expectedText:       "Sunny",
 			expectedToolCalls:  0,
 			expectedToolCallID: "call_123",
 		},
@@ -781,5 +845,296 @@ func TestExtractBase64Data(t *testing.T) {
 				t.Errorf("expected %q, got %q", tt.expected, result)
 			}
 		})
+	}
+}
+
+// TestFlattenToolResultContent tests canonical tool_result flattening.
+func TestFlattenToolResultContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    interface{}
+		expected string
+	}{
+		{
+			name:     "nil",
+			input:    nil,
+			expected: "",
+		},
+		{
+			name:     "string",
+			input:    "Sunny, 25°C",
+			expected: "Sunny, 25°C",
+		},
+		{
+			name: "mixed block array",
+			input: []interface{}{
+				map[string]interface{}{"type": "text", "text": "Result"},
+				map[string]interface{}{"type": "image", "source": map[string]interface{}{"type": "url", "url": "https://example.com"}},
+				map[string]interface{}{"type": "text", "text": "Done"},
+			},
+			expected: "Result\nDone",
+		},
+		{
+			name: "thinking is ignored",
+			input: []interface{}{
+				map[string]interface{}{"type": "thinking", "thinking": "internal"},
+				map[string]interface{}{"type": "output_text", "text": "Visible"},
+			},
+			expected: "Visible",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FlattenToolResultContent(tt.input); got != tt.expected {
+				t.Errorf("FlattenToolResultContent() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestExtractSystemText tests system extraction from Anthropic system payloads.
+func TestExtractSystemText(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    interface{}
+		expected string
+	}{
+		{
+			name:     "json string",
+			input:    json.RawMessage(`"You are helpful."`),
+			expected: "You are helpful.",
+		},
+		{
+			name:     "raw block array",
+			input:    json.RawMessage(`[{"type":"text","text":"You are helpful."},{"type":"text","text":"Be concise."}]`),
+			expected: "You are helpful.Be concise.",
+		},
+		{
+			name: "structured blocks preserve order",
+			input: []interface{}{
+				map[string]interface{}{"type": "text", "text": "One"},
+				map[string]interface{}{"type": "text", "text": "Two"},
+			},
+			expected: "OneTwo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ExtractSystemText(tt.input); got != tt.expected {
+				t.Errorf("ExtractSystemText() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestImageHelpers tests image URL and data URI helper round-trips.
+func TestImageHelpers(t *testing.T) {
+	dataURL := "data:image/png;base64,abc123"
+	source, err := OpenAIImageURLToAnthropicSource(dataURL)
+	if err != nil {
+		t.Fatalf("OpenAIImageURLToAnthropicSource(data URL) returned error: %v", err)
+	}
+	if source.Type != "base64" || source.MediaType != "image/png" || source.Data != "abc123" {
+		t.Fatalf("unexpected source from data URL: %+v", source)
+	}
+
+	if got, err := AnthropicImageSourceToURL(source); err != nil || got != dataURL {
+		t.Fatalf("AnthropicImageSourceToURL(data URL) = %q, %v", got, err)
+	}
+
+	chatPart, err := BuildChatImagePartFromAnthropicSource(source)
+	if err != nil {
+		t.Fatalf("BuildChatImagePartFromAnthropicSource returned error: %v", err)
+	}
+	expectedChatPart := map[string]interface{}{
+		"type": "image_url",
+		"image_url": map[string]interface{}{
+			"url": dataURL,
+		},
+	}
+	if !reflect.DeepEqual(chatPart, expectedChatPart) {
+		t.Fatalf("unexpected chat image part: got %#v want %#v", chatPart, expectedChatPart)
+	}
+
+	responsesPart, err := BuildResponsesImagePartFromAnthropicSource(source)
+	if err != nil {
+		t.Fatalf("BuildResponsesImagePartFromAnthropicSource returned error: %v", err)
+	}
+	if responsesPart.Type != "input_image" || responsesPart.ImageURL != dataURL {
+		t.Fatalf("unexpected responses image part: %+v", responsesPart)
+	}
+
+	urlSource, err := OpenAIImageURLToAnthropicSource("https://example.com/image.png")
+	if err != nil {
+		t.Fatalf("OpenAIImageURLToAnthropicSource(url) returned error: %v", err)
+	}
+	if urlSource.Type != "url" || urlSource.URL != "https://example.com/image.png" {
+		t.Fatalf("unexpected URL source: %+v", urlSource)
+	}
+	if got, err := AnthropicImageSourceToURL(urlSource); err != nil || got != "https://example.com/image.png" {
+		t.Fatalf("AnthropicImageSourceToURL(url) = %q, %v", got, err)
+	}
+}
+
+// TestToolChoiceHelpers tests tool choice normalization helpers.
+func TestToolChoiceHelpers(t *testing.T) {
+	anthropicCases := []struct {
+		name     string
+		input    interface{}
+		expected *types.ToolChoice
+	}{
+		{
+			name:     "string auto",
+			input:    "auto",
+			expected: &types.ToolChoice{Type: "auto"},
+		},
+		{
+			name:     "string required",
+			input:    "required",
+			expected: &types.ToolChoice{Type: "any"},
+		},
+		{
+			name:  "string none",
+			input: "none",
+		},
+		{
+			name:     "flat responses object",
+			input:    map[string]interface{}{"type": "function", "name": "search"},
+			expected: &types.ToolChoice{Type: "tool", Name: "search"},
+		},
+		{
+			name:     "nested function object",
+			input:    map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": "search"}},
+			expected: &types.ToolChoice{Type: "tool", Name: "search"},
+		},
+	}
+
+	for _, tt := range anthropicCases {
+		t.Run("anthropic_"+tt.name, func(t *testing.T) {
+			got := ConvertToolChoiceOpenAIToAnthropic(tt.input)
+			if tt.expected == nil {
+				if got != nil {
+					t.Fatalf("expected nil, got %+v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected %+v, got nil", tt.expected)
+			}
+			if got.Type != tt.expected.Type || got.Name != tt.expected.Name {
+				t.Fatalf("got %+v, want %+v", got, tt.expected)
+			}
+		})
+	}
+
+	responsesCases := []struct {
+		name     string
+		input    interface{}
+		expected interface{}
+	}{
+		{
+			name:     "string auto",
+			input:    "auto",
+			expected: "auto",
+		},
+		{
+			name:     "flat responses object",
+			input:    map[string]interface{}{"type": "function", "name": "search"},
+			expected: map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": "search"}},
+		},
+		{
+			name:     "nested function object",
+			input:    map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": "search"}},
+			expected: map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": "search"}},
+		},
+	}
+
+	for _, tt := range responsesCases {
+		t.Run("responses_"+tt.name, func(t *testing.T) {
+			got := ConvertResponsesToolChoiceToOpenAI(tt.input)
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Fatalf("got %#v, want %#v", got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestNormalizeAnthropicMessages tests Anthropic alternation normalization.
+func TestNormalizeAnthropicMessages(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []types.MessageInput
+		expected []types.MessageInput
+	}{
+		{
+			name: "starts with assistant",
+			input: []types.MessageInput{
+				{Role: "assistant", Content: "Hi"},
+			},
+			expected: []types.MessageInput{
+				{Role: "user", Content: []interface{}{}},
+				{Role: "assistant", Content: "Hi"},
+			},
+		},
+		{
+			name: "consecutive same roles",
+			input: []types.MessageInput{
+				{Role: "user", Content: "One"},
+				{Role: "user", Content: "Two"},
+				{Role: "assistant", Content: "Three"},
+			},
+			expected: []types.MessageInput{
+				{Role: "user", Content: "One"},
+				{Role: "assistant", Content: []interface{}{}},
+				{Role: "user", Content: "Two"},
+				{Role: "assistant", Content: "Three"},
+			},
+		},
+		{
+			name: "already alternating",
+			input: []types.MessageInput{
+				{Role: "user", Content: "One"},
+				{Role: "assistant", Content: "Two"},
+			},
+			expected: []types.MessageInput{
+				{Role: "user", Content: "One"},
+				{Role: "assistant", Content: "Two"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NormalizeAnthropicMessages(tt.input)
+			if len(got) != len(tt.expected) {
+				t.Fatalf("len(got) = %d, want %d", len(got), len(tt.expected))
+			}
+			for i := range got {
+				if got[i].Role != tt.expected[i].Role {
+					t.Fatalf("message %d role = %q, want %q", i, got[i].Role, tt.expected[i].Role)
+				}
+				if !reflect.DeepEqual(got[i].Content, tt.expected[i].Content) {
+					t.Fatalf("message %d content = %#v, want %#v", i, got[i].Content, tt.expected[i].Content)
+				}
+			}
+		})
+	}
+}
+
+// TestAnthropicNormalizationHelpers tests temperature and max token helpers.
+func TestAnthropicNormalizationHelpers(t *testing.T) {
+	if got := ClampTemperatureToAnthropic(-1); got != 0 {
+		t.Fatalf("ClampTemperatureToAnthropic(-1) = %v, want 0", got)
+	}
+	if got := NormalizeAnthropicTemperature(1.7); got != 1 {
+		t.Fatalf("NormalizeAnthropicTemperature(1.7) = %v, want 1", got)
+	}
+	if got := ResolveAnthropicMaxTokens(0); got != DefaultAnthropicMaxTokens {
+		t.Fatalf("ResolveAnthropicMaxTokens(0) = %d, want %d", got, DefaultAnthropicMaxTokens)
+	}
+	if got := ResolveAnthropicMaxTokens(2048); got != 2048 {
+		t.Fatalf("ResolveAnthropicMaxTokens(2048) = %d, want 2048", got)
 	}
 }

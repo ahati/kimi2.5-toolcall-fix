@@ -932,3 +932,107 @@ func TestChatToResponsesTransformer_OutputOrdering(t *testing.T) {
 		t.Errorf("Message (index %d) should come before tool calls (index %d)", messageIdx, toolCallIdx)
 	}
 }
+
+// TestChatToResponsesTransformer_ToolCallsInReasoning tests tool call extraction from reasoning content.
+// This verifies that when Kimi models emit tool calls inside reasoning blocks using proprietary markup,
+// they are correctly extracted and converted to function_call output items.
+func TestChatToResponsesTransformer_ToolCallsInReasoning(t *testing.T) {
+	tests := []struct {
+		name                string
+		toolCallTransform   bool
+		chunks              []types.Chunk
+		validate            func(t *testing.T, output string)
+	}{
+		{
+			name:              "tool call extraction enabled - single tool call",
+			toolCallTransform: true,
+			chunks: []types.Chunk{
+				{
+					ID:      "chatcmpl-123",
+					Model:   "kimi-k2.5",
+					Created: 1234567890,
+					Choices: []types.Choice{{
+						Index: 0,
+						Delta: types.Delta{
+							ReasoningContent: "Let me help you.<|tool_calls_section_begin|><|tool_call_begin|>bash:32<|tool_call_argument_begin|>{\"cmd\":\"ls\"}<|tool_call_end|><|tool_calls_section_end|>",
+						},
+					}},
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Should contain function_call output item
+				if !strings.Contains(output, `"type":"function_call"`) {
+					t.Error("Expected function_call in output")
+				}
+				// Should contain function name
+				if !strings.Contains(output, `"name":"bash"`) {
+					t.Error("Expected function name 'bash' in output")
+				}
+				// Should contain function_call_arguments.delta for the args
+				if !strings.Contains(output, `"type":"response.function_call_arguments.delta"`) {
+					t.Error("Expected response.function_call_arguments.delta")
+				}
+				// Should contain the arguments
+				if !strings.Contains(output, `"cmd\":\"ls\"`) {
+					t.Error("Expected arguments in output")
+				}
+			},
+		},
+		{
+			name:              "tool call extraction disabled - markup passed through",
+			toolCallTransform: false,
+			chunks: []types.Chunk{
+				{
+					ID:      "chatcmpl-456",
+					Model:   "kimi-k2.5",
+					Created: 1234567890,
+					Choices: []types.Choice{{
+						Index: 0,
+						Delta: types.Delta{
+							ReasoningContent: "Thinking...<|tool_calls_section_begin|><|tool_call_begin|>test<|tool_call_argument_begin|>{}<|tool_call_end|><|tool_calls_section_end|>",
+						},
+					}},
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Should NOT contain function_call - markup should be passed as reasoning
+				if strings.Contains(output, `"type":"function_call"`) {
+					t.Error("Should NOT contain function_call when extraction is disabled")
+				}
+				// Should contain reasoning type
+				if !strings.Contains(output, `"type":"reasoning"`) {
+					t.Errorf("Expected reasoning in output, got: %s", output)
+				}
+				// Should contain the raw markup in reasoning text (JSON-escaped)
+				// The markup contains < and > which get JSON-escaped to \u003c and \u003e
+				if !strings.Contains(output, "tool_calls_section_begin") {
+					t.Errorf("Expected raw markup in output when extraction is disabled, got: %s", output)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			transformer := NewChatToResponsesTransformer(&buf)
+			transformer.SetToolCallTransform(tt.toolCallTransform)
+
+			for _, chunk := range tt.chunks {
+				data, _ := json.Marshal(chunk)
+				err := transformer.Transform(&sse.Event{Data: string(data)})
+				if err != nil {
+					t.Errorf("Transform returned error: %v", err)
+				}
+			}
+
+			// Close to finalize
+			transformer.Close()
+
+			output := buf.String()
+			if tt.validate != nil {
+				tt.validate(t, output)
+			}
+		})
+	}
+}

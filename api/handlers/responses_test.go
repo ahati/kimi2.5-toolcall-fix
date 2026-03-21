@@ -215,6 +215,9 @@ func TestResponsesHandler_TransformRequest_Anthropic(t *testing.T) {
 }
 
 // TestResponsesHandler_UpstreamURL tests upstream URL generation.
+// Note: OpenAI provider uses /v1/chat/completions because Responses API requests
+// are converted to Chat Completions format via ResponsesToChatConverter.
+// The endpoint includes /v1 prefix, so base URLs should not include it.
 func TestResponsesHandler_UpstreamURL(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -223,28 +226,40 @@ func TestResponsesHandler_UpstreamURL(t *testing.T) {
 		wantURL      string
 	}{
 		{
-			name:         "OpenAI provider",
+			name:         "OpenAI provider uses /v1/chat/completions",
 			providerType: "openai",
-			baseURL:      "https://api.openai.com/v1",
+			baseURL:      "https://api.openai.com",
 			wantURL:      "https://api.openai.com/v1/chat/completions",
 		},
 		{
 			name:         "OpenAI provider with trailing slash",
 			providerType: "openai",
-			baseURL:      "https://api.openai.com/v1/",
+			baseURL:      "https://api.openai.com/",
 			wantURL:      "https://api.openai.com/v1/chat/completions",
 		},
 		{
-			name:         "OpenAI provider with full path",
+			name:         "OpenAI provider with full chat completions path",
 			providerType: "openai",
 			baseURL:      "https://api.openai.com/v1/chat/completions",
 			wantURL:      "https://api.openai.com/v1/chat/completions",
 		},
 		{
-			name:         "Anthropic provider",
+			name:         "Anthropic provider uses /v1/messages",
+			providerType: "anthropic",
+			baseURL:      "https://api.anthropic.com",
+			wantURL:      "https://api.anthropic.com/v1/messages",
+		},
+		{
+			name:         "Anthropic provider with existing /v1/messages",
 			providerType: "anthropic",
 			baseURL:      "https://api.anthropic.com/v1/messages",
 			wantURL:      "https://api.anthropic.com/v1/messages",
+		},
+		{
+			name:         "Anthropic provider with trailing slash",
+			providerType: "anthropic",
+			baseURL:      "https://api.minimax.io/anthropic/",
+			wantURL:      "https://api.minimax.io/anthropic/v1/messages",
 		},
 	}
 

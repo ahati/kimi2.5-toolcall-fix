@@ -453,3 +453,103 @@ func TestFallbackConfigJSONUnmarshal(t *testing.T) {
 		t.Error("ToolCallTransform should be false")
 	}
 }
+
+func TestProviderGetUpstreamURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider Provider
+		endpoint string
+		wantURL  string
+	}{
+		{
+			name: "OpenAI provider - appends chat/completions",
+			provider: Provider{
+				Type:    "openai",
+				BaseURL: "https://api.openai.com/v1",
+			},
+			endpoint: "/chat/completions",
+			wantURL:  "https://api.openai.com/v1/chat/completions",
+		},
+		{
+			name: "OpenAI provider - keeps existing chat/completions",
+			provider: Provider{
+				Type:    "openai",
+				BaseURL: "https://api.openai.com/v1/chat/completions",
+			},
+			endpoint: "/chat/completions",
+			wantURL:  "https://api.openai.com/v1/chat/completions",
+		},
+		{
+			name: "OpenAI provider - handles trailing slash",
+			provider: Provider{
+				Type:    "openai",
+				BaseURL: "https://api.openai.com/v1/",
+			},
+			endpoint: "/chat/completions",
+			wantURL:  "https://api.openai.com/v1/chat/completions",
+		},
+		{
+			name: "Anthropic provider - appends endpoint",
+			provider: Provider{
+				Type:    "anthropic",
+				BaseURL: "https://api.anthropic.com",
+			},
+			endpoint: "/v1/messages",
+			wantURL:  "https://api.anthropic.com/v1/messages",
+		},
+		{
+			name: "Anthropic provider - keeps existing v1/messages",
+			provider: Provider{
+				Type:    "anthropic",
+				BaseURL: "https://api.anthropic.com/v1/messages",
+			},
+			endpoint: "/v1/messages",
+			wantURL:  "https://api.anthropic.com/v1/messages",
+		},
+		{
+			name: "Anthropic provider - handles trailing slash",
+			provider: Provider{
+				Type:    "anthropic",
+				BaseURL: "https://api.minimax.io/anthropic/",
+			},
+			endpoint: "/v1/messages",
+			wantURL:  "https://api.minimax.io/anthropic/v1/messages",
+		},
+		{
+			name: "Anthropic provider - different endpoint doesn't match",
+			provider: Provider{
+				Type:    "anthropic",
+				BaseURL: "https://api.anthropic.com/v1/messages",
+			},
+			endpoint: "/v1/responses",
+			wantURL:  "https://api.anthropic.com/v1/messages",
+		},
+		{
+			name: "OpenAI provider - respects endpoint parameter for responses",
+			provider: Provider{
+				Type:    "openai",
+				BaseURL: "https://api.openai.com/v1",
+			},
+			endpoint: "/v1/responses",
+			wantURL:  "https://api.openai.com/v1/v1/responses",
+		},
+		{
+			name: "OpenAI provider - empty endpoint returns base URL",
+			provider: Provider{
+				Type:    "openai",
+				BaseURL: "https://api.openai.com/v1",
+			},
+			endpoint: "",
+			wantURL:  "https://api.openai.com/v1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.provider.GetUpstreamURL(tt.endpoint)
+			if got != tt.wantURL {
+				t.Errorf("Provider.GetUpstreamURL(%q) = %q, want %q", tt.endpoint, got, tt.wantURL)
+			}
+		})
+	}
+}

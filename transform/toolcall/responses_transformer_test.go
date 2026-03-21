@@ -1828,3 +1828,167 @@ World"}`}),
 		})
 	}
 }
+
+// TestResponsesTransformer_ToolCallsInThinkingContent tests tool call extraction from thinking content.
+// This verifies that when Kimi models emit tool calls inside thinking blocks using proprietary markup,
+// they are correctly extracted and converted to function_call output items.
+func TestResponsesTransformer_ToolCallsInThinkingContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		events   []types.Event
+		validate func(t *testing.T, output string)
+	}{
+		{
+			name: "single tool call in thinking block",
+			events: []types.Event{
+				{
+					Type: "message_start",
+					Message: &types.MessageInfo{
+						ID:    "msg_abc",
+						Model: "kimi-k2.5",
+					},
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(0),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "thinking"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.ThinkingDelta{Type: "thinking_delta", Thinking: "Let me help you.<|tool_calls_section_begin|><|tool_call_begin|>bash:32<|tool_call_argument_begin|>{\"cmd\":\"ls\"}<|tool_call_end|><|tool_calls_section_end|>"}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(0),
+				},
+				{
+					Type: "message_stop",
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Should contain function_call output item
+				if !strings.Contains(output, `"type":"function_call"`) {
+					t.Error("Expected function_call in output")
+				}
+				// Should contain function name
+				if !strings.Contains(output, `"name":"bash"`) {
+					t.Error("Expected function name 'bash' in output")
+				}
+				// Should contain function_call_arguments.delta for the args
+				if !strings.Contains(output, `"type":"response.function_call_arguments.delta"`) {
+					t.Error("Expected response.function_call_arguments.delta")
+				}
+				// Should contain the arguments
+				if !strings.Contains(output, `"cmd\":\"ls\"`) {
+					t.Error("Expected arguments in output")
+				}
+			},
+		},
+		{
+			name: "reasoning before tool call",
+			events: []types.Event{
+				{
+					Type: "message_start",
+					Message: &types.MessageInfo{
+						ID:    "msg_xyz",
+						Model: "kimi-k2.5",
+					},
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(0),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "thinking"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.ThinkingDelta{Type: "thinking_delta", Thinking: "I need to run a command."}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.ThinkingDelta{Type: "thinking_delta", Thinking: "<|tool_calls_section_begin|><|tool_call_begin|>exec_command<|tool_call_argument_begin|>{\"cmd\":\"pwd\"}<|tool_call_end|><|tool_calls_section_end|>"}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(0),
+				},
+				{
+					Type: "message_stop",
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Should contain reasoning content
+				if !strings.Contains(output, `"delta":"I need to run a command."`) {
+					t.Error("Expected reasoning delta in output")
+				}
+				// Should contain function_call
+				if !strings.Contains(output, `"type":"function_call"`) {
+					t.Error("Expected function_call in output")
+				}
+				if !strings.Contains(output, `"name":"exec_command"`) {
+					t.Error("Expected function name 'exec_command' in output")
+				}
+			},
+		},
+		{
+			name: "multiple tool calls in thinking",
+			events: []types.Event{
+				{
+					Type: "message_start",
+					Message: &types.MessageInfo{
+						ID:    "msg_multi",
+						Model: "kimi-k2.5",
+					},
+				},
+				{
+					Type:         "content_block_start",
+					Index:        intPtr(0),
+					ContentBlock: mustMarshal(types.ContentBlock{Type: "thinking"}),
+				},
+				{
+					Type:  "content_block_delta",
+					Index: intPtr(0),
+					Delta: mustMarshal(types.ThinkingDelta{Type: "thinking_delta", Thinking: "<|tool_calls_section_begin|><|tool_call_begin|>read<|tool_call_argument_begin|>{\"file\":\"a.txt\"}<|tool_call_end|><|tool_call_begin|>write<|tool_call_argument_begin|>{\"file\":\"b.txt\"}<|tool_call_end|><|tool_calls_section_end|>"}),
+				},
+				{
+					Type:  "content_block_stop",
+					Index: intPtr(0),
+				},
+				{
+					Type: "message_stop",
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// Should contain both function calls
+				if !strings.Contains(output, `"name":"read"`) {
+					t.Error("Expected function name 'read' in output")
+				}
+				if !strings.Contains(output, `"name":"write"`) {
+					t.Error("Expected function name 'write' in output")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			transformer := NewResponsesTransformer(&buf)
+
+			for _, e := range tt.events {
+				data, _ := json.Marshal(e)
+				err := transformer.Transform(&sse.Event{Data: string(data)})
+				if err != nil {
+					t.Errorf("Transform returned error: %v", err)
+				}
+			}
+
+			output := buf.String()
+			if tt.validate != nil {
+				tt.validate(t, output)
+			}
+		})
+	}
+}

@@ -7,6 +7,18 @@
       "envApiKey": "CHUTES_API_KEY"
     },
     {
+      "name": "minimax_openai",
+      "type": "openai",
+      "base_url": "https://api.minimax.io/v1",
+      "envApiKey": "MINIMAX_IO_API_KEY"
+    },
+    {
+      "name": "minimax_anthropic",
+      "type": "anthropic",
+      "base_url": "https://api.minimax.io/anthropic/v1/messages",
+      "envApiKey": "MINIMAX_IO_API_KEY"
+    },
+    {
       "name": "alibaba_anthropic",
       "type": "anthropic",
       "base_url": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages",
@@ -46,14 +58,19 @@
       "tool_call_transform": false
     },
     "gpt-5.1-codex-mini": {
-      "provider": "alibaba_openai",
-      "model": "MiniMax-M2.5",
+      "provider": "minimax_openai",
+      "model": "MiniMax-M2.7",
       "tool_call_transform": false
     },
     "gpt-5-mini": {
-      "provider": "alibaba_anthropic",
-      "model": "MiniMax-M2.5",
+      "provider": "minimax_openai",
+      "model": "MiniMax-M2.7",
       "tool_call_transform": false
+    },
+    "MiniMax-M2.7": {
+      "provider": "minimax_anthropic",
+      "model": "MiniMax-M2.7",
+      "tool_call_transform": true
     }
   },
   "fallback": {

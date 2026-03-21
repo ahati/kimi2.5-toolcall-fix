@@ -3,6 +3,8 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +13,12 @@ import (
 
 	"ai-proxy/capture"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestNewClient_Defaults(t *testing.T) {
 	client := NewClient("https://api.example.com", "test-key")
@@ -175,20 +183,21 @@ func TestSetHeaders_WithCaptureContext(t *testing.T) {
 }
 
 func TestDo(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := NewClient("https://api.example.com/test", "test-key")
+	client.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
 		if r.Header.Get("Authorization") != "Bearer test-key" {
 			t.Errorf("expected Authorization header, got %s", r.Header.Get("Authorization"))
 		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"response":"ok"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL, "test-key")
-	req, err := http.NewRequest("POST", server.URL, nil)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"response":"ok"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})
+	req, err := http.NewRequest("POST", "https://api.example.com/test", nil)
 	if err != nil {
 		t.Fatalf("failed to create request: %v", err)
 	}
@@ -206,17 +215,20 @@ func TestDo(t *testing.T) {
 }
 
 func TestDo_WithCaptureContext(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL, "test-key")
+	client := NewClient("https://api.example.com/test", "test-key")
+	client.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Header:     make(http.Header),
+		}
+		resp.Header.Set("Content-Type", "text/event-stream")
+		return resp, nil
+	})
 	httpReq := httptest.NewRequest("POST", "/test", nil)
 	cc := capture.NewCaptureContext(httpReq)
 	ctx := capture.WithCaptureContext(context.Background(), cc)
-	req, err := http.NewRequestWithContext(ctx, "POST", server.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.example.com/test", nil)
 	if err != nil {
 		t.Fatalf("failed to create request: %v", err)
 	}
@@ -236,9 +248,12 @@ func TestDo_WithCaptureContext(t *testing.T) {
 }
 
 func TestDo_Error(t *testing.T) {
-	client := NewClient("http://127.0.0.1:1", "test-key")
+	client := NewClient("https://api.example.com/test", "test-key")
+	client.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("dial blocked")
+	})
 	client.httpClient.Timeout = 100 * time.Millisecond
-	req, err := http.NewRequest("POST", "http://127.0.0.1:1/test", nil)
+	req, err := http.NewRequest("POST", "https://api.example.com/test", nil)
 	if err != nil {
 		t.Fatalf("failed to create request: %v", err)
 	}

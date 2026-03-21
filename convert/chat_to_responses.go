@@ -9,10 +9,204 @@ import (
 
 	"ai-proxy/conversation"
 	"ai-proxy/logging"
+	"ai-proxy/transform/toolcall"
 	"ai-proxy/types"
 
 	"github.com/tmaxmax/go-sse"
 )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat Completions → Responses — Request
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ChatToResponsesRequest converts a Chat Completions Request into a Responses Request.
+//
+// Dropped: n, stop, response_format, frequency_penalty, presence_penalty,
+// logprobs, seed — none have Responses API equivalents.
+func ChatToResponsesRequest(req *types.ChatCompletionRequest) (*types.ResponsesRequest, error) {
+	out := &types.ResponsesRequest{
+		Model:       req.Model,
+		Stream:      req.Stream,
+		Temperature: req.Temperature,
+		TopP:        req.TopP,
+		ToolChoice:  ChatToolChoiceToResponses(marshalToolChoiceFromRequest(req.ToolChoice)),
+	}
+
+	if req.MaxTokens > 0 {
+		out.MaxOutputTokens = req.MaxTokens
+	}
+
+	if req.User != "" {
+		out.Metadata = map[string]interface{}{"user_id": req.User}
+	}
+
+	for _, t := range req.Tools {
+		out.Tools = append(out.Tools, types.ResponsesTool{
+			Type:        "function",
+			Name:        t.Function.Name,
+			Description: t.Function.Description,
+			Parameters:  t.Function.Parameters,
+		})
+	}
+
+	instructions, input, err := chatMessagesToResponsesInput(req.Messages)
+	if err != nil {
+		return nil, fmt.Errorf("converting messages: %w", err)
+	}
+	out.Instructions = instructions
+	out.Input = input
+	return out, nil
+}
+
+func marshalToolChoiceFromRequest(tc interface{}) json.RawMessage {
+	if tc == nil {
+		return nil
+	}
+	b, _ := json.Marshal(tc)
+	return b
+}
+
+func chatMessagesToResponsesInput(msgs []types.Message) (instructions string, input interface{}, err error) {
+	var sysParts []string
+	var items []types.InputItem
+
+	for _, msg := range msgs {
+		switch msg.Role {
+		case "system":
+			if str, ok := msg.Content.(string); ok {
+				sysParts = append(sysParts, str)
+			}
+		case "user":
+			item, convErr := chatUserMessageToResponsesItem(msg)
+			if convErr != nil {
+				return "", nil, convErr
+			}
+			items = append(items, item)
+		case "assistant":
+			convItems, convErr := chatAssistantMessageToResponsesItems(msg)
+			if convErr != nil {
+				return "", nil, convErr
+			}
+			items = append(items, convItems...)
+		case "tool":
+			output := extractContentString(msg.Content)
+			items = append(items, types.InputItem{
+				Type:   "function_call_output",
+				CallID: msg.ToolCallID,
+				Output: output,
+			})
+		}
+	}
+
+	for i, s := range sysParts {
+		if i > 0 {
+			instructions += "\n\n"
+		}
+		instructions += s
+	}
+
+	// If only a single user message, return as string for simplicity
+	if len(items) == 1 && items[0].Type == "message" && items[0].Role == "user" {
+		if str, ok := items[0].Content.(string); ok {
+			return instructions, str, nil
+		}
+	}
+
+	return instructions, items, nil
+}
+
+func chatUserMessageToResponsesItem(msg types.Message) (types.InputItem, error) {
+	item := types.InputItem{Type: "message", Role: "user"}
+
+	switch c := msg.Content.(type) {
+	case string:
+		item.Content = c
+		return item, nil
+	case []interface{}:
+		var parts []types.ContentPart
+		for _, p := range c {
+			if partMap, ok := p.(map[string]interface{}); ok {
+				partType, _ := partMap["type"].(string)
+				switch partType {
+				case "text":
+					text, _ := partMap["text"].(string)
+					parts = append(parts, types.ContentPart{Type: "input_text", Text: text})
+				case "image_url":
+					if imageURL, ok := partMap["image_url"].(map[string]interface{}); ok {
+						if url, ok := imageURL["url"].(string); ok {
+							parts = append(parts, types.ContentPart{Type: "input_image", ImageURL: url})
+						}
+					}
+				}
+			}
+		}
+		item.Content = parts
+	default:
+		if str := extractContentString(msg.Content); str != "" {
+			item.Content = str
+		}
+	}
+	return item, nil
+}
+
+func chatAssistantMessageToResponsesItems(msg types.Message) ([]types.InputItem, error) {
+	var out []types.InputItem
+
+	// Handle text content
+	if msg.Content != nil {
+		if str := extractContentString(msg.Content); str != "" {
+			out = append(out, types.InputItem{
+				Type: "message",
+				Role: "assistant",
+				Content: []types.ContentPart{{
+					Type: "output_text",
+					Text: str,
+				}},
+			})
+		}
+	}
+
+	// Handle tool calls
+	for _, tc := range msg.ToolCalls {
+		out = append(out, types.InputItem{
+			Type:      "function_call",
+			CallID:    tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: tc.Function.Arguments,
+		})
+	}
+
+	return out, nil
+}
+
+func extractContentString(content interface{}) string {
+	if content == nil {
+		return ""
+	}
+	switch c := content.(type) {
+	case string:
+		return c
+	case []interface{}:
+		var parts []string
+		for _, p := range c {
+			if partMap, ok := p.(map[string]interface{}); ok {
+				if partType, _ := partMap["type"].(string); partType == "text" {
+					if text, ok := partMap["text"].(string); ok {
+						parts = append(parts, text)
+					}
+				}
+			}
+		}
+		return strings.Join(parts, "")
+	default:
+		b, _ := json.Marshal(content)
+		return string(b)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat Completions → Responses — Streaming
+// ─────────────────────────────────────────────────────────────────────────────
 
 type ChatToResponsesTransformer struct {
 	w io.Writer
@@ -43,6 +237,13 @@ type ChatToResponsesTransformer struct {
 
 	// Input items for conversation storage
 	inputItems []types.InputItem
+
+	// Tool call extraction from reasoning content (for Kimi-style markup)
+	toolCallTransform bool                         // enabled by config
+	parser            *toolcall.Parser             // parser for tool call markup
+	extractedToolArgs strings.Builder              // args for extracted tool calls
+	extractedToolID   string                       // current extracted tool ID
+	extractedToolName string                       // current extracted tool name
 }
 
 type chatToRespToolCallState struct {
@@ -56,6 +257,7 @@ func NewChatToResponsesTransformer(w io.Writer) *ChatToResponsesTransformer {
 		w:              w,
 		created:        time.Now().Unix(),
 		sequenceNumber: 0,
+		parser:         toolcall.NewParser(toolcall.DefaultTokens),
 	}
 }
 
@@ -63,6 +265,13 @@ func NewChatToResponsesTransformer(w io.Writer) *ChatToResponsesTransformer {
 // This should be called before streaming starts to capture the original request input.
 func (t *ChatToResponsesTransformer) SetInputItems(items []types.InputItem) {
 	t.inputItems = items
+}
+
+// SetToolCallTransform enables or disables tool call extraction from reasoning content.
+// When enabled, the transformer will parse Kimi-style tool call markup in reasoning text
+// and emit proper function_call output items.
+func (t *ChatToResponsesTransformer) SetToolCallTransform(enabled bool) {
+	t.toolCallTransform = enabled
 }
 
 func (t *ChatToResponsesTransformer) nextSeq() int {
@@ -206,6 +415,21 @@ func (t *ChatToResponsesTransformer) finalizeReasoning() error {
 		return nil
 	}
 
+	// Flush any remaining parser state (in case tool calls were being parsed)
+	if t.toolCallTransform {
+		for {
+			events := t.parser.Parse("")
+			if len(events) == 0 {
+				break
+			}
+			for _, e := range events {
+				if err := t.writeToolCallParserEvent(e); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	reasoningText := t.reasoningBuilder.String()
 
 	// Emit response.reasoning_summary_text.done
@@ -262,6 +486,11 @@ func (t *ChatToResponsesTransformer) finalizeReasoning() error {
 }
 
 func (t *ChatToResponsesTransformer) emitReasoningDelta(text string) error {
+	// Check if tool call extraction is enabled and content contains tool call markup
+	if t.toolCallTransform && (!t.parser.IsIdle() || strings.Contains(text, "<|tool_call")) {
+		return t.processReasoningWithToolCalls(text)
+	}
+
 	// Mark that we've started emitting content
 	if !t.messageStarted {
 		t.messageStarted = true
@@ -316,6 +545,115 @@ func (t *ChatToResponsesTransformer) emitReasoningDelta(text string) error {
 		"output_index":    t.reasoningOutputIndex,
 		"summary_index":   t.summaryIndex,
 	}
+	return t.writeEvent(event)
+}
+
+// processReasoningWithToolCalls handles reasoning content that contains tool call markup.
+// It extracts tool calls and emits appropriate Responses API events.
+func (t *ChatToResponsesTransformer) processReasoningWithToolCalls(text string) error {
+	logging.InfoMsg("[%s] Tool call markup detected in reasoning content, extracting tool calls", t.responseID)
+
+	events := t.parser.Parse(text)
+	for _, e := range events {
+		if err := t.writeToolCallParserEvent(e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeToolCallParserEvent converts a parser Event to Responses API format.
+func (t *ChatToResponsesTransformer) writeToolCallParserEvent(e toolcall.Event) error {
+	switch e.Type {
+	case toolcall.EventContent:
+		// Regular reasoning content - emit as reasoning summary delta
+		if e.Text != "" {
+			t.reasoningBuilder.WriteString(e.Text)
+			// Emit reasoning delta event
+			event := map[string]interface{}{
+				"type":            "response.reasoning_summary_text.delta",
+				"sequence_number": t.nextSeq(),
+				"item_id":         t.reasoningID,
+				"delta":           e.Text,
+				"output_index":    t.reasoningOutputIndex,
+				"summary_index":   t.summaryIndex,
+			}
+			return t.writeEvent(event)
+		}
+	case toolcall.EventToolStart:
+		// Start a new function_call output item
+		t.extractedToolArgs.Reset()
+		return t.emitExtractedToolCallStart(e.ID, e.Name)
+	case toolcall.EventToolArgs:
+		// Accumulate and emit function call arguments delta
+		t.extractedToolArgs.WriteString(e.Args)
+		event := map[string]interface{}{
+			"type":            "response.function_call_arguments.delta",
+			"sequence_number": t.nextSeq(),
+			"item_id":         t.extractedToolID,
+			"call_id":         t.extractedToolID,
+			"output_index":    t.toolCallIndex,
+			"delta":           e.Args,
+		}
+		return t.writeEvent(event)
+	case toolcall.EventToolEnd:
+		// End the function_call output item
+		args := t.extractedToolArgs.String()
+		return t.emitExtractedToolCallEnd(args)
+	case toolcall.EventSectionEnd:
+		// Tool calls section ended - continue with reasoning if there's more content
+	}
+	return nil
+}
+
+// emitExtractedToolCallStart emits events to start a function_call output item from extracted markup.
+func (t *ChatToResponsesTransformer) emitExtractedToolCallStart(id, name string) error {
+	// Finalize reasoning before emitting tool call
+	if t.inReasoning {
+		if err := t.finalizeReasoning(); err != nil {
+			return err
+		}
+	}
+
+	outputIndex := t.contentIndex
+	t.toolCallIndex = outputIndex
+	t.contentIndex = outputIndex + 1
+	t.extractedToolID = id
+	t.extractedToolName = name
+
+	event := map[string]interface{}{
+		"type":            "response.output_item.added",
+		"sequence_number": t.nextSeq(),
+		"output_index":    outputIndex,
+		"item": map[string]interface{}{
+			"type":      "function_call",
+			"id":        id,
+			"call_id":   id,
+			"name":      name,
+			"arguments": "",
+		},
+	}
+	return t.writeEvent(event)
+}
+
+// emitExtractedToolCallEnd emits events to end a function_call output item from extracted markup.
+func (t *ChatToResponsesTransformer) emitExtractedToolCallEnd(args string) error {
+	toolCallItem := map[string]interface{}{
+		"type":      "function_call",
+		"id":        t.extractedToolID,
+		"call_id":   t.extractedToolID,
+		"name":      t.extractedToolName,
+		"arguments": args,
+	}
+
+	event := map[string]interface{}{
+		"type":            "response.output_item.done",
+		"sequence_number": t.nextSeq(),
+		"output_index":    t.toolCallIndex,
+		"item":            toolCallItem,
+	}
+
+	t.toolCalls = append(t.toolCalls, toolCallItem)
 	return t.writeEvent(event)
 }
 
