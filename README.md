@@ -2,6 +2,24 @@
 
 A Go-based HTTP proxy that enables Codex with Alibaba and reliable Kimi. Provides format transformation, tool call normalization, and seamless integration between OpenAI, Anthropic, and other API formats.
 
+## What This Project Solves
+
+**Model mapping** and **provider aggregation** solve the routing problem. Applications need to route different models to different providers—Alibaba's Qwen for cost, Anthropic's Claude for reasoning, Kimi for specialized tasks. Without a routing layer, provider selection logic gets hardcoded throughout codebases. This proxy makes "use qwen3-max" a config change, not a code refactor.
+
+**Protocol translation** handles format incompatibility:
+
+| Client Format | OpenAI Provider | Anthropic Provider |
+|---------------|-----------------|---------------------|
+| OpenAI Chat | ✓ Pass-through | Chat → Messages → Chat |
+| Anthropic Messages | Messages → Chat → Messages | ✓ Pass-through |
+| OpenAI Responses | Responses → Chat → Chat | Responses → Messages → Responses |
+
+Each conversion handles message structure, tool call formats, streaming semantics, and edge cases around system prompts and multi-modal inputs.
+
+**Alibaba model access** unlocks cost-effective alternatives. Alibaba's Qwen and hosted Kimi models only support OpenAI-compatible endpoints. Codex users can't access them without rewriting integration code. This proxy acts as a universal adapter: Codex talks to Alibaba through OpenAI responses protocol.
+
+**Kimi tool-call extraction** makes Kimi-K2.5/K2 usable. These models embed tool calls in reasoning tokens using proprietary delimiters (`<|tool_calls_section_begin|>`, `<|tool_call_begin|>`) rather than standard formats. Without real-time extraction from the SSE `delta.reasoning` stream, agents receive malformed tool calls and function-calling breaks. This proxy's state-machine parser extracts and reformats tool calls into standard OpenAI/Anthropic structures—making Kimi viable for production agents.
+
 ## Features
 
 - **Multi-format support**: OpenAI Chat Completions, Anthropic Messages, and OpenAI Responses API
@@ -10,6 +28,140 @@ A Go-based HTTP proxy that enables Codex with Alibaba and reliable Kimi. Provide
 - **Streaming support**: Real-time SSE streaming with format transformation
 - **Request capture**: Optional logging of all requests/responses for debugging
 - **Model-based routing**: Route requests to different providers based on model name
+
+## User Guide
+
+### Installation
+
+```bash
+# Build from source
+go build -o ai-proxy .
+
+# Or install via Makefile
+make build
+make install  # Installs binary to ~/.local/bin and config to ~/.config/ai-proxy/config.json
+```
+
+### Configuration
+
+The proxy requires a JSON configuration file. By default, it searches for `config.json` in XDG standard locations:
+
+1. `--config-file` flag or `CONFIG_FILE` env
+2. `$XDG_CONFIG_HOME/ai-proxy/config.json`
+3. `$HOME/.config/ai-proxy/config.json`
+4. `$XDG_CONFIG_DIRS/ai-proxy/config.json` (default: `/etc/xdg`)
+
+#### Configuration Example
+
+```json
+{
+  "providers": [
+    {
+      "name": "alibaba",
+      "type": "openai",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "envApiKey": "ALIBABA_API_KEY"
+    },
+    {
+      "name": "anthropic",
+      "type": "anthropic",
+      "base_url": "https://api.anthropic.com",
+      "envApiKey": "ANTHROPIC_API_KEY"
+    }
+  ],
+  "models": {
+    "qwen3-max": {
+      "provider": "alibaba",
+      "model": "qwen3-max-2026-01-23",
+      "tool_call_transform": false
+    },
+    "kimi-k2.5": {
+      "provider": "alibaba",
+      "model": "kimi-k2.5",
+      "tool_call_transform": true
+    }
+  },
+  "fallback": {
+    "enabled": true,
+    "provider": "alibaba",
+    "model": "{model}"
+  }
+}
+```
+
+#### Provider Configuration
+
+| Field | Description |
+|-------|-------------|
+| `name` | Unique identifier for the provider |
+| `type` | API format: `"openai"` or `"anthropic"` |
+| `base_url` | Provider's API endpoint URL |
+| `apiKey` | Direct API key (optional) |
+| `envApiKey` | Environment variable name for API key |
+
+#### Model Configuration
+
+| Field | Description |
+|-------|-------------|
+| `provider` | Provider name to route requests to |
+| `model` | Actual model identifier on the provider |
+| `tool_call_transform` | Enable Kimi tool-call extraction (default: `false`) |
+
+### Running the Proxy
+
+```bash
+# Run with config in XDG default location (~/.config/ai-proxy/config.json)
+./ai-proxy
+
+# Run with explicit config file
+./ai-proxy --config-file /path/to/config.json
+
+# Run with environment variable
+CONFIG_FILE=/path/to/config.json ./ai-proxy
+
+# Run with additional options
+./ai-proxy --port 8080 --sse-log-dir ./logs
+
+# Run with conversation store tuning
+./ai-proxy --conversation-store-size 2000 --conversation-store-ttl 48h
+```
+
+### Command-Line Options
+
+| Flag | Environment | Default | Description |
+|------|-------------|---------|-------------|
+| `--config-file` | `CONFIG_FILE` | XDG discovery | Path to configuration file |
+| `--port` | `PORT` | `8080` | Server listen port |
+| `--sse-log-dir` | `SSELOG_DIR` | (disabled) | Directory for request logging |
+| `--conversation-store-size` | - | `1000` | Max cached conversations |
+| `--conversation-store-ttl` | - | `24h` | Conversation cache TTL |
+
+### Using with Codex
+
+Set the OpenAI base URL to point to the proxy:
+
+```bash
+# In your environment or .env
+OPENAI_API_BASE=http://localhost:8080/v1
+OPENAI_API_KEY=any-key
+```
+
+Codex will now route all requests through the proxy, enabling access to Alibaba models, Kimi, and any other configured providers.
+
+### Fallback Behavior
+
+When `fallback.enabled` is `true`, failed requests are automatically retried with the fallback provider. Use `{model}` as a placeholder to preserve the original model name:
+
+```json
+{
+  "fallback": {
+    "enabled": true,
+    "provider": "alibaba",
+    "model": "{model}",
+    "tool_call_transform": false
+  }
+}
+```
 
 ## API Endpoints
 
@@ -71,223 +223,56 @@ Kimi-K2.5 and K2 models output tool/function calls using special delimiter token
 
 ```
 <|tool_calls_section_begin|>
-<|tool_call_begin|>functions.bash:15<|tool_call_argument_begin|>{"command": "ls -la"}<|tool_call_end|>
-<|tool_call_begin|>functions.task:16<|tool_call_argument_begin|>{"description": "..."}<|tool_call_end|>
+<|tool_call_begin|>get_weather<|tool_call_argument_begin|>{"location": "San Francisco"}<|tool_call_end|>
 <|tool_calls_section_end|>
 ```
 
-### OpenAI Format (Output)
+### Standard Format (Output - OpenAI)
 
 ```json
 {
-  "choices": [{
-    "delta": {
-      "tool_calls": [{
-        "id": "call_abc123",
-        "type": "function",
-        "function": {
-          "name": "bash",
-          "arguments": "{\"command\": \"ls -la\"}"
-        }
-      }]
+  "tool_calls": [
+    {
+      "id": "call_abc123",
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "arguments": "{\"location\": \"San Francisco\"}"
+      }
     }
-  }]
+  ]
 }
 ```
 
-### Anthropic Format (Output)
+### Standard Format (Output - Anthropic)
 
 ```json
 {
-  "type": "content_block_delta",
-  "index": 1,
-  "delta": {
-    "type": "input_json_delta",
-    "partial_json": "{\"command\": \"ls -la\"}"
-  }
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_abc123",
+      "name": "get_weather",
+      "input": {"location": "San Francisco"}
+    }
+  ]
 }
 ```
 
-## Configuration
+### Configuration
 
-### Configuration File
-
-The proxy requires a JSON configuration file that defines providers and model mappings.
+Enable tool call transformation per model in your config:
 
 ```json
 {
-  "providers": [
-    {
-      "name": "kimi-chutes",
-      "type": "openai",
-      "base_url": "https://llm.chutes.ai/v1/chat/completions",
-      "envApiKey": "CHUTES_API_KEY"
-    },
-    {
-      "name": "alibaba-coding",
-      "type": "anthropic",
-      "base_url": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages",
-      "envApiKey": "ALIBABA_ANTHROPIC_API_KEY"
-    }
-  ],
   "models": {
     "kimi-k2.5": {
-      "provider": "kimi-chutes",
-      "model": "moonshotai/Kimi-K2.5-TEE",
+      "provider": "alibaba",
+      "model": "kimi-k2.5",
       "tool_call_transform": true
-    },
-    "claude-3-opus": {
-      "provider": "alibaba-coding",
-      "model": "claude-3-opus-20240229",
-      "tool_call_transform": false
     }
-  },
-  "fallback": {
-    "enabled": true,
-    "provider": "kimi-chutes",
-    "model": "{model}",
-    "tool_call_transform": true
   }
 }
-```
-
-### Configuration Schema
-
-| Field | Description |
-|-------|-------------|
-| `providers[]` | List of upstream API providers |
-| `providers[].name` | Unique identifier for the provider |
-| `providers[].type` | API format: `"openai"` or `"anthropic"` |
-| `providers[].base_url` | API endpoint URL |
-| `providers[].apiKey` | Direct API key (optional) |
-| `providers[].envApiKey` | Environment variable name for API key |
-| `models{}` | Map of model aliases to configurations |
-| `models[].provider` | Provider name to use for this model |
-| `models[].model` | Actual model identifier on upstream |
-| `models[].tool_call_transform` | Enable tool call transformation |
-| `fallback.enabled` | Enable fallback for unknown models |
-| `fallback.provider` | Default provider for unknown models |
-| `fallback.model` | Model pattern (use `{model}` placeholder) |
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8080` | Server port |
-| `SSELOG_DIR` | (empty) | Directory for request/response logging |
-| `CONFIG_FILE` | (empty) | Path to JSON configuration file |
-
-### Command-Line Flags
-
-| Flag | Description |
-|------|-------------|
-| `--config-file` | Path to JSON configuration file |
-| `--sse-log-dir` | Directory for request/response logging |
-| `--port` | Server port |
-
-## Usage
-
-### Build and Run
-
-```bash
-# Build
-go build -o ai-proxy .
-
-# Run with config file
-./ai-proxy --config-file config.json
-
-# Run with environment variable for config
-CONFIG_FILE=config.json ./ai-proxy
-
-# Run with request logging
-./ai-proxy --config-file config.json --sse-log-dir ./logs
-
-# Run with custom port
-./ai-proxy --config-file config.json --port 3000
-```
-
-### Example Requests
-
-#### OpenAI Chat Completions
-
-```bash
-curl -X POST http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "kimi-k2.5",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "stream": true
-  }'
-```
-
-#### Anthropic Messages
-
-```bash
-curl -X POST http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "Anthropic-Version: 2023-06-01" \
-  -d '{
-    "model": "claude-3-opus",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello"}],
-    "stream": true
-  }'
-```
-
-#### OpenAI Responses API
-
-```bash
-curl -X POST http://localhost:8080/v1/responses \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-3-opus",
-    "input": [{"role": "user", "content": "Hello"}],
-    "stream": true
-  }'
-```
-
-#### Count Tokens
-
-```bash
-curl -X POST http://localhost:8080/v1/messages/count_tokens \
-  -H "Content-Type: application/json" \
-  -H "Anthropic-Version: 2023-06-01" \
-  -d '{
-    "model": "claude-3-opus",
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'
-```
-
-### Cross-Provider Examples
-
-The unified architecture enables seamless cross-provider calls:
-
-**Use Anthropic SDK with an OpenAI backend:**
-
-```bash
-# Request uses Anthropic format, routes to OpenAI provider based on model
-curl -X POST http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "Anthropic-Version: 2023-06-01" \
-  -d '{
-    "model": "kimi-k2.5",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello"}],
-    "stream": true
-  }'
-```
-
-**Use OpenAI SDK with an Anthropic backend:**
-
-```bash
-# Request uses OpenAI Chat format, routes to Anthropic provider based on model
-curl -X POST http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-3-opus",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "stream": true
-  }'
 ```
 
 ## Request Capture
@@ -311,84 +296,72 @@ ls logs/$(date +%Y-%m-%d)/
 
 ```
 ai-proxy/
-├── main.go                 # Entry point, server initialization
-├── api/                    # HTTP server and routing
-│   ├── server.go           # Server setup and route registration
-│   ├── middleware.go       # Capture middleware
-│   └── handlers/           # HTTP request handlers
-│       ├── health.go       # Health check endpoint
-│       ├── models.go       # Models listing endpoint
-│       ├── completions.go  # OpenAI chat completions (unified)
-│       ├── messages.go     # Anthropic messages (unified)
-│       ├── responses.go    # OpenAI Responses API (unified)
-│       ├── count_tokens.go # Token counting endpoint
-│       ├── common.go       # Shared handler utilities
-│       └── interface.go    # Handler interface definition
-├── config/                 # Configuration loading
-│   ├── config.go           # Config struct and accessors
-│   ├── schema.go           # JSON schema definitions
-│   ├── loader.go           # Config file loading
-│   └── cli.go              # CLI flag parsing
-├── router/                 # Model routing
-│   └── router.go           # Model-to-provider resolution
-├── convert/                # Format conversion
-│   ├── interface.go        # Converter interface
-│   ├── common.go           # Shared conversion utilities
+├── main.go                     # Entry point, server initialization
+├── api/                        # HTTP server and routing
+│   ├── server.go               # Server setup and route registration
+│   ├── middleware.go           # Capture middleware
+│   └── handlers/               # HTTP request handlers
+│       ├── interface.go        # Handler interface definition
+│       ├── health.go           # Health check endpoint
+│       ├── models.go           # Models listing endpoint
+│       ├── completions.go      # OpenAI chat completions
+│       ├── messages.go         # Anthropic messages
+│       ├── responses.go        # OpenAI Responses API
+│       ├── count_tokens.go     # Token counting endpoint
+│       └── response_recorder.go # Response recording utilities
+├── config/                     # Configuration loading
+│   ├── cli.go                  # CLI flag parsing, XDG discovery
+│   ├── config.go               # Config struct and accessors
+│   ├── loader.go               # Config file loading and validation
+│   └── schema.go               # JSON schema definitions
+├── router/                     # Model routing
+│   └── router.go               # Model-to-provider resolution
+├── convert/                    # Format conversion
+│   ├── interface.go            # Converter interface
+│   ├── common.go               # Shared conversion utilities
+│   ├── param_convert.go        # Parameter conversion
+│   ├── finish_reason.go        # Finish reason mapping
+│   ├── anthropic_to_chat.go    # Anthropic → OpenAI Chat
+│   ├── anthropic_to_responses.go # Anthropic → OpenAI Responses
 │   ├── chat_to_anthropic.go    # OpenAI Chat → Anthropic
+│   ├── chat_to_responses.go    # OpenAI Chat → Responses
 │   ├── responses_to_anthropic.go # Responses → Anthropic
+│   ├── responses_to_anthropic_streaming.go # Streaming variant
 │   └── responses_to_chat.go    # Responses → OpenAI Chat
-├── logging/                # Logging utilities
-│   └── logging.go
-├── proxy/                  # Upstream API client
-│   ├── client.go           # HTTP client for upstream APIs
-│   └── request.go          # Request building utilities
-├── transform/              # Response transformation
-│   ├── interface.go        # Transformer interface
-│   ├── passthrough.go      # Pass-through transformer
-│   └── toolcall/           # Tool call format transformation
-│       ├── openai_transformer.go      # OpenAI format transformer
-│       ├── anthropic_transformer.go   # Anthropic format transformer
-│       ├── responses_transformer.go   # Responses API transformer
-│       ├── parser.go       # Token parsing
-│       ├── tokens.go       # Special token definitions
-│       ├── formatter.go    # Output formatting
-│       ├── openai.go       # OpenAI format support
-│       ├── anthropic.go    # Anthropic format support
-│       └── common.go       # Shared utilities
-├── types/                  # Type definitions
-│   ├── openai.go           # OpenAI API types
-│   ├── openai_responses.go # OpenAI Responses API types
-│   ├── anthropic.go        # Anthropic API types
-│   └── sse.go              # Server-Sent Events types
-├── tokens/                 # Token counting
-│   └── counter.go          # Token counter implementation
-└── capture/                # Request/response capture
-    ├── storage.go          # Log storage management
-    ├── writer.go           # JSON log writer
-    ├── recorder.go         # Request/response recording
-    └── context.go          # Context utilities
-```
-
-## Development
-
-```bash
-# Run tests
-go test ./...
-
-# Run tests with coverage
-go test -cover ./...
-
-# Run specific test
-go test -v -run TestFunctionName ./...
-
-# Format code
-go fmt ./...
-
-# Static analysis
-go vet ./...
-
-# Tidy dependencies
-go mod tidy
+├── transform/                  # Response transformation
+│   ├── interface.go            # Transformer interface
+│   ├── passthrough.go          # Pass-through transformer
+│   ├── sse_writer.go           # SSE streaming writer
+│   └── toolcall/               # Tool call format transformation
+│       ├── parser.go           # Token parsing
+│       ├── tokens.go           # Special token definitions
+│       ├── state.go            # State machine
+│       ├── formatter.go        # Output formatting
+│       ├── common.go           # Shared utilities
+│       ├── openai.go           # OpenAI format support
+│       ├── anthropic.go        # Anthropic format support
+│       ├── openai_transformer.go    # OpenAI format transformer
+│       ├── anthropic_transformer.go # Anthropic format transformer
+│       └── responses_transformer.go # Responses API transformer
+├── types/                      # Type definitions
+│   ├── openai.go               # OpenAI Chat API types
+│   ├── openai_responses.go     # OpenAI Responses API types
+│   ├── anthropic.go            # Anthropic API types
+│   └── sse.go                  # Server-Sent Events types
+├── proxy/                      # Upstream API client
+│   ├── client.go               # HTTP client for upstream APIs
+│   └── request.go              # Request building utilities
+├── tokens/                     # Token counting
+│   └── counter.go              # Token counter implementation
+├── conversation/               # Conversation storage
+│   └── store.go                # In-memory conversation cache
+├── capture/                    # Request/response capture
+│   ├── storage.go              # Log storage management
+│   ├── writer.go               # JSON log writer
+│   ├── recorder.go             # Request/response recording
+│   └── context.go              # Context utilities
+└── logging/                    # Logging utilities
+    └── logging.go
 ```
 
 ## Technical Details
