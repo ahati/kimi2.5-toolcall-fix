@@ -308,3 +308,4 @@ func handleLocalTokenCount(c *gin.Context, body []byte, h NonStreamingHandler) {
 	c.Header("Content-Type", "application/json")
 	c.Data(http.StatusOK, "application/json", responseJSON)
 }
+

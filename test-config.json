@@ -70,7 +70,12 @@
     "MiniMax-M2.7": {
       "provider": "minimax_anthropic",
       "model": "MiniMax-M2.7",
-      "tool_call_transform": true
+      "tool_call_transform": false
+    },
+    "qwen3-max": {
+      "provider": "alibaba_openai",
+      "model": "qwen3-max-2026-01-23",
+      "tool_call_transform": false
     }
   },
   "fallback": {

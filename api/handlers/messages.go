@@ -406,3 +406,12 @@ func convertAnthropicTools(anthTools []types.ToolDef) []types.Tool {
 	}
 	return openTools
 }
+
+// ModelInfo returns the downstream and upstream model names for logging.
+func (h *MessagesHandler) ModelInfo() (downstreamModel string, upstreamModel string) {
+	downstreamModel = h.originalModel
+	if h.route != nil {
+		upstreamModel = h.route.Model
+	}
+	return
+}

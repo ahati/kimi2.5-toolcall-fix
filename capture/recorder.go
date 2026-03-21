@@ -479,3 +479,25 @@ func (rr *responseRecorder) RecordChunkBytes(event string, data []byte) {
 	// This is a convenience wrapper for callers with []byte
 	rr.RecordChunk(event, string(data))
 }
+
+// RecordChunkPreservingTiming appends a pre-built SSEChunk directly, preserving its original timing.
+// Unlike RecordChunk, this does not recalculate the OffsetMS - it uses the value already set in the chunk.
+// This is used when transferring chunks from CaptureWriter which recorded timing during streaming.
+//
+// @param chunk - Pre-built SSEChunk with timing already set. The chunk is copied, not stored by reference.
+//
+// @pre rr != nil && rr.capture != nil (receiver must be valid)
+// @post Chunk is appended to rr.capture.Chunks with original timing preserved
+//
+// @note NOT thread-safe; use from single goroutine.
+// @note Nil-safe: handles nil receiver gracefully.
+func (rr *responseRecorder) RecordChunkPreservingTiming(chunk SSEChunk) {
+	// Defensive nil check to prevent panic on invalid receiver
+	if rr == nil || rr.capture == nil {
+		return
+	}
+
+	// Append the chunk directly, preserving all fields including OffsetMS
+	// This is the key difference from RecordChunk which recalculates timing
+	rr.capture.Chunks = append(rr.capture.Chunks, chunk)
+}

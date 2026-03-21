@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ai-proxy/capture"
+	"ai-proxy/logging"
 	"ai-proxy/proxy"
 
 	"github.com/gin-gonic/gin"
@@ -25,6 +26,88 @@ type upstreamClient interface {
 
 var newUpstreamClient = func(baseURL, apiKey string) upstreamClient {
 	return proxy.NewClient(baseURL, apiKey)
+}
+
+// timingCaptureWriter wraps an io.Writer and captures SSE events with accurate timing.
+// It detects complete SSE events (ending with "\n\n") and records them to a CaptureWriter
+// at the moment they are written, preserving correct offset_ms timing.
+//
+// Thread Safety: NOT thread-safe. Use from single goroutine.
+type timingCaptureWriter struct {
+	// underlying writer for client responses
+	w io.Writer
+	// capture writer for recording events with timing
+	cw capture.CaptureWriter
+	// buffer for accumulating partial SSE events
+	buf bytes.Buffer
+}
+
+// newTimingCaptureWriter creates a writer that captures SSE events with timing.
+func newTimingCaptureWriter(w io.Writer, cw capture.CaptureWriter) *timingCaptureWriter {
+	return &timingCaptureWriter{
+		w:  w,
+		cw: cw,
+	}
+}
+
+// Write implements io.Writer. It forwards data to the underlying writer and
+// captures complete SSE events for timing-accurate recording.
+func (tcw *timingCaptureWriter) Write(p []byte) (n int, err error) {
+	// Write to underlying writer first
+	n, err = tcw.w.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// Accumulate data for SSE parsing
+	tcw.buf.Write(p)
+
+	// Parse and record any complete SSE events
+	tcw.parseAndRecordEvents()
+
+	return n, nil
+}
+
+// parseAndRecordEvents parses complete SSE events from the buffer and records them.
+// SSE events are delimited by "\n\n". Each event may have "event:" and "data:" lines.
+func (tcw *timingCaptureWriter) parseAndRecordEvents() {
+	data := tcw.buf.Bytes()
+
+	// Find complete events (ending with \n\n)
+	for {
+		idx := bytes.Index(data, []byte("\n\n"))
+		if idx == -1 {
+			break
+		}
+
+		// Extract the complete event
+		event := data[:idx]
+		data = data[idx+2:] // Skip past \n\n
+
+		// Parse event type and data
+		eventType, eventData := parseSSEEvent(event)
+		if len(eventData) > 0 {
+			tcw.cw.RecordChunk(eventType, eventData)
+		}
+	}
+
+	// Keep remaining partial data in buffer
+	tcw.buf.Reset()
+	tcw.buf.Write(data)
+}
+
+// parseSSEEvent extracts the event type and data from an SSE event string.
+// SSE format: "event: type\ndata: {...}" or just "data: {...}"
+func parseSSEEvent(event []byte) (eventType string, data []byte) {
+	lines := bytes.Split(event, []byte("\n"))
+	for _, line := range lines {
+		if bytes.HasPrefix(line, []byte("event:")) {
+			eventType = string(bytes.TrimSpace(line[6:]))
+		} else if bytes.HasPrefix(line, []byte("data:")) {
+			data = bytes.TrimSpace(line[5:])
+		}
+	}
+	return eventType, data
 }
 
 // Handle wraps a Handler implementation and returns a Gin handler function.
@@ -132,6 +215,10 @@ func proxyRequest(c *gin.Context, h Handler, body []byte) {
 	apiKey := h.ResolveAPIKey(c)
 
 	// Create HTTP client configured for upstream endpoint
+
+	// Log request with model info for debugging
+	downstreamModel, upstreamModel := h.ModelInfo()
+	logging.InfoMsg("Sending request to upstream: %s (downstream_model=%s, upstream_model=%s)", h.UpstreamURL(), downstreamModel, upstreamModel)
 	client := newUpstreamClient(h.UpstreamURL(), apiKey)
 	// Ensure connection resources are released when done
 	defer client.Close()
@@ -200,7 +287,8 @@ func streamResponse(c *gin.Context, body io.Reader, h Handler) {
 		// Iterate over all SSE events from upstream
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
-				// Error indicates stream termination (possibly client disconnect)
+				// Log stream error for debugging
+				logging.ErrorMsg("SSE stream error: %v", err)
 				return false
 			}
 			// Transform each event to downstream format
@@ -252,21 +340,21 @@ func streamWithCapture(c *gin.Context, body io.Reader, h Handler, cc *capture.Ca
 	// Create capture writer for upstream (original) events
 	upstream := capture.NewCaptureWriter(startTime)
 
-	// Create a buffer to accumulate downstream SSE data
-	var dsBuf bytes.Buffer
-
 	// Stream events with capture
+	// Get flusher from Gin response writer for immediate delivery
+	flusher, canFlush := c.Writer.(http.Flusher)
+
 	c.Stream(func(w io.Writer) bool {
-		// Create multiWriter to write to both the stream writer and our buffer
-		multiW := io.MultiWriter(w, &dsBuf)
-		// Create transformer that writes to multiWriter
-		transformer := h.CreateTransformer(multiW)
+		// Create timing-aware writer that captures downstream events with correct timing
+		timingWriter := newTimingCaptureWriter(w, downstream)
+		// Create transformer that writes to our timing-aware writer
+		transformer := h.CreateTransformer(timingWriter)
 		defer transformer.Close()
 
 		// Iterate over all SSE events from upstream
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
-				// Error indicates stream termination
+				logging.ErrorMsg("SSE stream error (capture): %v", err)
 				return false
 			}
 			// Capture upstream events before transformation
@@ -274,14 +362,17 @@ func streamWithCapture(c *gin.Context, body io.Reader, h Handler, cc *capture.Ca
 			if ev.Data != "" {
 				recordUpstreamEvent(upstream, ev)
 			}
-			// Transform and send event to client (also captured in dsBuf)
+			// Transform and send event to client (timing captured by timingWriter)
 			transformer.Transform(&ev)
+
+			// Flush after each event to ensure immediate delivery
+			// This prevents buffering that causes clients to timeout
+			if canFlush {
+				flusher.Flush()
+			}
 		}
 		return false
 	})
-
-	// Parse and capture downstream SSE events from the buffer
-	parseAndCaptureSSE(downstream, dsBuf.Bytes(), startTime)
 
 	// Finalize capture by recording all captured data
 	finalizeCapture(cc, downstream, upstream)
@@ -321,14 +412,22 @@ func streamWithoutCapture(c *gin.Context, body io.Reader, h Handler) {
 	defer transformer.Close()
 
 	// Stream events without capture overhead
+	// Get flusher from Gin response writer for immediate delivery
+	flusher, canFlush := c.Writer.(http.Flusher)
+
 	c.Stream(func(w io.Writer) bool {
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
-				// Error indicates stream termination
+				logging.ErrorMsg("SSE stream error (no-capture): %v", err)
 				return false
 			}
 			// Transform and send event directly to client
 			transformer.Transform(&ev)
+
+			// Flush after each event to ensure immediate delivery
+			if canFlush {
+				flusher.Flush()
+			}
 		}
 		return false
 	})
@@ -362,14 +461,10 @@ func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.Ca
 	// Record downstream response (transformed events sent to client)
 	// Use thread-safe method instead of direct field access
 	downstreamRecorder := cc.Recorder.RecordDownstreamResponse()
-	// Transfer captured chunks to the response recorder
+	// Transfer captured chunks directly, preserving their original timing
+	// The chunks already have correct OffsetMS from when they were recorded during streaming
 	for _, chunk := range downstream.Chunks() {
-		// Use Raw if Data is empty (invalid JSON), otherwise use Data
-		rawData := string(chunk.Data)
-		if rawData == "" && chunk.Raw != "" {
-			rawData = chunk.Raw
-		}
-		downstreamRecorder.RecordChunk(chunk.Event, rawData)
+		downstreamRecorder.RecordChunkPreservingTiming(chunk)
 	}
 
 	// Record upstream response (original events from upstream)
@@ -379,14 +474,9 @@ func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.Ca
 			cc.Recorder.Data().UpstreamResponse.StatusCode,
 			nil, // Headers already captured during proxy request
 		)
-		// Transfer captured chunks to the response recorder
+		// Transfer captured chunks directly, preserving their original timing
 		for _, chunk := range upstream.Chunks() {
-			// Use Raw if Data is empty (invalid JSON), otherwise use Data
-			rawData := string(chunk.Data)
-			if rawData == "" && chunk.Raw != "" {
-				rawData = chunk.Raw
-			}
-			upstreamRecorder.RecordChunk(chunk.Event, rawData)
+			upstreamRecorder.RecordChunkPreservingTiming(chunk)
 		}
 	}
 

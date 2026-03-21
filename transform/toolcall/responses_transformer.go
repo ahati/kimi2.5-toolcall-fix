@@ -79,6 +79,9 @@ type ResponsesTransformer struct {
 
 	// Input items for conversation storage
 	inputItems []types.InputItem
+
+	// Tool call extraction from thinking content (for Kimi-style markup)
+	toolCallTransform bool // enabled by config
 }
 
 // ResponsesFormatter formats events in OpenAI Responses API format.
@@ -503,6 +506,13 @@ func (t *ResponsesTransformer) SetInputItems(items []types.InputItem) {
 	t.inputItems = items
 }
 
+// SetToolCallTransform enables or disables tool call extraction from thinking content.
+// When enabled, the transformer will parse Kimi-style tool call markup in thinking text
+// and emit proper function_call output items.
+func (t *ResponsesTransformer) SetToolCallTransform(enabled bool) {
+	t.toolCallTransform = enabled
+}
+
 func (t *ResponsesTransformer) nextSequenceNumber() int {
 	t.sequenceNumber++
 	return t.sequenceNumber
@@ -680,9 +690,17 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 		var thinkingDelta types.ThinkingDelta
 		if err := json.Unmarshal(event.Delta, &thinkingDelta); err == nil && thinkingDelta.Type == "thinking_delta" {
 			if t.inReasoning {
-				// Check if content contains tool call markup
-				if !t.parser.IsIdle() || t.parser.tokens.ContainsAny(thinkingDelta.Thinking) {
-					return t.processThinkingWithToolCalls(thinkingDelta.Thinking)
+				// Check if content contains tool call markup (only when toolCallTransform is enabled)
+				if t.toolCallTransform {
+					wasIdle := t.parser.IsIdle()
+					hasMarkup := t.parser.tokens.ContainsAny(thinkingDelta.Thinking)
+					if !wasIdle || hasMarkup {
+						// Only log when starting to parse tool calls (transition from idle to parsing)
+						if wasIdle && hasMarkup {
+							logging.InfoMsg("[%s] Tool call markup detected in thinking content, extracting tool calls", t.messageID)
+						}
+						return t.processThinkingWithToolCalls(thinkingDelta.Thinking)
+					}
 				}
 				// Normal thinking content - pass through
 				t.reasoningContent.WriteString(thinkingDelta.Thinking)
@@ -709,8 +727,6 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 // processThinkingWithToolCalls handles thinking content that contains tool call markup.
 // It extracts tool calls and emits appropriate Responses API events.
 func (t *ResponsesTransformer) processThinkingWithToolCalls(text string) error {
-	logging.InfoMsg("[%s] Tool call markup detected in thinking content, extracting tool calls", t.messageID)
-
 	events := t.parser.Parse(text)
 	for _, e := range events {
 		if err := t.writeParserEvent(e); err != nil {
@@ -733,25 +749,25 @@ func (t *ResponsesTransformer) writeParserEvent(e Event) error {
 		}
 	case EventToolStart:
 		// Start a new function_call output item
+		logging.InfoMsg("[%s] Tool call extracted: id=%s, name=%s", t.messageID, e.ID, e.Name)
 		t.extractedToolArgs.Reset() // Reset args builder for new tool call
 		return t.emitToolCallStart(e.ID, e.Name)
 	case EventToolArgs:
 		// Accumulate and emit function call arguments delta
 		t.extractedToolArgs.WriteString(e.Args)
 		seqNum := t.nextSequenceNumber()
-		return t.write(t.formatter.FormatFunctionCallArgsDelta(e.ID, e.ID, e.Args, t.toolCallOutputIndex, seqNum))
+		return t.write(t.formatter.FormatFunctionCallArgsDelta(t.currentID, t.currentID, e.Args, t.toolCallOutputIndex, seqNum))
 	case EventToolEnd:
 		// End the function_call output item
 		args := t.extractedToolArgs.String()
-		return t.emitToolCallEnd(e.ID, e.Name, args)
+		logging.InfoMsg("[%s] Tool call complete: id=%s, name=%s", t.messageID, t.currentID, t.currentToolName)
+		return t.emitToolCallEnd(t.currentID, t.currentToolName, args)
 	case EventSectionEnd:
 		// Tool calls section ended - continue with reasoning if there's more content
 	}
 	return nil
 }
 
-// emitToolCallStart emits the necessary events to start a function_call output item.
-// It may need to close the current reasoning item first if it has no content.
 func (t *ResponsesTransformer) emitToolCallStart(id, name string) error {
 	// If we're in reasoning and have accumulated content, keep the reasoning item.
 	// If we're in reasoning but have no content, we can close it.
@@ -817,15 +833,17 @@ func (t *ResponsesTransformer) handleContentBlockStop(event types.Event) error {
 	if t.inReasoning {
 		t.inReasoning = false
 
-		// Flush any remaining parser state (in case tool calls were being parsed)
-		for {
-			events := t.parser.Parse("")
-			if len(events) == 0 {
-				break
-			}
-			for _, e := range events {
-				if err := t.writeParserEvent(e); err != nil {
-					return err
+		// Flush any remaining parser state (only when toolCallTransform is enabled)
+		if t.toolCallTransform {
+			for {
+				events := t.parser.Parse("")
+				if len(events) == 0 {
+					break
+				}
+				for _, e := range events {
+					if err := t.writeParserEvent(e); err != nil {
+						return err
+					}
 				}
 			}
 		}

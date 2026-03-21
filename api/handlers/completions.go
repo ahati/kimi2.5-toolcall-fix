@@ -35,6 +35,8 @@ type CompletionsHandler struct {
 	// route is the resolved route for the current request.
 	// Set during ValidateRequest for use in subsequent methods.
 	route *router.ResolvedRoute
+	// originalModel is the model name from the original request.
+	originalModel string
 }
 
 // NewCompletionsHandler creates a Gin handler for the /v1/chat/completions endpoint.
@@ -81,6 +83,7 @@ func (h *CompletionsHandler) ValidateRequest(body []byte) error {
 	}
 
 	h.route = route
+	h.originalModel = req.Model
 	return nil
 }
 
@@ -234,4 +237,13 @@ func forwardCustomHeaders(c *gin.Context, req *http.Request, prefixes ...string)
 			}
 		}
 	}
+}
+
+// ModelInfo returns the downstream and upstream model names for logging.
+func (h *CompletionsHandler) ModelInfo() (downstreamModel string, upstreamModel string) {
+	downstreamModel = h.originalModel
+	if h.route != nil {
+		upstreamModel = h.route.Model
+	}
+	return
 }

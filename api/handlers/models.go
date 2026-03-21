@@ -126,3 +126,4 @@ func (h *ModelsHandler) buildModelsURL() string {
 	// This assumes upstream URL is configured to the completions endpoint
 	return strings.TrimSuffix(url, "chat/completions") + "models"
 }
+

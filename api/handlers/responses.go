@@ -212,13 +212,12 @@ func (h *ResponsesHandler) CreateTransformer(w io.Writer) transform.SSETransform
 		return t
 	case "anthropic":
 		// ResponsesTransformer converts Anthropic SSE to Responses format
+		// This conversion is always needed for /v1/responses endpoint
 		// Tool call extraction from markup is enabled when tool_call_transform is true
-		if h.route.ToolCallTransform {
-			t := toolcall.NewResponsesTransformer(w)
-			t.SetInputItems(h.inputItems)
-			return t
-		}
-		return transform.NewPassthroughTransformer(w)
+		t := toolcall.NewResponsesTransformer(w)
+		t.SetToolCallTransform(h.route.ToolCallTransform)
+		t.SetInputItems(h.inputItems)
+		return t
 	default:
 		return transform.NewPassthroughTransformer(w)
 	}
@@ -394,4 +393,18 @@ func parseInputItems(input interface{}) []types.InputItem {
 	}
 
 	return nil
+}
+
+// ModelInfo returns the downstream and upstream model names for logging.
+func (h *ResponsesHandler) ModelInfo() (downstreamModel string, upstreamModel string) {
+	downstreamModel = h.originalModel
+	if h.route != nil {
+		upstreamModel = h.route.Model
+	}
+	return
+}
+
+// ModelInfo returns empty strings for ResponsesHandlerNoRouter.
+func (h *ResponsesHandlerNoRouter) ModelInfo() (downstreamModel string, upstreamModel string) {
+	return "", ""
 }

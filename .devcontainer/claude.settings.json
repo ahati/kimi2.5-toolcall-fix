@@ -4,8 +4,8 @@
     "ANTHROPIC_BASE_URL": "http://host.docker.internal:8080",
     "ANTHROPIC_MODEL": "kimi-k2.5",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2.5",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7",
     "CLAUDE_CODE_EFFORT_LEVEL": "high",
     "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
@@ -15,7 +15,12 @@
     "commit": "",
     "pr": ""
   },
-  "model": "opus",
+  "model": "glm-5",
+  "availableModels": [
+    "glm-5",
+    "MiniMax-M2.7",
+    "qwen3.5-plus"
+  ],
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true,
     "clangd-lsp@claude-plugins-official": true,

@@ -179,7 +179,6 @@ func (c *Client) SetHeaders(req *http.Request) {
 // @post Response metadata is captured for debugging if capture context exists
 // @note Does not check response status code; caller must handle non-2xx responses
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
-	logging.InfoMsg("Sending request to upstream: %s", c.baseURL)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		logging.ErrorMsg("Upstream request failed: %v", err)

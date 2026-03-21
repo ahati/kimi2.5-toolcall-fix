@@ -99,4 +99,13 @@ type Handler interface {
 	// @pre c != nil and response has not been written yet.
 	// @post Response has been fully written; no further writes should occur.
 	WriteError(c *gin.Context, status int, msg string)
+
+	// ModelInfo returns the downstream and upstream model names for logging.
+	// Returns empty strings if model info is not available.
+	//
+	// @return downstreamModel - the model name from the original request
+	// @return upstreamModel - the model name sent to upstream provider
+	//
+	// @note Used for logging and debugging purposes.
+	ModelInfo() (downstreamModel string, upstreamModel string)
 }
