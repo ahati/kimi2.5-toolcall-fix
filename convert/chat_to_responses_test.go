@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-proxy/conversation"
 	"ai-proxy/types"
 
 	"github.com/tmaxmax/go-sse"
@@ -1035,4 +1036,89 @@ func TestChatToResponsesTransformer_ToolCallsInReasoning(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestChatToResponses_StoreConversation_CombinesMessageAndToolCall(t *testing.T) {
+	// Initialize the conversation store
+	conversation.InitDefaultStore(conversation.Config{MaxSize: 1000})
+
+	// Create a transformer
+	var buf bytes.Buffer
+	transformer := NewChatToResponsesTransformer(&buf)
+
+	// Set input items
+	transformer.SetInputItems([]types.InputItem{
+		{Type: "message", Role: "user", Content: "Hello"},
+	})
+
+	// Simulate streaming: first text content, then tool call
+	// Text content first
+	transformer.Transform(&sse.Event{Data: `{"id":"test-123","model":"test-model","choices":[{"delta":{"content":"Hello there"}}]}`})
+
+	// Then tool call
+	transformer.Transform(&sse.Event{Data: `{"id":"test-123","model":"test-model","choices":[{"delta":{"tool_calls":[{"id":"call_123","type":"function","function":{"name":"test_func","arguments":"{\"arg\": \"value\"}"}}]}}]}`})
+
+	// Finish with usage
+	transformer.Transform(&sse.Event{Data: `{"id":"test-123","model":"test-model","choices":[{"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`})
+
+	// Finish the response with [DONE]
+	transformer.Transform(&sse.Event{Data: "[DONE]"})
+
+	// Get the stored conversation
+	stored := conversation.GetFromDefault("resp_test-123")
+	if stored == nil {
+		t.Fatal("No conversation stored")
+	}
+
+	t.Logf("Stored output items: %d", len(stored.Output))
+	for i, item := range stored.Output {
+		t.Logf("Item %d: type=%s, role=%s, call_id=%s, name=%s", i, item.Type, item.Role, item.CallID, item.Name)
+	}
+
+	// Now test prependHistoryToInput
+	newInput := []interface{}{
+		map[string]interface{}{
+			"type":    "message",
+			"role":    "user",
+			"content": "Follow-up",
+		},
+	}
+
+	result := prependHistoryToInput(stored, newInput)
+	items := result.([]interface{})
+
+	t.Logf("Result items: %d", len(items))
+	for i, item := range items {
+		itemJSON, _ := json.MarshalIndent(item, "", "  ")
+		t.Logf("Item %d: %s", i, string(itemJSON))
+	}
+
+	// Should have: user input, combined assistant message, new user input
+	if len(items) != 3 {
+		t.Errorf("Expected 3 items, got %d", len(items))
+	}
+
+	// Check that the assistant message has tool_calls
+	if len(items) >= 2 {
+		assistantItem, ok := items[1].(map[string]interface{})
+		if !ok {
+			t.Fatalf("items[1] is not map[string]interface{}")
+		}
+
+		if assistantItem["type"] != "message" {
+			t.Errorf("items[1] type = %v, want message", assistantItem["type"])
+		}
+
+		if assistantItem["role"] != "assistant" {
+			t.Errorf("items[1] role = %v, want assistant", assistantItem["role"])
+		}
+
+		if _, hasToolCalls := assistantItem["tool_calls"]; !hasToolCalls {
+			t.Errorf("Combined assistant message should have tool_calls")
+		}
+	}
+}
+
+func strPtr(s string) *string {
+	return &s
 }

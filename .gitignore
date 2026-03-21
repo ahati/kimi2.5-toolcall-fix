@@ -3,4 +3,5 @@ sse_logs/*
 old_sse_logs
 old_sse_logs/*
 ai-proxy
-old-ignore-ai-proxy.tar.gz
+converter
+plans

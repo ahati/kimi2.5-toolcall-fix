@@ -2476,3 +2476,188 @@ func TestResponsesToChatConverter_SeparateFunctionCallMergedWithAssistant(t *tes
 		})
 	}
 }
+
+func TestResponsesToChatConverter_CodexInputOrder(t *testing.T) {
+	// This test simulates the exact input order that Codex sends:
+	// 1. message (developer)
+	// 2. message (user)
+	// 3. message (user)
+	// 4. function_call
+	// 5. message (assistant)
+	// 6. function_call_output
+	
+	input := []interface{}{
+		map[string]interface{}{
+			"type": "message",
+			"role": "developer",
+			"content": []interface{}{
+				map[string]interface{}{"type": "input_text", "text": "System prompt"},
+			},
+		},
+		map[string]interface{}{
+			"type": "message",
+			"role": "user",
+			"content": []interface{}{
+				map[string]interface{}{"type": "input_text", "text": "Hello"},
+			},
+		},
+		map[string]interface{}{
+			"type": "message",
+			"role": "user",
+			"content": []interface{}{
+				map[string]interface{}{"type": "input_text", "text": "Review this"},
+			},
+		},
+		map[string]interface{}{
+			"type":      "function_call",
+			"name":      "exec_command",
+			"arguments": `{"cmd": "git status"}`,
+			"call_id":   "call_123",
+		},
+		map[string]interface{}{
+			"type": "message",
+			"role": "assistant",
+			"content": []interface{}{
+				map[string]interface{}{"type": "output_text", "text": "I'll help you."},
+			},
+		},
+		map[string]interface{}{
+			"type":      "function_call_output",
+			"call_id":   "call_123",
+			"output":    "On branch main...",
+		},
+	}
+	
+	converter := NewResponsesToChatConverter()
+	messages := converter.convertInputItems(input)
+	
+	t.Logf("Output messages: %d", len(messages))
+	for i, msg := range messages {
+		msgJSON, _ := json.MarshalIndent(msg, "", "  ")
+		t.Logf("Message %d: %s", i, string(msgJSON))
+	}
+	
+	// Expected:
+	// 1. system message (developer)
+	// 2. user message
+	// 3. user message
+	// 4. assistant message with BOTH content AND tool_calls (merged)
+	// 5. tool message (function_call_output)
+	
+	// Check that we have 5 messages
+	if len(messages) != 5 {
+		t.Errorf("Expected 5 messages, got %d", len(messages))
+	}
+	
+	// Check message 3 (should be merged assistant with tool_calls)
+	if len(messages) >= 4 {
+		assistantMsg := messages[3]
+		if assistantMsg.Role != "assistant" {
+			t.Errorf("Message 3 role = %s, want assistant", assistantMsg.Role)
+		}
+		if len(assistantMsg.ToolCalls) != 1 {
+			t.Errorf("Message 3 should have 1 tool call, got %d", len(assistantMsg.ToolCalls))
+		}
+		if assistantMsg.ToolCalls[0].Function.Name != "exec_command" {
+			t.Errorf("Tool call name = %s, want exec_command", assistantMsg.ToolCalls[0].Function.Name)
+		}
+	}
+	
+	// Check message 4 (should be tool message)
+	if len(messages) >= 5 {
+		toolMsg := messages[4]
+		if toolMsg.Role != "tool" {
+			t.Errorf("Message 4 role = %s, want tool", toolMsg.Role)
+		}
+		if toolMsg.ToolCallID != "call_123" {
+			t.Errorf("Tool call ID = %s, want call_123", toolMsg.ToolCallID)
+		}
+	}
+}
+
+func TestResponsesToChatConverter_Convert_CodexInputOrder(t *testing.T) {
+	// This test uses the Convert method directly with Codex-style input
+	input := map[string]interface{}{
+		"model": "test-model",
+		"input": []interface{}{
+			map[string]interface{}{
+				"type": "message",
+				"role": "developer",
+				"content": []interface{}{
+					map[string]interface{}{"type": "input_text", "text": "System prompt"},
+				},
+			},
+			map[string]interface{}{
+				"type": "message",
+				"role": "user",
+				"content": []interface{}{
+					map[string]interface{}{"type": "input_text", "text": "Hello"},
+				},
+			},
+			map[string]interface{}{
+				"type": "message",
+				"role": "user",
+				"content": []interface{}{
+					map[string]interface{}{"type": "input_text", "text": "Review this"},
+				},
+			},
+			map[string]interface{}{
+				"type":      "function_call",
+				"name":      "exec_command",
+				"arguments": `{"cmd": "git status"}`,
+				"call_id":   "call_123",
+			},
+			map[string]interface{}{
+				"type": "message",
+				"role": "assistant",
+				"content": []interface{}{
+					map[string]interface{}{"type": "output_text", "text": "I'll help you."},
+				},
+			},
+			map[string]interface{}{
+				"type":      "function_call_output",
+				"call_id":   "call_123",
+				"output":    "On branch main...",
+			},
+		},
+		"stream": true,
+	}
+	
+	body, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	
+	converter := NewResponsesToChatConverter()
+	output, err := converter.Convert(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	
+	var chatReq types.ChatCompletionRequest
+	if err := json.Unmarshal(output, &chatReq); err != nil {
+		t.Fatal(err)
+	}
+	
+	t.Logf("Output messages: %d", len(chatReq.Messages))
+	for i, msg := range chatReq.Messages {
+		msgJSON, _ := json.MarshalIndent(msg, "", "  ")
+		t.Logf("Message %d: %s", i, string(msgJSON))
+	}
+	
+	// Expected: 5 messages (system, user, user, assistant with tool_calls, tool)
+	if len(chatReq.Messages) != 5 {
+		t.Errorf("Expected 5 messages, got %d", len(chatReq.Messages))
+	}
+	
+	// Check message 3 (should be merged assistant with tool_calls)
+	if len(chatReq.Messages) >= 4 {
+		assistantMsg := chatReq.Messages[3]
+		if assistantMsg.Role != "assistant" {
+			t.Errorf("Message 3 role = %s, want assistant", assistantMsg.Role)
+		}
+		if len(assistantMsg.ToolCalls) != 1 {
+			t.Errorf("Message 3 should have 1 tool call, got %d", len(assistantMsg.ToolCalls))
+		}
+	}
+}

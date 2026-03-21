@@ -792,3 +792,185 @@ func TestExtractContentFromInput_InputFile(t *testing.T) {
 		})
 	}
 }
+
+func TestCombineOutputItems(t *testing.T) {
+	tests := []struct {
+		name     string
+		outputs  []types.OutputItem
+		wantLen  int
+		wantType string // type of first item
+	}{
+		{
+			name: "message and function_call should combine",
+			outputs: []types.OutputItem{
+				{
+					Type:    "message",
+					Role:    "assistant",
+					Content: []types.OutputContent{{Type: "output_text", Text: "Hello"}},
+				},
+				{
+					Type:      "function_call",
+					CallID:    "call_123",
+					Name:      "test_func",
+					Arguments: `{"arg": "value"}`,
+				},
+			},
+			wantLen:  1,
+			wantType: "message",
+		},
+		{
+			name: "function_call first then message should combine",
+			outputs: []types.OutputItem{
+				{
+					Type:      "function_call",
+					CallID:    "call_123",
+					Name:      "test_func",
+					Arguments: `{"arg": "value"}`,
+				},
+				{
+					Type:    "message",
+					Role:    "assistant",
+					Content: []types.OutputContent{{Type: "output_text", Text: "Hello"}},
+				},
+			},
+			wantLen:  1,
+			wantType: "message",
+		},
+		{
+			name: "only message should not combine",
+			outputs: []types.OutputItem{
+				{
+					Type:    "message",
+					Role:    "assistant",
+					Content: []types.OutputContent{{Type: "output_text", Text: "Hello"}},
+				},
+			},
+			wantLen:  1,
+			wantType: "message",
+		},
+		{
+			name: "only function_call should not combine",
+			outputs: []types.OutputItem{
+				{
+					Type:      "function_call",
+					CallID:    "call_123",
+					Name:      "test_func",
+					Arguments: `{"arg": "value"}`,
+				},
+			},
+			wantLen:  1,
+			wantType: "function_call",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := combineOutputItems(tt.outputs)
+
+			if len(result) != tt.wantLen {
+				t.Errorf("combineOutputItems() returned %d items, want %d", len(result), tt.wantLen)
+				// Print the result for debugging
+				for i, item := range result {
+					itemJSON, _ := json.MarshalIndent(item, "", "  ")
+					t.Logf("Item %d: %s", i, string(itemJSON))
+				}
+			}
+
+			if len(result) > 0 {
+				itemMap, ok := result[0].(map[string]interface{})
+				if !ok {
+					t.Fatalf("result[0] is not map[string]interface{}")
+				}
+				if itemMap["type"] != tt.wantType {
+					t.Errorf("First item type = %v, want %v", itemMap["type"], tt.wantType)
+				}
+
+				// Check if tool_calls exists in combined item
+				if tt.wantLen == 1 && len(tt.outputs) == 2 {
+					if _, hasToolCalls := itemMap["tool_calls"]; !hasToolCalls {
+						t.Errorf("Combined item should have tool_calls field")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestPrependHistoryToInput_CombinesMessageAndFunctionCall(t *testing.T) {
+	// Initialize the conversation store
+	conversation.InitDefaultStore(conversation.Config{MaxSize: 1000})
+	
+	// Create a conversation with message and function_call outputs
+	conv := &conversation.Conversation{
+		ID: "resp_test_123",
+		Input: []types.InputItem{
+			{Type: "message", Role: "user", Content: "Hello"},
+		},
+		Output: []types.OutputItem{
+			{
+				Type:    "message",
+				Role:    "assistant",
+				ID:      "msg_123",
+				Content: []types.OutputContent{{Type: "output_text", Text: "Let me help you."}},
+			},
+			{
+				Type:      "function_call",
+				ID:        "call_123",
+				CallID:    "call_123",
+				Name:      "test_func",
+				Arguments: `{"arg": "value"}`,
+			},
+		},
+	}
+	
+	// Store the conversation
+	conversation.StoreInDefault(conv)
+	
+	// Create a new input to prepend to
+	currentInput := []interface{}{
+		map[string]interface{}{
+			"type":    "message",
+			"role":    "user",
+			"content": "Follow-up question",
+		},
+	}
+	
+	// Call prependHistoryToInput
+	result := prependHistoryToInput(conv, currentInput)
+	
+	// Convert result to JSON for inspection
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	t.Logf("Result: %s", string(resultJSON))
+	
+	// Verify the result
+	items, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", result)
+	}
+	
+	// Should have: input item, combined assistant message, current input
+	// That's 3 items
+	if len(items) != 3 {
+		t.Errorf("Expected 3 items, got %d", len(items))
+	}
+	
+	// Check that item 1 (the combined assistant message) has tool_calls
+	if len(items) >= 2 {
+		assistantItem, ok := items[1].(map[string]interface{})
+		if !ok {
+			t.Fatalf("items[1] is not map[string]interface{}")
+		}
+		
+		if assistantItem["type"] != "message" {
+			t.Errorf("items[1] type = %v, want message", assistantItem["type"])
+		}
+		
+		if assistantItem["role"] != "assistant" {
+			t.Errorf("items[1] role = %v, want assistant", assistantItem["role"])
+		}
+		
+		if _, hasToolCalls := assistantItem["tool_calls"]; !hasToolCalls {
+			t.Errorf("Combined assistant message should have tool_calls")
+		}
+	}
+}

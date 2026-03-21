@@ -204,7 +204,8 @@ func (c *ResponsesToChatConverter) groupInputItems(items []interface{}) []inputI
 			continue
 		}
 
-		switch itemType, _ := itemMap["type"].(string); itemType {
+		itemType, _ := itemMap["type"].(string)
+		switch itemType {
 		case "function_call":
 			p.handleFunctionCallItem(itemMap)
 		case "message":
