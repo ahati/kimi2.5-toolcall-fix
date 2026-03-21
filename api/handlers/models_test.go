@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"ai-proxy/config"
@@ -151,11 +153,13 @@ func TestModelsHandler_BuildModelsURL(t *testing.T) {
 }
 
 func TestModelsHandler_Handle_UpstreamError(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("upstream unavailable"))
-	}))
-	defer upstream.Close()
+	withFakeUpstreamClient(t, func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       io.NopCloser(strings.NewReader("upstream unavailable")),
+			Header:     make(http.Header),
+		}, nil
+	})
 
 	cfg := &config.Config{
 		AppConfig: &config.Schema{
@@ -163,7 +167,7 @@ func TestModelsHandler_Handle_UpstreamError(t *testing.T) {
 				{
 					Name:    "openai",
 					Type:    "openai",
-					BaseURL: upstream.URL + "/v1/chat/completions",
+					BaseURL: "https://example.com/v1/chat/completions",
 					APIKey:  "test-api-key",
 				},
 			},
@@ -184,19 +188,21 @@ func TestModelsHandler_Handle_UpstreamError(t *testing.T) {
 }
 
 func TestModelsHandler_Handle_Success(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	withFakeUpstreamClient(t, func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path != "/v1/models" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Header.Get("Authorization") != "Bearer test-key" {
 			t.Errorf("unexpected authorization header: %s", r.Header.Get("Authorization"))
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"object": "list", "data": [{"id": "model-1"}]}`))
-	}))
-	defer upstream.Close()
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"object": "list", "data": [{"id": "model-1"}]}`)),
+			Header:     make(http.Header),
+		}
+		resp.Header.Set("Content-Type", "application/json")
+		return resp, nil
+	})
 
 	cfg := &config.Config{
 		AppConfig: &config.Schema{
@@ -204,7 +210,7 @@ func TestModelsHandler_Handle_Success(t *testing.T) {
 				{
 					Name:    "openai",
 					Type:    "openai",
-					BaseURL: upstream.URL + "/v1/chat/completions",
+					BaseURL: "https://example.com/v1/chat/completions",
 					APIKey:  "default-api-key",
 				},
 			},

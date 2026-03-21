@@ -727,22 +727,32 @@ func TestChatToAnthropicConverter_TemperatureBoundaries(t *testing.T) {
 	tests := []struct {
 		name        string
 		temperature float64
+		expected    float64
 	}{
 		{
 			name:        "minimum temperature 0.0",
 			temperature: 0.0,
+			expected:    0.0,
 		},
 		{
 			name:        "maximum temperature 2.0",
 			temperature: 2.0,
+			expected:    1.0,
+		},
+		{
+			name:        "temperature below zero",
+			temperature: -0.5,
+			expected:    0.0,
 		},
 		{
 			name:        "temperature slightly above 0",
 			temperature: 0.001,
+			expected:    0.001,
 		},
 		{
 			name:        "temperature slightly below 2.0",
 			temperature: 1.999,
+			expected:    1.0,
 		},
 	}
 
@@ -769,8 +779,8 @@ func TestChatToAnthropicConverter_TemperatureBoundaries(t *testing.T) {
 				t.Fatalf("failed to parse result: %v", err)
 			}
 
-			if anthReq.Temperature != tt.temperature {
-				t.Errorf("expected temperature %f, got %f", tt.temperature, anthReq.Temperature)
+			if anthReq.Temperature != tt.expected {
+				t.Errorf("expected temperature %f, got %f", tt.expected, anthReq.Temperature)
 			}
 		})
 	}
@@ -925,31 +935,36 @@ func TestChatToAnthropicConverter_MultipleStopSequences(t *testing.T) {
 // Category A3: Tool choice "required" (force tool use) (MEDIUM)
 func TestChatToAnthropicConverter_ToolChoiceRequired(t *testing.T) {
 	tests := []struct {
-		name         string
-		toolChoice   interface{}
-		expectedType string
-		expectedName string
+		name          string
+		toolChoice    interface{}
+		expectedType  string
+		expectedName  string
+		expectedTools int
 	}{
 		{
-			name:         "tool choice required",
-			toolChoice:   "required",
-			expectedType: "any",
+			name:          "tool choice required",
+			toolChoice:    "required",
+			expectedType:  "any",
+			expectedTools: 1,
 		},
 		{
-			name:         "tool choice auto",
-			toolChoice:   "auto",
-			expectedType: "auto",
+			name:          "tool choice auto",
+			toolChoice:    "auto",
+			expectedType:  "auto",
+			expectedTools: 1,
 		},
 		{
-			name:         "tool choice none",
-			toolChoice:   "none",
-			expectedType: "",
+			name:          "tool choice none",
+			toolChoice:    "none",
+			expectedType:  "",
+			expectedTools: 0,
 		},
 		{
-			name:         "tool choice function object",
-			toolChoice:   map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": "get_weather"}},
-			expectedType: "tool",
-			expectedName: "get_weather",
+			name:          "tool choice function object",
+			toolChoice:    map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": "get_weather"}},
+			expectedType:  "tool",
+			expectedName:  "get_weather",
+			expectedTools: 1,
 		},
 	}
 
@@ -991,6 +1006,9 @@ func TestChatToAnthropicConverter_ToolChoiceRequired(t *testing.T) {
 				if anthReq.ToolChoice != nil {
 					t.Errorf("expected nil tool_choice for 'none', got %+v", anthReq.ToolChoice)
 				}
+				if len(anthReq.Tools) != tt.expectedTools {
+					t.Errorf("expected %d tools, got %d", tt.expectedTools, len(anthReq.Tools))
+				}
 			} else {
 				if anthReq.ToolChoice == nil {
 					t.Fatalf("expected tool_choice, got nil")
@@ -1001,8 +1019,177 @@ func TestChatToAnthropicConverter_ToolChoiceRequired(t *testing.T) {
 				if tt.expectedName != "" && anthReq.ToolChoice.Name != tt.expectedName {
 					t.Errorf("expected tool_choice name %s, got %s", tt.expectedName, anthReq.ToolChoice.Name)
 				}
+				if len(anthReq.Tools) != tt.expectedTools {
+					t.Errorf("expected %d tools, got %d", tt.expectedTools, len(anthReq.Tools))
+				}
 			}
 		})
+	}
+}
+
+func TestChatToAnthropicConverter_ImageAndAlternation(t *testing.T) {
+	t.Run("url and data uri image conversion", func(t *testing.T) {
+		converter := NewChatToAnthropicConverter()
+		input := types.ChatCompletionRequest{
+			Model: "claude-3-opus",
+			Messages: []types.Message{
+				{
+					Role: "user",
+					Content: []interface{}{
+						map[string]interface{}{
+							"type": "text",
+							"text": "Look at these images",
+						},
+						map[string]interface{}{
+							"type": "image_url",
+							"image_url": map[string]interface{}{
+								"url": "https://example.com/image.png",
+							},
+						},
+						map[string]interface{}{
+							"type": "image_url",
+							"image_url": map[string]interface{}{
+								"url": "data:image/png;base64,Zm9v",
+							},
+						},
+					},
+				},
+			},
+			MaxTokens: 1024,
+		}
+
+		inputJSON, err := json.Marshal(input)
+		if err != nil {
+			t.Fatalf("failed to marshal input: %v", err)
+		}
+
+		result, err := converter.Convert(inputJSON)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var anthReq types.MessageRequest
+		if err := json.Unmarshal(result, &anthReq); err != nil {
+			t.Fatalf("failed to parse result: %v", err)
+		}
+
+		if len(anthReq.Messages) != 1 {
+			t.Fatalf("expected 1 message, got %d", len(anthReq.Messages))
+		}
+
+		blocks, ok := anthReq.Messages[0].Content.([]interface{})
+		if !ok {
+			t.Fatalf("expected content blocks, got %T", anthReq.Messages[0].Content)
+		}
+		if len(blocks) != 3 {
+			t.Fatalf("expected 3 content blocks, got %d", len(blocks))
+		}
+
+		first, ok := blocks[0].(map[string]interface{})
+		if !ok || first["type"] != "text" {
+			t.Fatalf("expected first block to be text, got %#v", blocks[0])
+		}
+
+		second, ok := blocks[1].(map[string]interface{})
+		if !ok || second["type"] != "image" {
+			t.Fatalf("expected second block to be image, got %#v", blocks[1])
+		}
+		secondSource, ok := second["source"].(map[string]interface{})
+		if !ok || secondSource["type"] != "url" || secondSource["url"] != "https://example.com/image.png" {
+			t.Fatalf("expected URL image source, got %#v", second["source"])
+		}
+
+		third, ok := blocks[2].(map[string]interface{})
+		if !ok || third["type"] != "image" {
+			t.Fatalf("expected third block to be image, got %#v", blocks[2])
+		}
+		thirdSource, ok := third["source"].(map[string]interface{})
+		if !ok || thirdSource["type"] != "base64" || thirdSource["media_type"] != "image/png" || thirdSource["data"] != "Zm9v" {
+			t.Fatalf("expected base64 image source, got %#v", third["source"])
+		}
+	})
+
+	t.Run("alternation normalization", func(t *testing.T) {
+		converter := NewChatToAnthropicConverter()
+		input := types.ChatCompletionRequest{
+			Model: "claude-3-opus",
+			Messages: []types.Message{
+				{Role: "user", Content: "First"},
+				{Role: "user", Content: "Second"},
+			},
+			MaxTokens: 1024,
+		}
+
+		inputJSON, err := json.Marshal(input)
+		if err != nil {
+			t.Fatalf("failed to marshal input: %v", err)
+		}
+
+		result, err := converter.Convert(inputJSON)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var anthReq types.MessageRequest
+		if err := json.Unmarshal(result, &anthReq); err != nil {
+			t.Fatalf("failed to parse result: %v", err)
+		}
+
+		if len(anthReq.Messages) != 3 {
+			t.Fatalf("expected 3 messages after normalization, got %d", len(anthReq.Messages))
+		}
+
+		if anthReq.Messages[0].Role != "user" || anthReq.Messages[1].Role != "assistant" || anthReq.Messages[2].Role != "user" {
+			t.Fatalf("unexpected role sequence: %#v", []string{anthReq.Messages[0].Role, anthReq.Messages[1].Role, anthReq.Messages[2].Role})
+		}
+
+		if blocks, ok := anthReq.Messages[1].Content.([]interface{}); !ok || len(blocks) != 0 {
+			t.Fatalf("expected empty assistant filler message, got %#v", anthReq.Messages[1].Content)
+		}
+	})
+}
+
+func TestChatToAnthropicConverter_ToolChoiceNoneStripsTools(t *testing.T) {
+	converter := NewChatToAnthropicConverter()
+	input := types.ChatCompletionRequest{
+		Model: "claude-3-opus",
+		Messages: []types.Message{
+			{Role: "user", Content: "Hello"},
+		},
+		Tools: []types.Tool{
+			{
+				Type: "function",
+				Function: types.ToolFunction{
+					Name:        "get_weather",
+					Description: "Get weather info",
+					Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+				},
+			},
+		},
+		ToolChoice: "none",
+		MaxTokens:  1024,
+	}
+
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("failed to marshal input: %v", err)
+	}
+
+	result, err := converter.Convert(inputJSON)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var anthReq types.MessageRequest
+	if err := json.Unmarshal(result, &anthReq); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+
+	if anthReq.ToolChoice != nil {
+		t.Fatalf("expected tool_choice to be stripped, got %+v", anthReq.ToolChoice)
+	}
+	if len(anthReq.Tools) != 0 {
+		t.Fatalf("expected tools to be stripped, got %d", len(anthReq.Tools))
 	}
 }
 

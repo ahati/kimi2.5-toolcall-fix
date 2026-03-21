@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -414,6 +415,65 @@ func (m *mockTransformer) Close() error {
 	return nil
 }
 
+type fakeUpstreamClient struct {
+	buildReq func(ctx context.Context, body []byte) (*http.Request, error)
+	setHdrs  func(req *http.Request)
+	do       func(req *http.Request) (*http.Response, error)
+	closeFn  func()
+}
+
+func (f *fakeUpstreamClient) BuildRequest(ctx context.Context, body []byte) (*http.Request, error) {
+	if f.buildReq != nil {
+		return f.buildReq(ctx, body)
+	}
+	return http.NewRequestWithContext(ctx, http.MethodPost, "https://example.com", bytes.NewReader(body))
+}
+
+func (f *fakeUpstreamClient) SetHeaders(req *http.Request) {
+	if f.setHdrs != nil {
+		f.setHdrs(req)
+	}
+}
+
+func (f *fakeUpstreamClient) Do(req *http.Request) (*http.Response, error) {
+	if f.do != nil {
+		return f.do(req)
+	}
+	return nil, fmt.Errorf("fake upstream client Do not configured")
+}
+
+func (f *fakeUpstreamClient) Close() {
+	if f.closeFn != nil {
+		f.closeFn()
+	}
+}
+
+func withFakeUpstreamClient(
+	t *testing.T,
+	do func(req *http.Request) (*http.Response, error),
+) {
+	t.Helper()
+
+	oldFactory := newUpstreamClient
+	newUpstreamClient = func(baseURL, apiKey string) upstreamClient {
+		return &fakeUpstreamClient{
+			setHdrs: func(req *http.Request) {
+				req.Header.Set("Content-Type", "application/json")
+				authHeader := "Bearer " + apiKey
+				if apiKey == "" {
+					authHeader = "Bearer"
+				}
+				req.Header.Set("Authorization", authHeader)
+				req.Header.Set("Accept", "text/event-stream")
+			},
+			do: do,
+		}
+	}
+	t.Cleanup(func() {
+		newUpstreamClient = oldFactory
+	})
+}
+
 func TestHandle_ValidateRequestError(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -468,18 +528,28 @@ func TestHandle_UpstreamError(t *testing.T) {
 }
 
 func TestHandle_UpstreamNon200Status(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte("rate limit exceeded"))
-	}))
-	defer upstream.Close()
+	oldFactory := newUpstreamClient
+	t.Cleanup(func() {
+		newUpstreamClient = oldFactory
+	})
+	newUpstreamClient = func(baseURL, apiKey string) upstreamClient {
+		return &fakeUpstreamClient{
+			do: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       io.NopCloser(strings.NewReader("rate limit exceeded")),
+					Header:     make(http.Header),
+				}, nil
+			},
+		}
+	}
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true}`))
 
 	h := &mockHandler{
-		upstreamURL: upstream.URL,
+		upstreamURL: "https://example.com/upstream",
 		apiKey:      "test-key",
 	}
 
@@ -833,13 +903,17 @@ func TestStreamWithCapture(t *testing.T) {
 }
 
 func TestHandle_WithCaptureContext(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("data: {\"id\":\"test-123\"}\n\n"))
-		w.Write([]byte("data: [DONE]\n\n"))
-	}))
-	defer upstream.Close()
+	withFakeUpstreamClient(t, func(req *http.Request) (*http.Response, error) {
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"id\":\"test-123\"}\n\ndata: [DONE]\n\n",
+			)),
+			Header: make(http.Header),
+		}
+		resp.Header.Set("Content-Type", "text/event-stream")
+		return resp, nil
+	})
 
 	mockWriter := newMockResponseWriter()
 	c, _ := gin.CreateTestContext(mockWriter)
@@ -850,7 +924,7 @@ func TestHandle_WithCaptureContext(t *testing.T) {
 	c.Request = c.Request.WithContext(ctx)
 
 	h := &mockHandler{
-		upstreamURL: upstream.URL,
+		upstreamURL: "https://example.com/upstream",
 		apiKey:      "test-key",
 	}
 
@@ -862,20 +936,22 @@ func TestHandle_WithCaptureContext(t *testing.T) {
 }
 
 func TestHandle_SuccessWithMockUpstream(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("data: {\"id\":\"test\"}\n\n"))
-		w.Write([]byte("data: [DONE]\n\n"))
-	}))
-	defer upstream.Close()
+	withFakeUpstreamClient(t, func(req *http.Request) (*http.Response, error) {
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("data: {\"id\":\"test\"}\n\ndata: [DONE]\n\n")),
+			Header:     make(http.Header),
+		}
+		resp.Header.Set("Content-Type", "text/event-stream")
+		return resp, nil
+	})
 
 	mockWriter := newMockResponseWriter()
 	c, _ := gin.CreateTestContext(mockWriter)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true}`))
 
 	h := &mockHandler{
-		upstreamURL: upstream.URL,
+		upstreamURL: "https://example.com/upstream",
 		apiKey:      "test-key",
 	}
 
@@ -883,14 +959,16 @@ func TestHandle_SuccessWithMockUpstream(t *testing.T) {
 }
 
 func TestHandle_ForwardHeadersCalled(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	withFakeUpstreamClient(t, func(r *http.Request) (*http.Response, error) {
 		if r.Header.Get("X-Custom-Header") != "custom-value" {
 			t.Errorf("expected X-Custom-Header to be forwarded")
 		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("data: {}\n\n"))
-	}))
-	defer upstream.Close()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
+			Header:     make(http.Header),
+		}, nil
+	})
 
 	mockWriter := newMockResponseWriter()
 	c, _ := gin.CreateTestContext(mockWriter)
@@ -899,7 +977,7 @@ func TestHandle_ForwardHeadersCalled(t *testing.T) {
 
 	forwarded := false
 	h := &mockHandler{
-		upstreamURL: upstream.URL,
+		upstreamURL: "https://example.com/upstream",
 		apiKey:      "test-key",
 		forwardHeadersFn: func(c *gin.Context, req *http.Request) {
 			forwarded = true
@@ -915,18 +993,20 @@ func TestHandle_ForwardHeadersCalled(t *testing.T) {
 }
 
 func TestHandle_EmptyBody(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("data: {}\n\n"))
-	}))
-	defer upstream.Close()
+	withFakeUpstreamClient(t, func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
+			Header:     make(http.Header),
+		}, nil
+	})
 
 	mockWriter := newMockResponseWriter()
 	c, _ := gin.CreateTestContext(mockWriter)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 
 	h := &mockHandler{
-		upstreamURL: upstream.URL,
+		upstreamURL: "https://example.com/upstream",
 		apiKey:      "test-key",
 	}
 
@@ -942,25 +1022,26 @@ func TestHandle_EmptyBody(t *testing.T) {
 // resulting in an upstream authentication error (401 from upstream).
 // Note: Actual authentication is handled by middleware, not these handlers.
 func TestMissingAPIKey(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	withFakeUpstreamClient(t, func(r *http.Request) (*http.Response, error) {
 		// The proxy always sets Authorization header (even if empty key)
 		authHeader := r.Header.Get("Authorization")
 		// Will be "Bearer" when key is empty (no trailing space)
 		if authHeader != "Bearer" {
 			t.Errorf("expected Authorization header to be 'Bearer' when key is missing, got %q", authHeader)
 		}
-		// Return 401 to simulate upstream auth failure
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte("missing api key"))
-	}))
-	defer upstream.Close()
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Body:       io.NopCloser(strings.NewReader("missing api key")),
+			Header:     make(http.Header),
+		}, nil
+	})
 
 	mockWriter := newMockResponseWriter()
 	c, _ := gin.CreateTestContext(mockWriter)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true}`))
 
 	h := &mockHandler{
-		upstreamURL: upstream.URL,
+		upstreamURL: "https://example.com/upstream",
 		apiKey:      "", // No API key provided
 	}
 
@@ -976,24 +1057,25 @@ func TestMissingAPIKey(t *testing.T) {
 // The proxy forwards the key to upstream, which returns an authentication error.
 // Note: API key validation is performed by upstream, not by the proxy.
 func TestInvalidAPIKey(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	withFakeUpstreamClient(t, func(r *http.Request) (*http.Response, error) {
 		// Verify the invalid key was forwarded
 		authHeader := r.Header.Get("Authorization")
 		if authHeader != "Bearer invalid-key-12345" {
 			t.Errorf("expected Authorization header to be forwarded, got %q", authHeader)
 		}
-		// Return 401 to simulate invalid key rejection
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte("invalid api key"))
-	}))
-	defer upstream.Close()
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Body:       io.NopCloser(strings.NewReader("invalid api key")),
+			Header:     make(http.Header),
+		}, nil
+	})
 
 	mockWriter := newMockResponseWriter()
 	c, _ := gin.CreateTestContext(mockWriter)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true}`))
 
 	h := &mockHandler{
-		upstreamURL: upstream.URL,
+		upstreamURL: "https://example.com/upstream",
 		apiKey:      "invalid-key-12345",
 	}
 
@@ -1009,24 +1091,25 @@ func TestInvalidAPIKey(t *testing.T) {
 // This indicates the API key is valid but lacks required permissions.
 // Note: Permission checking is performed by upstream, not by the proxy.
 func TestInsufficientPermissions(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	withFakeUpstreamClient(t, func(r *http.Request) (*http.Response, error) {
 		// Verify valid key was forwarded
 		authHeader := r.Header.Get("Authorization")
 		if authHeader != "Bearer sk-valid-key" {
 			t.Errorf("expected Authorization header, got %q", authHeader)
 		}
-		// Return 403 to simulate insufficient permissions
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("insufficient permissions for model gpt-4"))
-	}))
-	defer upstream.Close()
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Body:       io.NopCloser(strings.NewReader("insufficient permissions for model gpt-4")),
+			Header:     make(http.Header),
+		}, nil
+	})
 
 	mockWriter := newMockResponseWriter()
 	c, _ := gin.CreateTestContext(mockWriter)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true, "model": "gpt-4"}`))
 
 	h := &mockHandler{
-		upstreamURL: upstream.URL,
+		upstreamURL: "https://example.com/upstream",
 		apiKey:      "sk-valid-key",
 	}
 
@@ -1041,23 +1124,25 @@ func TestInsufficientPermissions(t *testing.T) {
 // TestAuthorizationHeaderFormat documents that the Authorization header
 // is formatted correctly with the "Bearer" prefix.
 func TestAuthorizationHeaderFormat(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	withFakeUpstreamClient(t, func(r *http.Request) (*http.Response, error) {
 		authHeader := r.Header.Get("Authorization")
 		expectedPrefix := "Bearer "
 		if !strings.HasPrefix(authHeader, expectedPrefix) {
 			t.Errorf("Authorization header should start with %q, got %q", expectedPrefix, authHeader)
 		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("data: {}\n\n"))
-	}))
-	defer upstream.Close()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
+			Header:     make(http.Header),
+		}, nil
+	})
 
 	mockWriter := newMockResponseWriter()
 	c, _ := gin.CreateTestContext(mockWriter)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true}`))
 
 	h := &mockHandler{
-		upstreamURL: upstream.URL,
+		upstreamURL: "https://example.com/upstream",
 		apiKey:      "sk-test-key",
 	}
 
@@ -1097,23 +1182,25 @@ func TestAPIKeyExtraction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var receivedHeader string
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			withFakeUpstreamClient(t, func(r *http.Request) (*http.Response, error) {
 				receivedHeader = r.Header.Get("Authorization")
+				status := http.StatusOK
 				if receivedHeader == "" {
-					w.WriteHeader(http.StatusUnauthorized)
-				} else {
-					w.WriteHeader(http.StatusOK)
+					status = http.StatusUnauthorized
 				}
-				w.Write([]byte("data: {}\n\n"))
-			}))
-			defer upstream.Close()
+				return &http.Response{
+					StatusCode: status,
+					Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
+					Header:     make(http.Header),
+				}, nil
+			})
 
 			mockWriter := newMockResponseWriter()
 			c, _ := gin.CreateTestContext(mockWriter)
 			c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"stream": true}`))
 
 			h := &mockHandler{
-				upstreamURL: upstream.URL,
+				upstreamURL: "https://example.com/upstream",
 				apiKey:      tt.configuredKey,
 			}
 

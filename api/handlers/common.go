@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/tmaxmax/go-sse"
 )
+
+type upstreamClient interface {
+	BuildRequest(ctx context.Context, body []byte) (*http.Request, error)
+	SetHeaders(req *http.Request)
+	Do(req *http.Request) (*http.Response, error)
+	Close()
+}
+
+var newUpstreamClient = func(baseURL, apiKey string) upstreamClient {
+	return proxy.NewClient(baseURL, apiKey)
+}
 
 // Handle wraps a Handler implementation and returns a Gin handler function.
 // It orchestrates the full request pipeline: reading, validating, transforming, and proxying.
@@ -120,7 +132,7 @@ func proxyRequest(c *gin.Context, h Handler, body []byte) {
 	apiKey := h.ResolveAPIKey(c)
 
 	// Create HTTP client configured for upstream endpoint
-	client := proxy.NewClient(h.UpstreamURL(), apiKey)
+	client := newUpstreamClient(h.UpstreamURL(), apiKey)
 	// Ensure connection resources are released when done
 	defer client.Close()
 

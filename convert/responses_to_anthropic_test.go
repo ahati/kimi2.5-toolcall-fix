@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"ai-proxy/conversation"
 	"ai-proxy/types"
 )
 
@@ -79,6 +80,273 @@ func TestResponsesToAnthropicConverter_Convert(t *testing.T) {
 			}
 			tt.validate(t, output)
 		})
+	}
+}
+
+func TestResponsesToAnthropicConverter_StructuredContentAndToolChoice(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		validate func(t *testing.T, output []byte)
+	}{
+		{
+			name: "input image preserves URL structure",
+			input: `{
+				"model": "claude-3-opus",
+				"input": [
+					{
+						"type": "message",
+						"role": "user",
+						"content": [
+							{"type": "input_text", "text": "Describe this image."},
+							{"type": "input_image", "image_url": "https://example.com/image.png"}
+						]
+					}
+				]
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.MessageRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if len(req.Messages) != 1 {
+					t.Fatalf("Expected 1 message, got %d", len(req.Messages))
+				}
+				content, ok := req.Messages[0].Content.([]interface{})
+				if !ok {
+					t.Fatalf("Expected structured content, got %T", req.Messages[0].Content)
+				}
+				if len(content) != 2 {
+					t.Fatalf("Expected 2 content blocks, got %d", len(content))
+				}
+				imageBlock, ok := content[1].(map[string]interface{})
+				if !ok {
+					t.Fatalf("Expected image block, got %T", content[1])
+				}
+				if imageBlock["type"] != "image" {
+					t.Fatalf("Expected image block, got %v", imageBlock["type"])
+				}
+				source, ok := imageBlock["source"].(map[string]interface{})
+				if !ok {
+					t.Fatalf("Expected image source object, got %T", imageBlock["source"])
+				}
+				if source["type"] != "url" {
+					t.Fatalf("Expected url image source, got %v", source["type"])
+				}
+				if source["url"] != "https://example.com/image.png" {
+					t.Fatalf("Expected image url preserved, got %v", source["url"])
+				}
+			},
+		},
+		{
+			name: "input image data uri becomes base64 source",
+			input: `{
+				"model": "claude-3-opus",
+				"input": [
+					{
+						"type": "message",
+						"role": "user",
+						"content": [
+							{"type": "input_image", "image_url": "data:image/png;base64,aGVsbG8="}
+						]
+					}
+				]
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.MessageRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if len(req.Messages) != 1 {
+					t.Fatalf("Expected 1 message, got %d", len(req.Messages))
+				}
+				content, ok := req.Messages[0].Content.([]interface{})
+				if !ok {
+					t.Fatalf("Expected structured content, got %T", req.Messages[0].Content)
+				}
+				imageBlock, ok := content[0].(map[string]interface{})
+				if !ok {
+					t.Fatalf("Expected image block, got %T", content[0])
+				}
+				source, ok := imageBlock["source"].(map[string]interface{})
+				if !ok {
+					t.Fatalf("Expected image source object, got %T", imageBlock["source"])
+				}
+				if source["type"] != "base64" {
+					t.Fatalf("Expected base64 image source, got %v", source["type"])
+				}
+				if source["media_type"] != "image/png" {
+					t.Fatalf("Expected media_type image/png, got %v", source["media_type"])
+				}
+				if source["data"] != "aGVsbG8=" {
+					t.Fatalf("Expected base64 image data preserved, got %v", source["data"])
+				}
+			},
+		},
+		{
+			name: "flat tool_choice object",
+			input: `{
+				"model": "claude-3-opus",
+				"input": "Hello",
+				"tool_choice": {"type": "function", "name": "lookup"}
+			}`,
+			validate: func(t *testing.T, output []byte) {
+				var req types.MessageRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.ToolChoice == nil {
+					t.Fatal("Expected tool_choice to be set")
+				}
+				if req.ToolChoice.Type != "tool" {
+					t.Fatalf("Expected tool_choice type tool, got %s", req.ToolChoice.Type)
+				}
+				if req.ToolChoice.Name != "lookup" {
+					t.Fatalf("Expected tool_choice name lookup, got %s", req.ToolChoice.Name)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := TransformResponsesToAnthropic([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("TransformResponsesToAnthropic returned error: %v", err)
+			}
+			tt.validate(t, output)
+		})
+	}
+}
+
+func TestResponsesToAnthropicConverter_MergeAssistantAndToolOutputs(t *testing.T) {
+	input := `{
+		"model": "claude-3-opus",
+		"input": [
+			{"type": "message", "role": "user", "content": "Tell me something."},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Let me check."}]},
+			{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{\"q\":\"weather\"}"},
+			{"type": "function_call_output", "call_id": "call_1", "output": "Sunny"},
+			{"type": "function_call_output", "call_id": "call_2", "output": "Warm"}
+		]
+	}`
+
+	output, err := TransformResponsesToAnthropic([]byte(input))
+	if err != nil {
+		t.Fatalf("TransformResponsesToAnthropic returned error: %v", err)
+	}
+
+	var req types.MessageRequest
+	if err := json.Unmarshal(output, &req); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if len(req.Messages) != 3 {
+		t.Fatalf("Expected 3 messages, got %d", len(req.Messages))
+	}
+	if req.Messages[0].Role != "user" {
+		t.Fatalf("Expected first message role user, got %s", req.Messages[0].Role)
+	}
+	if req.Messages[1].Role != "assistant" {
+		t.Fatalf("Expected second message role assistant, got %s", req.Messages[1].Role)
+	}
+	assistantContent, ok := req.Messages[1].Content.([]interface{})
+	if !ok {
+		t.Fatalf("Expected assistant content array, got %T", req.Messages[1].Content)
+	}
+	if len(assistantContent) != 2 {
+		t.Fatalf("Expected assistant content to contain text and tool_use, got %d blocks", len(assistantContent))
+	}
+	toolUse, ok := assistantContent[1].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected tool_use block, got %T", assistantContent[1])
+	}
+	if toolUse["type"] != "tool_use" {
+		t.Fatalf("Expected tool_use block, got %v", toolUse["type"])
+	}
+	if toolUse["id"] != "call_1" {
+		t.Fatalf("Expected tool_use id call_1, got %v", toolUse["id"])
+	}
+
+	if req.Messages[2].Role != "user" {
+		t.Fatalf("Expected third message role user, got %s", req.Messages[2].Role)
+	}
+	toolResults, ok := req.Messages[2].Content.([]interface{})
+	if !ok {
+		t.Fatalf("Expected tool_result array, got %T", req.Messages[2].Content)
+	}
+	if len(toolResults) != 2 {
+		t.Fatalf("Expected two tool_result blocks, got %d", len(toolResults))
+	}
+	firstResult, ok := toolResults[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected tool_result block, got %T", toolResults[0])
+	}
+	if firstResult["type"] != "tool_result" {
+		t.Fatalf("Expected tool_result block, got %v", firstResult["type"])
+	}
+	if firstResult["tool_use_id"] != "call_1" {
+		t.Fatalf("Expected first tool_result call_1, got %v", firstResult["tool_use_id"])
+	}
+	secondResult, ok := toolResults[1].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected tool_result block, got %T", toolResults[1])
+	}
+	if secondResult["tool_use_id"] != "call_2" {
+		t.Fatalf("Expected second tool_result call_2, got %v", secondResult["tool_use_id"])
+	}
+}
+
+func TestResponsesToAnthropicConverter_PreviousResponseID(t *testing.T) {
+	oldStore := conversation.DefaultStore
+	conversation.DefaultStore = conversation.NewStore(conversation.Config{})
+	t.Cleanup(func() {
+		conversation.DefaultStore = oldStore
+	})
+
+	conversation.StoreInDefault(&conversation.Conversation{
+		ID: "resp_prev123",
+		Input: []types.InputItem{
+			{Type: "message", Role: "user", Content: "Earlier question?"},
+		},
+		Output: []types.OutputItem{
+			{
+				Type: "message",
+				Role: "assistant",
+				Content: []types.OutputContent{
+					{Type: "output_text", Text: "Earlier answer."},
+				},
+			},
+		},
+	})
+
+	input := `{
+		"model": "claude-3-opus",
+		"input": "What about tomorrow?",
+		"previous_response_id": "resp_prev123"
+	}`
+
+	output, err := TransformResponsesToAnthropic([]byte(input))
+	if err != nil {
+		t.Fatalf("TransformResponsesToAnthropic returned error: %v", err)
+	}
+
+	var req types.MessageRequest
+	if err := json.Unmarshal(output, &req); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if len(req.Messages) != 3 {
+		t.Fatalf("Expected 3 messages, got %d", len(req.Messages))
+	}
+	if req.Messages[0].Role != "user" || req.Messages[0].Content != "Earlier question?" {
+		t.Fatalf("Expected previous user message first, got %+v", req.Messages[0])
+	}
+	if req.Messages[1].Role != "assistant" || req.Messages[1].Content != "Earlier answer." {
+		t.Fatalf("Expected previous assistant message second, got %+v", req.Messages[1])
+	}
+	if req.Messages[2].Role != "user" || req.Messages[2].Content != "What about tomorrow?" {
+		t.Fatalf("Expected current user message last, got %+v", req.Messages[2])
 	}
 }
 
@@ -382,5 +650,327 @@ func TestTransformResponsesToAnthropic_ReasoningToThinking(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestExtractContentFromInput_Refusal tests refusal content type handling.
+func TestExtractContentFromInput_Refusal(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantText string
+	}{
+		{
+			name: "refusal content treated as text",
+			input: `{
+				"model": "claude-3-opus",
+				"input": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "refusal", "text": "I cannot help with that request."}
+						]
+					}
+				]
+			}`,
+			wantText: "I cannot help with that request.",
+		},
+		{
+			name: "mixed refusal and output_text",
+			input: `{
+				"model": "claude-3-opus",
+				"input": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "output_text", "text": "Here is some info."},
+							{"type": "refusal", "text": "But I cannot do more."}
+						]
+					}
+				]
+			}`,
+			wantText: "Here is some info.\nBut I cannot do more.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := TransformResponsesToAnthropic([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("TransformResponsesToAnthropic returned error: %v", err)
+			}
+
+			var req types.MessageRequest
+			if err := json.Unmarshal(output, &req); err != nil {
+				t.Fatalf("Failed to parse output: %v", err)
+			}
+
+			if len(req.Messages) == 0 {
+				t.Fatal("Expected at least one message")
+			}
+
+			content, ok := req.Messages[0].Content.(string)
+			if !ok {
+				t.Fatalf("Expected content to be string, got %T", req.Messages[0].Content)
+			}
+
+			if content != tt.wantText {
+				t.Errorf("Expected content %q, got %q", tt.wantText, content)
+			}
+		})
+	}
+}
+
+// TestExtractContentFromInput_InputFile tests input_file content type handling.
+func TestExtractContentFromInput_InputFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantText string
+	}{
+		{
+			name: "input_file with filename",
+			input: `{
+				"model": "claude-3-opus",
+				"input": [
+					{
+						"type": "message",
+						"role": "user",
+						"content": [
+							{"type": "input_text", "text": "Check this file:"},
+							{"type": "input_file", "file_data": {"filename": "document.pdf"}}
+						]
+					}
+				]
+			}`,
+			wantText: "Check this file:\n[File attached: document.pdf]",
+		},
+		{
+			name: "input_file only",
+			input: `{
+				"model": "claude-3-opus",
+				"input": [
+					{
+						"type": "message",
+						"role": "user",
+						"content": [
+							{"type": "input_file", "file_data": {"filename": "data.csv"}}
+						]
+					}
+				]
+			}`,
+			wantText: "[File attached: data.csv]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := TransformResponsesToAnthropic([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("TransformResponsesToAnthropic returned error: %v", err)
+			}
+
+			var req types.MessageRequest
+			if err := json.Unmarshal(output, &req); err != nil {
+				t.Fatalf("Failed to parse output: %v", err)
+			}
+
+			if len(req.Messages) == 0 {
+				t.Fatal("Expected at least one message")
+			}
+
+			content, ok := req.Messages[0].Content.(string)
+			if !ok {
+				t.Fatalf("Expected content to be string, got %T", req.Messages[0].Content)
+			}
+
+			if content != tt.wantText {
+				t.Errorf("Expected content %q, got %q", tt.wantText, content)
+			}
+		})
+	}
+}
+
+func TestCombineOutputItems(t *testing.T) {
+	tests := []struct {
+		name     string
+		outputs  []types.OutputItem
+		wantLen  int
+		wantType string // type of first item
+	}{
+		{
+			name: "message and function_call should combine",
+			outputs: []types.OutputItem{
+				{
+					Type:    "message",
+					Role:    "assistant",
+					Content: []types.OutputContent{{Type: "output_text", Text: "Hello"}},
+				},
+				{
+					Type:      "function_call",
+					CallID:    "call_123",
+					Name:      "test_func",
+					Arguments: `{"arg": "value"}`,
+				},
+			},
+			wantLen:  1,
+			wantType: "message",
+		},
+		{
+			name: "function_call first then message should combine",
+			outputs: []types.OutputItem{
+				{
+					Type:      "function_call",
+					CallID:    "call_123",
+					Name:      "test_func",
+					Arguments: `{"arg": "value"}`,
+				},
+				{
+					Type:    "message",
+					Role:    "assistant",
+					Content: []types.OutputContent{{Type: "output_text", Text: "Hello"}},
+				},
+			},
+			wantLen:  1,
+			wantType: "message",
+		},
+		{
+			name: "only message should not combine",
+			outputs: []types.OutputItem{
+				{
+					Type:    "message",
+					Role:    "assistant",
+					Content: []types.OutputContent{{Type: "output_text", Text: "Hello"}},
+				},
+			},
+			wantLen:  1,
+			wantType: "message",
+		},
+		{
+			name: "only function_call should not combine",
+			outputs: []types.OutputItem{
+				{
+					Type:      "function_call",
+					CallID:    "call_123",
+					Name:      "test_func",
+					Arguments: `{"arg": "value"}`,
+				},
+			},
+			wantLen:  1,
+			wantType: "function_call",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := combineOutputItems(tt.outputs)
+
+			if len(result) != tt.wantLen {
+				t.Errorf("combineOutputItems() returned %d items, want %d", len(result), tt.wantLen)
+				// Print the result for debugging
+				for i, item := range result {
+					itemJSON, _ := json.MarshalIndent(item, "", "  ")
+					t.Logf("Item %d: %s", i, string(itemJSON))
+				}
+			}
+
+			if len(result) > 0 {
+				itemMap, ok := result[0].(map[string]interface{})
+				if !ok {
+					t.Fatalf("result[0] is not map[string]interface{}")
+				}
+				if itemMap["type"] != tt.wantType {
+					t.Errorf("First item type = %v, want %v", itemMap["type"], tt.wantType)
+				}
+
+				// Check if tool_calls exists in combined item
+				if tt.wantLen == 1 && len(tt.outputs) == 2 {
+					if _, hasToolCalls := itemMap["tool_calls"]; !hasToolCalls {
+						t.Errorf("Combined item should have tool_calls field")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestPrependHistoryToInput_CombinesMessageAndFunctionCall(t *testing.T) {
+	// Initialize the conversation store
+	conversation.InitDefaultStore(conversation.Config{MaxSize: 1000})
+	
+	// Create a conversation with message and function_call outputs
+	conv := &conversation.Conversation{
+		ID: "resp_test_123",
+		Input: []types.InputItem{
+			{Type: "message", Role: "user", Content: "Hello"},
+		},
+		Output: []types.OutputItem{
+			{
+				Type:    "message",
+				Role:    "assistant",
+				ID:      "msg_123",
+				Content: []types.OutputContent{{Type: "output_text", Text: "Let me help you."}},
+			},
+			{
+				Type:      "function_call",
+				ID:        "call_123",
+				CallID:    "call_123",
+				Name:      "test_func",
+				Arguments: `{"arg": "value"}`,
+			},
+		},
+	}
+	
+	// Store the conversation
+	conversation.StoreInDefault(conv)
+	
+	// Create a new input to prepend to
+	currentInput := []interface{}{
+		map[string]interface{}{
+			"type":    "message",
+			"role":    "user",
+			"content": "Follow-up question",
+		},
+	}
+	
+	// Call prependHistoryToInput
+	result := prependHistoryToInput(conv, currentInput)
+	
+	// Convert result to JSON for inspection
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	t.Logf("Result: %s", string(resultJSON))
+	
+	// Verify the result
+	items, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", result)
+	}
+	
+	// Should have: input item, combined assistant message, current input
+	// That's 3 items
+	if len(items) != 3 {
+		t.Errorf("Expected 3 items, got %d", len(items))
+	}
+	
+	// Check that item 1 (the combined assistant message) has tool_calls
+	if len(items) >= 2 {
+		assistantItem, ok := items[1].(map[string]interface{})
+		if !ok {
+			t.Fatalf("items[1] is not map[string]interface{}")
+		}
+		
+		if assistantItem["type"] != "message" {
+			t.Errorf("items[1] type = %v, want message", assistantItem["type"])
+		}
+		
+		if assistantItem["role"] != "assistant" {
+			t.Errorf("items[1] role = %v, want assistant", assistantItem["role"])
+		}
+		
+		if _, hasToolCalls := assistantItem["tool_calls"]; !hasToolCalls {
+			t.Errorf("Combined assistant message should have tool_calls")
+		}
 	}
 }

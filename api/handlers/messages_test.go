@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"ai-proxy/config"
+	"ai-proxy/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -218,6 +219,60 @@ func TestMessagesHandler_ForwardHeaders(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestConvertAnthropicMessage_MixedUserToolResultStaysUser(t *testing.T) {
+	msg := types.MessageInput{
+		Role: "user",
+		Content: []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": "Here is my note.",
+			},
+			map[string]interface{}{
+				"type":        "tool_result",
+				"tool_use_id": "tool_123",
+				"content":     "42",
+			},
+		},
+	}
+
+	got := convertAnthropicMessage(msg)
+
+	if got.Role != "user" {
+		t.Fatalf("expected mixed message to remain user role, got %s", got.Role)
+	}
+	if got.ToolCallID != "tool_123" {
+		t.Fatalf("expected tool_call_id tool_123, got %s", got.ToolCallID)
+	}
+	if got.Content != "Here is my note.\n42" {
+		t.Fatalf("expected merged text content, got %#v", got.Content)
+	}
+}
+
+func TestConvertAnthropicMessage_PureToolResultBecomesTool(t *testing.T) {
+	msg := types.MessageInput{
+		Role: "user",
+		Content: []interface{}{
+			map[string]interface{}{
+				"type":        "tool_result",
+				"tool_use_id": "tool_123",
+				"content":     "42",
+			},
+		},
+	}
+
+	got := convertAnthropicMessage(msg)
+
+	if got.Role != "tool" {
+		t.Fatalf("expected pure tool_result turn to become tool role, got %s", got.Role)
+	}
+	if got.ToolCallID != "tool_123" {
+		t.Fatalf("expected tool_call_id tool_123, got %s", got.ToolCallID)
+	}
+	if got.Content != "42" {
+		t.Fatalf("expected tool content 42, got %#v", got.Content)
 	}
 }
 

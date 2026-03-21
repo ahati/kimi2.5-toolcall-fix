@@ -64,7 +64,7 @@ func TestMessageRequest(t *testing.T) {
 			input: MessageRequest{
 				Model:    "claude-3",
 				Messages: []MessageInput{{Role: "user", Content: "test"}},
-				Metadata: json.RawMessage(`{"user_id":"123"}`),
+				Metadata: &AnthropicMetadata{UserID: "123"},
 			},
 			wantJSON: `{"model":"claude-3","messages":[{"role":"user","content":"test"}],"max_tokens":0,"metadata":{"user_id":"123"}}`,
 		},

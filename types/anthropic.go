@@ -55,7 +55,14 @@ type MessageRequest struct {
 
 	// Metadata contains arbitrary metadata for the request.
 	// Used for tracking and logging purposes.
-	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Metadata *AnthropicMetadata `json:"metadata,omitempty"`
+}
+
+// AnthropicMetadata represents metadata for an Anthropic request.
+// Used for tracking and logging purposes.
+type AnthropicMetadata struct {
+	// UserID is a user identifier for the request.
+	UserID string `json:"user_id,omitempty"`
 }
 
 // MessageInput represents a single message input in an Anthropic conversation.
@@ -268,6 +275,15 @@ type MessageCountTokensRequest struct {
 	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 }
 
+// SystemBlock represents a block in an Anthropic system prompt.
+// System prompts can be an array of blocks for structured content.
+type SystemBlock struct {
+	// Type is always "text".
+	Type string `json:"type"`
+	// Text is the system prompt text.
+	Text string `json:"text"`
+}
+
 // ThinkingConfig represents extended thinking configuration.
 // Used to enable and configure thinking mode for supported models.
 type ThinkingConfig struct {
@@ -285,4 +301,112 @@ type MessageCountTokensResponse struct {
 	// InputTokens is the estimated number of tokens in the input.
 	// This is an estimate; actual token count may differ slightly.
 	InputTokens int `json:"input_tokens"`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Anthropic SSE Event Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+// AnthropicResponse is the body returned by POST /v1/messages.
+// Used by AnthropicMessageStartEvent.Message.
+type AnthropicResponse struct {
+	// ID is a unique identifier for the message.
+	ID string `json:"id"`
+	// Type identifies the object type.
+	// Always "message" for message responses.
+	Type string `json:"type"`
+	// Role is always "assistant" for responses.
+	// Indicates this is a model-generated message.
+	Role string `json:"role"`
+	// Model is the model used for generation.
+	// May differ from requested model for aliases.
+	Model string `json:"model"`
+	// Content is an array of content blocks in the message.
+	// Can include text and tool_use blocks.
+	Content []AnthropicResponseContentBlock `json:"content"`
+	// StopReason indicates why generation stopped.
+	// Values: "end_turn", "max_tokens", "stop_sequence", "tool_use".
+	StopReason string `json:"stop_reason,omitempty"`
+	// StopSequence is the custom stop sequence that triggered stop, if any.
+	StopSequence *string `json:"stop_sequence,omitempty"`
+	// Usage contains token usage statistics.
+	Usage AnthropicUsage `json:"usage"`
+}
+
+// AnthropicResponseContentBlock represents a content block in an Anthropic response.
+type AnthropicResponseContentBlock struct {
+	// Type identifies the content block type.
+	// Values: "text", "tool_use", "thinking".
+	Type string `json:"type"`
+	// Text contains the text content for text blocks.
+	Text string `json:"text,omitempty"`
+	// ID is a unique identifier for tool_use blocks.
+	ID string `json:"id,omitempty"`
+	// Name is the tool name for tool_use blocks.
+	Name string `json:"name,omitempty"`
+	// Input is the tool input for tool_use blocks.
+	Input json.RawMessage `json:"input,omitempty"`
+	// Thinking contains the model's reasoning process.
+	Thinking string `json:"thinking,omitempty"`
+}
+
+// AnthropicMessageStartEvent is the first event in an Anthropic stream.
+type AnthropicMessageStartEvent struct {
+	// Type is always "message_start".
+	Type string `json:"type"`
+	// Message contains the initial message metadata.
+	Message AnthropicResponse `json:"message"`
+}
+
+// AnthropicContentBlockStartEvent signals a new content block is opening.
+type AnthropicContentBlockStartEvent struct {
+	// Type is always "content_block_start".
+	Type string `json:"type"`
+	// Index is the content block index.
+	Index int `json:"index"`
+	// ContentBlock contains the content block data.
+	ContentBlock AnthropicResponseContentBlock `json:"content_block"`
+}
+
+// AnthropicContentBlockDeltaEvent carries incremental content.
+type AnthropicContentBlockDeltaEvent struct {
+	// Type is always "content_block_delta".
+	Type string `json:"type"`
+	// Index is the content block index.
+	Index int `json:"index"`
+	// Delta contains the incremental content.
+	Delta struct {
+		// Type is "text_delta" or "input_json_delta".
+		Type string `json:"type"`
+		// Text is the incremental text for text_delta.
+		Text string `json:"text,omitempty"`
+		// PartialJSON is the incremental JSON for input_json_delta.
+		PartialJSON string `json:"partial_json,omitempty"`
+	} `json:"delta"`
+}
+
+// AnthropicContentBlockStopEvent signals a content block is closed.
+type AnthropicContentBlockStopEvent struct {
+	// Type is always "content_block_stop".
+	Type string `json:"type"`
+	// Index is the content block index.
+	Index int `json:"index"`
+}
+
+// AnthropicMessageDeltaEvent carries the final stop_reason and output usage.
+type AnthropicMessageDeltaEvent struct {
+	// Type is always "message_delta".
+	Type string `json:"type"`
+	// Delta contains the stop reason.
+	Delta struct {
+		// StopReason indicates why generation stopped.
+		StopReason string `json:"stop_reason"`
+		// StopSequence is the custom stop sequence that triggered stop.
+		StopSequence string `json:"stop_sequence,omitempty"`
+	} `json:"delta"`
+	// Usage contains output token usage.
+	Usage struct {
+		// OutputTokens is the number of output tokens.
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
 }

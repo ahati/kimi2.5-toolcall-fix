@@ -1,12 +1,14 @@
 # ==========================================
 # GLOBAL SETTINGS & DEFAULTS
 # ==========================================
-model = "kimi-k2.5"
+model = "glm-5"
 model_provider = "proxy_ai"
 model_catalog_json = "/home/vscode/custom_models.json"
 disabled_providers = ["opencode"]
-model_reasoning_effort = "medium"
-
+model_reasoning_effort = "high"
+model_reasoning_summary="detailed"
+hide_agent_reasoning = false
+show_raw_agent_reasoning = true
 # ==========================================
 # PROVIDER DEFINITIONS
 # ==========================================
@@ -145,3 +147,6 @@ hide_full_access_warning = true
 
 [tui]
 status_line = ["model-with-reasoning", "current-dir", "project-root", "git-branch", "context-used"]
+
+[features]
+unified_exec = true

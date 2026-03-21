@@ -48,60 +48,25 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 	// Anthropic requires max_tokens, so use a default if not provided
 	maxTokens := openReq.MaxOutputTokens
 	if maxTokens == 0 {
-		maxTokens = 65536 // Default max tokens (64k) for Anthropic API
+		maxTokens = defaultAnthropicMaxTokens
 	}
 	anthReq := types.MessageRequest{
-		Model:     openReq.Model,
-		MaxTokens: maxTokens,
-		// Force streaming mode - this proxy only supports SSE streaming
-		Stream:      true,
-		Temperature: openReq.Temperature,
+		Model:       openReq.Model,
+		MaxTokens:   maxTokens,
+		Stream:      openReq.Stream,
+		Temperature: ClampTemperatureToAnthropic(openReq.Temperature),
 		TopP:        openReq.TopP,
 	}
 
-	// Combine instructions with developer messages from input
-	systemParts := []string{}
-	seenContent := make(map[string]bool) // Track content to avoid duplicates
-
-	if openReq.Instructions != "" {
-		systemParts = append(systemParts, openReq.Instructions)
-		seenContent[openReq.Instructions] = true
-	}
-
-	// Extract developer messages from input array
-	if arr, ok := openReq.Input.([]interface{}); ok {
-		for _, item := range arr {
-			if msg, ok := item.(map[string]interface{}); ok {
-				if role, ok := msg["role"].(string); ok && (role == "developer" || role == "system") {
-					content := extractContentFromInput(msg["content"])
-					// Normalize content for deduplication
-					normalizedContent := strings.TrimSpace(content)
-					if content != "" && !seenContent[normalizedContent] {
-						systemParts = append(systemParts, content)
-						seenContent[normalizedContent] = true
-					}
-				}
-			}
-		}
-	}
-
-	// Set system message if we have any parts
-	if len(systemParts) > 0 {
-		anthReq.System = strings.Join(systemParts, "\n\n")
-	}
-
-	// Convert input to messages (excluding developer/system)
-	anthReq.Messages = convertInputToAnthropicMessages(openReq.Input)
+	anthReq.Messages, anthReq.System = convertResponsesInputToAnthropicMessages(openReq.Instructions, openReq.Input)
+	anthReq.Messages = normalizeResponsesAnthropicMessages(anthReq.Messages)
 
 	// Convert tools
 	anthReq.Tools = convertResponsesToolsToAnthropic(openReq.Tools)
 
 	// Convert tool_choice
-	anthReq.ToolChoice = ConvertToolChoiceOpenAIToAnthropic(openReq.ToolChoice)
-
-	// If tool_choice is "none", strip tools from request
-	// Anthropic doesn't have a "none" option, so we must clear tools to prevent tool calls
-	if openReq.ToolChoice == "none" {
+	anthReq.ToolChoice = convertResponsesToolChoiceToAnthropic(openReq.ToolChoice)
+	if isResponsesToolChoiceNone(openReq.ToolChoice) {
 		anthReq.Tools = nil
 		anthReq.ToolChoice = nil
 	}
@@ -111,106 +76,548 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 		anthReq.Thinking = convertReasoningToThinking(openReq.Reasoning, maxTokens)
 	}
 
-	return json.Marshal(anthReq)
-}
-
-// convertInputToAnthropicMessages converts OpenAI Responses API input to Anthropic messages.
-func convertInputToAnthropicMessages(input interface{}) []types.MessageInput {
-	if input == nil {
-		return []types.MessageInput{}
-	}
-
-	if s, ok := input.(string); ok {
-		return []types.MessageInput{
-			{Role: "user", Content: s},
-		}
-	}
-
-	if arr, ok := input.([]interface{}); ok {
-		messages := make([]types.MessageInput, 0, len(arr))
-		for _, item := range arr {
-			if msg, ok := item.(map[string]interface{}); ok {
-				itemType, _ := msg["type"].(string)
-
-				switch itemType {
-				case "message":
-					role := "user"
-					if r, ok := msg["role"].(string); ok {
-						switch r {
-						case "developer", "system":
-							continue
-						case "assistant":
-							role = "assistant"
-						default:
-							role = "user"
-						}
-					}
-
-					content := extractContentFromInput(msg["content"])
-					if content == "" {
-						continue
-					}
-
-					messages = append(messages, types.MessageInput{
-						Role:    role,
-						Content: content,
-					})
-
-				case "function_call":
-					callID, _ := msg["call_id"].(string)
-					name, _ := msg["name"].(string)
-					args, _ := msg["arguments"].(string)
-
-					var inputObj map[string]interface{}
-					if args != "" {
-						json.Unmarshal([]byte(args), &inputObj)
-					}
-
-					messages = append(messages, types.MessageInput{
-						Role: "assistant",
-						Content: []map[string]interface{}{
-							{
-								"type":  "tool_use",
-								"id":    callID,
-								"name":  name,
-								"input": inputObj,
-							},
-						},
-					})
-
-				case "function_call_output":
-					callID, _ := msg["call_id"].(string)
-					output, _ := msg["output"].(string)
-					isError, _ := msg["is_error"].(bool)
-
-					// Generate unique ID for tool_result if not provided
-					resultID := callID
-					if id, ok := msg["id"].(string); ok && id != "" {
-						resultID = id
-					}
-
-					messages = append(messages, types.MessageInput{
-						Role: "user",
-						Content: []map[string]interface{}{
-							{
-								"type":        "tool_result",
-								"id":          resultID,
-								"tool_use_id": callID,
-								"content":     output,
-								"is_error":    isError,
-							},
-						},
-					})
-
-				case "reasoning":
-					// Skip reasoning items - not needed for conversation history
+	// Convert metadata.user_id
+	if openReq.Metadata != nil {
+		if userID, ok := openReq.Metadata["user_id"]; ok {
+			if s, ok := userID.(string); ok && s != "" {
+				anthReq.Metadata = &types.AnthropicMetadata{
+					UserID: s,
 				}
 			}
 		}
+	}
+
+	return json.Marshal(anthReq)
+}
+
+func convertResponsesInputToAnthropicMessages(instructions string, input interface{}) ([]types.MessageInput, interface{}) {
+	systemParts := make([]string, 0, 4)
+	seen := make(map[string]struct{})
+
+	addSystemPart := func(text string) {
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
+			return
+		}
+		if _, ok := seen[trimmed]; ok {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		systemParts = append(systemParts, trimmed)
+	}
+
+	addSystemPart(instructions)
+
+	if arr, ok := input.([]interface{}); ok {
+		system := strings.Join(systemParts, "\n\n")
+		if system == "" {
+			return convertResponsesInputItemsToAnthropicMessages(arr, addSystemPart), nil
+		}
+		return convertResponsesInputItemsToAnthropicMessages(arr, addSystemPart), system
+	}
+
+	if input == nil {
+		system := strings.Join(systemParts, "\n\n")
+		if system == "" {
+			return nil, nil
+		}
+		return nil, system
+	}
+
+	if s, ok := input.(string); ok {
+		system := strings.Join(systemParts, "\n\n")
+		if strings.TrimSpace(s) != "" {
+			if system == "" {
+				return []types.MessageInput{{Role: "user", Content: s}}, nil
+			}
+			return []types.MessageInput{{Role: "user", Content: s}}, system
+		}
+		if system == "" {
+			return nil, nil
+		}
+		return nil, system
+	}
+
+	data, err := json.Marshal(input)
+	if err != nil {
+		system := strings.Join(systemParts, "\n\n")
+		if system == "" {
+			return nil, nil
+		}
+		return nil, system
+	}
+
+	var items []interface{}
+	if err := json.Unmarshal(data, &items); err != nil {
+		system := strings.Join(systemParts, "\n\n")
+		if system == "" {
+			return nil, nil
+		}
+		return nil, system
+	}
+
+	system := strings.Join(systemParts, "\n\n")
+	if system == "" {
+		return convertResponsesInputItemsToAnthropicMessages(items, addSystemPart), nil
+	}
+	return convertResponsesInputItemsToAnthropicMessages(items, addSystemPart), system
+}
+
+func convertResponsesInputItemsToAnthropicMessages(items []interface{}, addSystemPart func(string)) []types.MessageInput {
+	messages := make([]types.MessageInput, 0, len(items))
+
+	var currentRole string
+	var currentBlocks []interface{}
+	flush := func() {
+		if currentRole == "" {
+			return
+		}
+		content := finalizeResponsesAnthropicContent(currentBlocks)
+		if content == nil {
+			currentRole = ""
+			currentBlocks = nil
+			return
+		}
+		messages = append(messages, types.MessageInput{
+			Role:    currentRole,
+			Content: content,
+		})
+		currentRole = ""
+		currentBlocks = nil
+	}
+
+	appendMessage := func(role string, blocks []interface{}) {
+		if len(blocks) == 0 {
+			return
+		}
+		if currentRole == "" {
+			currentRole = role
+			currentBlocks = append([]interface{}(nil), blocks...)
+			return
+		}
+		if currentRole == role {
+			currentBlocks = append(currentBlocks, blocks...)
+			return
+		}
+		flush()
+		currentRole = role
+		currentBlocks = append([]interface{}(nil), blocks...)
+	}
+
+	for _, item := range items {
+		msg, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		itemType, _ := msg["type"].(string)
+		switch itemType {
+		case "message":
+			role := "user"
+			if r, ok := msg["role"].(string); ok {
+				switch r {
+				case "assistant":
+					role = "assistant"
+				case "developer", "system":
+					addSystemPart(extractContentFromInput(msg["content"]))
+					continue
+				default:
+					role = "user"
+				}
+			}
+
+			blocks := convertResponsesContentToAnthropicBlocks(msg["content"])
+
+			// Handle embedded tool_calls in the combined message format
+			if toolCallsRaw, ok := msg["tool_calls"]; ok && role == "assistant" {
+				toolUseBlocks := convertResponsesToolCallsToAnthropicBlocks(toolCallsRaw)
+				blocks = append(blocks, toolUseBlocks...)
+			}
+
+			appendMessage(role, blocks)
+
+		case "function_call":
+			block := convertResponsesFunctionCallToAnthropicBlock(msg)
+			if block != nil {
+				appendMessage("assistant", []interface{}{block})
+			}
+
+		case "function_call_output":
+			block := convertResponsesFunctionCallOutputToAnthropicBlock(msg)
+			if block != nil {
+				appendMessage("user", []interface{}{block})
+			}
+
+		case "reasoning":
+			// Dropped when converting into an Anthropic request.
+		}
+	}
+
+	flush()
+
+	return messages
+}
+
+func normalizeResponsesAnthropicMessages(messages []types.MessageInput) []types.MessageInput {
+	if len(messages) == 0 {
 		return messages
 	}
 
-	return []types.MessageInput{}
+	normalized := make([]types.MessageInput, 0, len(messages)+1)
+	for _, msg := range messages {
+		if len(normalized) > 0 && normalized[len(normalized)-1].Role == msg.Role {
+			normalized[len(normalized)-1].Content = mergeResponsesAnthropicContent(
+				normalized[len(normalized)-1].Content,
+				msg.Content,
+			)
+			continue
+		}
+		normalized = append(normalized, msg)
+	}
+
+	return normalized
+}
+
+func mergeResponsesAnthropicContent(existing, next interface{}) interface{} {
+	blocks := append(responsesAnthropicContentToBlocks(existing), responsesAnthropicContentToBlocks(next)...)
+	return finalizeResponsesAnthropicContent(blocks)
+}
+
+func finalizeResponsesAnthropicContent(blocks []interface{}) interface{} {
+	if len(blocks) == 0 {
+		return nil
+	}
+
+	if text, ok := responsesAnthropicBlocksToText(blocks); ok {
+		return text
+	}
+
+	return blocks
+}
+
+func responsesAnthropicContentToBlocks(content interface{}) []interface{} {
+	switch v := content.(type) {
+	case nil:
+		return nil
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": v,
+			},
+		}
+	case []interface{}:
+		blocks := make([]interface{}, 0, len(v))
+		for _, item := range v {
+			switch b := item.(type) {
+			case map[string]interface{}:
+				blocks = append(blocks, b)
+			case string:
+				if b != "" {
+					blocks = append(blocks, map[string]interface{}{
+						"type": "text",
+						"text": b,
+					})
+				}
+			}
+		}
+		return blocks
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil
+		}
+
+		var arr []interface{}
+		if err := json.Unmarshal(data, &arr); err == nil {
+			return responsesAnthropicContentToBlocks(arr)
+		}
+
+		var s string
+		if err := json.Unmarshal(data, &s); err == nil && s != "" {
+			return []interface{}{
+				map[string]interface{}{
+					"type": "text",
+					"text": s,
+				},
+			}
+		}
+		return nil
+	}
+}
+
+func responsesAnthropicBlocksToText(blocks []interface{}) (string, bool) {
+	texts := make([]string, 0, len(blocks))
+	for _, item := range blocks {
+		block, ok := item.(map[string]interface{})
+		if !ok {
+			return "", false
+		}
+
+		blockType, _ := block["type"].(string)
+		if blockType != "text" {
+			return "", false
+		}
+
+		if text, ok := block["text"].(string); ok {
+			texts = append(texts, text)
+		}
+	}
+
+	return strings.Join(texts, "\n"), true
+}
+
+func convertResponsesContentToAnthropicBlocks(content interface{}) []interface{} {
+	switch v := content.(type) {
+	case nil:
+		return nil
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		return []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": v,
+			},
+		}
+	case []interface{}:
+		return convertResponsesContentPartsToAnthropicBlocks(v)
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil
+		}
+		var parts []interface{}
+		if err := json.Unmarshal(data, &parts); err != nil {
+			return nil
+		}
+		return convertResponsesContentPartsToAnthropicBlocks(parts)
+	}
+}
+
+func convertResponsesContentPartsToAnthropicBlocks(parts []interface{}) []interface{} {
+	blocks := make([]interface{}, 0, len(parts))
+	for _, part := range parts {
+		partMap, ok := part.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		block := convertResponsesContentPartToAnthropicBlock(partMap)
+		if block != nil {
+			blocks = append(blocks, block)
+		}
+	}
+	return blocks
+}
+
+func convertResponsesContentPartToAnthropicBlock(partMap map[string]interface{}) map[string]interface{} {
+	partType, _ := partMap["type"].(string)
+
+	switch partType {
+	case "input_text", "output_text", "text", "refusal":
+		text, _ := partMap["text"].(string)
+		if text == "" {
+			return nil
+		}
+		return map[string]interface{}{
+			"type": "text",
+			"text": text,
+		}
+
+	case "input_image":
+		return convertResponsesImagePartToAnthropicBlock(partMap)
+
+	case "input_file":
+		filename := ""
+		if fileData, ok := partMap["file_data"].(map[string]interface{}); ok {
+			filename, _ = fileData["filename"].(string)
+		}
+		if filename == "" {
+			filename = "file"
+		}
+		return map[string]interface{}{
+			"type": "text",
+			"text": "[File attached: " + filename + "]",
+		}
+	}
+
+	return nil
+}
+
+func convertResponsesImagePartToAnthropicBlock(partMap map[string]interface{}) map[string]interface{} {
+	imageURL, _ := partMap["image_url"].(string)
+	if imageURL == "" {
+		if source, ok := partMap["source"].(map[string]interface{}); ok {
+			if srcType, ok := source["type"].(string); ok {
+				switch srcType {
+				case "base64":
+					mediaType, _ := source["media_type"].(string)
+					data, _ := source["data"].(string)
+					if data == "" {
+						return nil
+					}
+					return map[string]interface{}{
+						"type": "image",
+						"source": map[string]interface{}{
+							"type":       "base64",
+							"media_type": mediaType,
+							"data":       data,
+						},
+					}
+				case "url":
+					imageURL, _ = source["url"].(string)
+				}
+			}
+		}
+	}
+
+	if imageURL == "" {
+		return nil
+	}
+
+	source := map[string]interface{}{
+		"type": "url",
+		"url":  imageURL,
+	}
+
+	if mediaType, data, err := ParseDataURI(imageURL); err == nil {
+		source = map[string]interface{}{
+			"type":       "base64",
+			"media_type": mediaType,
+			"data":       data,
+		}
+	}
+
+	return map[string]interface{}{
+		"type":   "image",
+		"source": source,
+	}
+}
+
+func convertResponsesFunctionCallToAnthropicBlock(item map[string]interface{}) map[string]interface{} {
+	callID, _ := item["call_id"].(string)
+	if callID == "" {
+		callID, _ = item["id"].(string)
+	}
+	name, _ := item["name"].(string)
+	if name == "" {
+		return nil
+	}
+
+	input := map[string]interface{}{}
+	switch args := item["arguments"].(type) {
+	case string:
+		if strings.TrimSpace(args) != "" {
+			_ = json.Unmarshal([]byte(args), &input)
+		}
+	case map[string]interface{}:
+		input = args
+	default:
+		if data, err := json.Marshal(args); err == nil {
+			_ = json.Unmarshal(data, &input)
+		}
+	}
+
+	return map[string]interface{}{
+		"type":  "tool_use",
+		"id":    callID,
+		"name":  name,
+		"input": input,
+	}
+}
+
+// convertResponsesToolCallsToAnthropicBlocks converts an array of tool_calls
+// to Anthropic tool_use blocks. This handles the combined message format where
+// tool_calls are embedded in the message item.
+func convertResponsesToolCallsToAnthropicBlocks(toolCallsRaw interface{}) []interface{} {
+	if toolCallsRaw == nil {
+		return nil
+	}
+
+	var blocks []interface{}
+
+	switch v := toolCallsRaw.(type) {
+	case []interface{}:
+		for _, tc := range v {
+			if tcMap, ok := tc.(map[string]interface{}); ok {
+				block := convertResponsesFunctionCallToAnthropicBlock(tcMap)
+				if block != nil {
+					blocks = append(blocks, block)
+				}
+			}
+		}
+	}
+
+	return blocks
+}
+
+func convertResponsesFunctionCallOutputToAnthropicBlock(item map[string]interface{}) map[string]interface{} {
+	callID, _ := item["call_id"].(string)
+	if callID == "" {
+		callID, _ = item["tool_call_id"].(string)
+	}
+	if callID == "" {
+		return nil
+	}
+
+	output, _ := item["output"].(string)
+	isError, _ := item["is_error"].(bool)
+
+	return map[string]interface{}{
+		"type":        "tool_result",
+		"tool_use_id": callID,
+		"content":     output,
+		"is_error":    isError,
+	}
+}
+
+func convertResponsesToolChoiceToAnthropic(toolChoice interface{}) *types.ToolChoice {
+	switch tc := toolChoice.(type) {
+	case nil:
+		return nil
+	case string:
+		switch tc {
+		case "auto":
+			return &types.ToolChoice{Type: "auto"}
+		case "required":
+			return &types.ToolChoice{Type: "any"}
+		case "none":
+			return nil
+		default:
+			return &types.ToolChoice{Type: "auto"}
+		}
+	case map[string]interface{}:
+		if choiceType, ok := tc["type"].(string); ok && choiceType == "function" {
+			if fn, ok := tc["function"].(map[string]interface{}); ok {
+				if name, ok := fn["name"].(string); ok && name != "" {
+					return &types.ToolChoice{Type: "tool", Name: name}
+				}
+			}
+			if name, ok := tc["name"].(string); ok && name != "" {
+				return &types.ToolChoice{Type: "tool", Name: name}
+			}
+		}
+	default:
+		data, err := json.Marshal(tc)
+		if err == nil {
+			var raw map[string]interface{}
+			if err := json.Unmarshal(data, &raw); err == nil {
+				return convertResponsesToolChoiceToAnthropic(raw)
+			}
+		}
+	}
+
+	return nil
+}
+
+func isResponsesToolChoiceNone(toolChoice interface{}) bool {
+	s, ok := toolChoice.(string)
+	return ok && s == "none"
 }
 
 // extractContentFromInput extracts text content from various formats.
@@ -255,6 +662,14 @@ func extractContentFromInput(content interface{}) string {
 							}
 							result.WriteString("[File attached: " + filename + "]")
 						}
+					}
+				case "refusal":
+					// Per documentation, treat refusal as text content
+					if text, ok := partMap["text"].(string); ok && text != "" {
+						if result.Len() > 0 {
+							result.WriteString("\n")
+						}
+						result.WriteString(text)
 					}
 				}
 			}
@@ -375,39 +790,10 @@ func prependHistoryToInput(hist *conversation.Conversation, currentInput interfa
 		items = append(items, itemMap)
 	}
 
-	// Then, convert output items to input format for the assistant's responses
-	for _, output := range hist.Output {
-		switch output.Type {
-		case "message":
-			// Convert assistant message output to input format
-			if output.Role == "assistant" {
-				itemMap := map[string]interface{}{
-					"type": "message",
-					"role": "assistant",
-				}
-				if len(output.Content) > 0 {
-					// Convert OutputContent to content parts
-					contentParts := make([]interface{}, len(output.Content))
-					for i, c := range output.Content {
-						contentParts[i] = map[string]interface{}{
-							"type": c.Type,
-							"text": c.Text,
-						}
-					}
-					itemMap["content"] = contentParts
-				}
-				items = append(items, itemMap)
-			}
-		case "function_call":
-			// Include function_call output as function_call input
-			items = append(items, map[string]interface{}{
-				"type":      "function_call",
-				"call_id":   output.CallID,
-				"name":      output.Name,
-				"arguments": output.Arguments,
-			})
-		}
-	}
+	// Then, convert output items to input format for the assistant's responses.
+	// When an assistant message is followed by function_calls, combine them
+	// into a single input item with both content and tool_calls.
+	items = append(items, combineOutputItems(hist.Output)...)
 
 	// Finally, append the current input
 	switch v := currentInput.(type) {
@@ -431,4 +817,109 @@ func prependHistoryToInput(hist *conversation.Conversation, currentInput interfa
 	}
 
 	return items
+}
+
+// combineOutputItems converts output items to input format, combining assistant messages
+// with their corresponding function_calls into a single input item.
+//
+// In the Responses API, an assistant response can have multiple output items:
+// a message (text) and function_calls. When these are prepended to the next request's
+// input, they need to be combined so that the Chat Completions API sees them as a single
+// assistant message with both content and tool_calls.
+//
+// Without this combination, the input would have:
+//   - message (assistant text)
+//   - function_call
+//   - function_call_output
+//
+// Which converts to two assistant messages (wrong). With combination:
+//   - message with tool_calls (combined)
+//   - function_call_output
+//
+// Which correctly converts to one assistant message with tool_calls followed by tool message.
+func combineOutputItems(outputs []types.OutputItem) []interface{} {
+	var result []interface{}
+
+	// First pass: collect assistant messages and function_calls
+	var assistantMsg *types.OutputItem
+	var functionCalls []types.OutputItem
+
+	for _, output := range outputs {
+		switch output.Type {
+		case "message":
+			if output.Role == "assistant" {
+				assistantMsg = &output
+			}
+		case "function_call":
+			functionCalls = append(functionCalls, output)
+		}
+	}
+
+	// If we have both an assistant message and function_calls, combine them
+	if assistantMsg != nil && len(functionCalls) > 0 {
+		// Create a combined input item with both content and tool_calls
+		combinedItem := map[string]interface{}{
+			"type": "message",
+			"role": "assistant",
+		}
+
+		// Add content if present
+		if len(assistantMsg.Content) > 0 {
+			contentParts := make([]interface{}, len(assistantMsg.Content))
+			for i, c := range assistantMsg.Content {
+				contentParts[i] = map[string]interface{}{
+					"type": c.Type,
+					"text": c.Text,
+				}
+			}
+			combinedItem["content"] = contentParts
+		}
+
+		// Add tool_calls as a nested array
+		toolCalls := make([]interface{}, len(functionCalls))
+		for i, fc := range functionCalls {
+			toolCalls[i] = map[string]interface{}{
+				"type":      "function_call",
+				"call_id":   fc.CallID,
+				"name":      fc.Name,
+				"arguments": fc.Arguments,
+			}
+		}
+		combinedItem["tool_calls"] = toolCalls
+
+		result = append(result, combinedItem)
+	} else {
+		// No combination needed, add items as-is
+		for _, output := range outputs {
+			switch output.Type {
+			case "message":
+				if output.Role == "assistant" {
+					itemMap := map[string]interface{}{
+						"type": "message",
+						"role": "assistant",
+					}
+					if len(output.Content) > 0 {
+						contentParts := make([]interface{}, len(output.Content))
+						for i, c := range output.Content {
+							contentParts[i] = map[string]interface{}{
+								"type": c.Type,
+								"text": c.Text,
+							}
+						}
+						itemMap["content"] = contentParts
+					}
+					result = append(result, itemMap)
+				}
+			case "function_call":
+				result = append(result, map[string]interface{}{
+					"type":      "function_call",
+					"call_id":   output.CallID,
+					"name":      output.Name,
+					"arguments": output.Arguments,
+				})
+			}
+		}
+	}
+
+	return result
 }

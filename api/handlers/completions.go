@@ -133,16 +133,12 @@ func (h *CompletionsHandler) TransformRequest(body []byte) ([]byte, error) {
 // @return URL string for the upstream API endpoint.
 func (h *CompletionsHandler) UpstreamURL() string {
 	if h.route != nil {
-		url := h.route.Provider.BaseURL
-		// For OpenAI providers, ensure /chat/completions path
-		if h.route.Provider.Type == "openai" {
-			if !strings.HasSuffix(url, "/chat/completions") {
-				url = strings.TrimSuffix(url, "/") + "/chat/completions"
-			}
-			return url
+		// Select endpoint based on provider type
+		endpoint := "/chat/completions"
+		if h.route.Provider.Type == "anthropic" {
+			endpoint = "/v1/messages"
 		}
-		// For Anthropic providers, use base URL directly
-		return url
+		return h.route.Provider.GetUpstreamURL(endpoint)
 	}
 	// Legacy behavior - use OpenAI upstream
 	return h.cfg.GetOpenAIUpstreamURL()

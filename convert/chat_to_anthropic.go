@@ -12,6 +12,8 @@ import (
 	"github.com/tmaxmax/go-sse"
 )
 
+const defaultAnthropicMaxTokens = 32768
+
 // ChatToAnthropicConverter converts OpenAI ChatCompletionRequest to Anthropic MessageRequest.
 // It implements the RequestConverter interface for the OpenAI Chat to Anthropic conversion.
 type ChatToAnthropicConverter struct{}
@@ -40,16 +42,13 @@ func (c *ChatToAnthropicConverter) Convert(body []byte) ([]byte, error) {
 	// Set max_tokens - Anthropic requires this field
 	anthReq.MaxTokens = openReq.MaxTokens
 	if anthReq.MaxTokens == 0 {
-		// Default to 32768 tokens (32k) - supported by all modern Claude models.
-		// Claude Opus 4.6 supports up to 128k, Sonnet/Haiku support 64k.
-		// See: https://docs.anthropic.com/en/docs/about-claude/models
-		anthReq.MaxTokens = 32768
+		anthReq.MaxTokens = defaultAnthropicMaxTokens
 	}
 
 	// Copy optional parameters
 	// Force streaming mode - this proxy supports both streaming and non-streaming
 	anthReq.Stream = openReq.Stream
-	anthReq.Temperature = openReq.Temperature
+	anthReq.Temperature = ClampTemperatureToAnthropic(openReq.Temperature)
 	anthReq.TopP = openReq.TopP
 	anthReq.TopK = openReq.TopK
 
@@ -63,6 +62,17 @@ func (c *ChatToAnthropicConverter) Convert(body []byte) ([]byte, error) {
 
 	// Convert tool_choice
 	anthReq.ToolChoice = ConvertToolChoiceOpenAIToAnthropic(openReq.ToolChoice)
+	if isOpenAIToolChoiceNone(openReq.ToolChoice) {
+		anthReq.Tools = nil
+		anthReq.ToolChoice = nil
+	}
+
+	// Convert user field to metadata.user_id
+	if openReq.User != "" {
+		anthReq.Metadata = &types.AnthropicMetadata{
+			UserID: openReq.User,
+		}
+	}
 
 	return json.Marshal(anthReq)
 }
@@ -91,7 +101,7 @@ func (c *ChatToAnthropicConverter) extractSystemAndMessages(messages []types.Mes
 	}
 
 	// Convert non-system messages
-	anthMessages := ConvertOpenAIMessagesToAnthropic(nonSystemMessages)
+	anthMessages := c.convertOpenAIMessagesToAnthropic(nonSystemMessages)
 
 	// Return system as string if present
 	var system interface{}
@@ -100,6 +110,268 @@ func (c *ChatToAnthropicConverter) extractSystemAndMessages(messages []types.Mes
 	}
 
 	return system, anthMessages
+}
+
+func (c *ChatToAnthropicConverter) convertOpenAIMessagesToAnthropic(messages []types.Message) []types.MessageInput {
+	anthMessages := make([]types.MessageInput, 0, len(messages))
+
+	for _, openMsg := range messages {
+		if openMsg.Role == "tool" && openMsg.ToolCallID != "" {
+			if len(anthMessages) > 0 && chatIsToolResultMessage(anthMessages[len(anthMessages)-1]) {
+				chatAppendToolResultToMessage(&anthMessages[len(anthMessages)-1], openMsg)
+			} else {
+				anthMessages = append(anthMessages, chatCreateToolResultMessage(openMsg))
+			}
+			continue
+		}
+
+		anthMessages = append(anthMessages, c.convertOpenAIMessage(openMsg)...)
+	}
+
+	return c.normalizeAnthropicMessages(anthMessages)
+}
+
+func (c *ChatToAnthropicConverter) convertOpenAIMessage(openMsg types.Message) []types.MessageInput {
+	anthMsg := types.MessageInput{Role: openMsg.Role}
+
+	if len(openMsg.ToolCalls) > 0 {
+		return []types.MessageInput{c.convertAssistantWithToolCalls(openMsg)}
+	}
+
+	switch content := openMsg.Content.(type) {
+	case string:
+		anthMsg.Content = content
+		return []types.MessageInput{anthMsg}
+	case []interface{}:
+		return c.convertContentBlocks(openMsg.Role, content)
+	default:
+		anthMsg.Content = ""
+		return []types.MessageInput{anthMsg}
+	}
+}
+
+func (c *ChatToAnthropicConverter) convertAssistantWithToolCalls(openMsg types.Message) types.MessageInput {
+	blocks := make([]interface{}, 0, len(openMsg.ToolCalls)+1)
+
+	if text := ExtractTextFromContent(openMsg.Content); text != "" {
+		blocks = append(blocks, map[string]interface{}{
+			"type": "text",
+			"text": text,
+		})
+	}
+
+	for _, tc := range openMsg.ToolCalls {
+		blocks = append(blocks, map[string]interface{}{
+			"type":  "tool_use",
+			"id":    tc.ID,
+			"name":  tc.Function.Name,
+			"input": unmarshalArgs(tc.Function.Arguments),
+		})
+	}
+
+	if len(blocks) == 0 {
+		return types.MessageInput{Role: "assistant", Content: []interface{}{}}
+	}
+
+	if len(blocks) == 1 {
+		if block, ok := blocks[0].(map[string]interface{}); ok && block["type"] == "text" {
+			if text, ok := block["text"].(string); ok {
+				return types.MessageInput{Role: "assistant", Content: text}
+			}
+		}
+	}
+
+	return types.MessageInput{Role: "assistant", Content: blocks}
+}
+
+func (c *ChatToAnthropicConverter) convertContentBlocks(role string, parts []interface{}) []types.MessageInput {
+	switch role {
+	case "user":
+		return c.convertUserContentBlocks(parts)
+	case "assistant":
+		return c.convertAssistantContentBlocks(parts)
+	default:
+		return []types.MessageInput{{Role: role, Content: ExtractTextFromContent(parts)}}
+	}
+}
+
+func (c *ChatToAnthropicConverter) convertUserContentBlocks(parts []interface{}) []types.MessageInput {
+	blocks := make([]interface{}, 0, len(parts))
+
+	for _, part := range parts {
+		partMap, ok := part.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		switch partType, _ := partMap["type"].(string); partType {
+		case "text":
+			if text, ok := partMap["text"].(string); ok && text != "" {
+				blocks = append(blocks, map[string]interface{}{
+					"type": "text",
+					"text": text,
+				})
+			}
+		case "image_url":
+			if imageURL, ok := partMap["image_url"].(map[string]interface{}); ok {
+				if url, ok := imageURL["url"].(string); ok && url != "" {
+					if block, ok := convertImageURLToAnthropicBlock(url); ok {
+						blocks = append(blocks, block)
+					}
+				}
+			}
+		}
+	}
+
+	if len(blocks) == 0 {
+		return []types.MessageInput{{Role: "user", Content: ""}}
+	}
+
+	if len(blocks) == 1 {
+		if block, ok := blocks[0].(map[string]interface{}); ok && block["type"] == "text" {
+			if text, ok := block["text"].(string); ok {
+				return []types.MessageInput{{Role: "user", Content: text}}
+			}
+		}
+	}
+
+	return []types.MessageInput{{Role: "user", Content: blocks}}
+}
+
+func (c *ChatToAnthropicConverter) convertAssistantContentBlocks(parts []interface{}) []types.MessageInput {
+	text := ExtractTextFromContent(parts)
+	if text == "" {
+		return []types.MessageInput{{Role: "assistant", Content: []interface{}{}}}
+	}
+	return []types.MessageInput{{Role: "assistant", Content: text}}
+}
+
+func (c *ChatToAnthropicConverter) normalizeAnthropicMessages(messages []types.MessageInput) []types.MessageInput {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	normalized := make([]types.MessageInput, 0, len(messages)+2)
+	for _, msg := range messages {
+		if len(normalized) == 0 && msg.Role == "assistant" {
+			normalized = append(normalized, emptyAnthropicMessage("user"))
+		}
+
+		if len(normalized) > 0 && normalized[len(normalized)-1].Role == msg.Role {
+			if msg.Role == "assistant" {
+				normalized = append(normalized, emptyAnthropicMessage("user"))
+			} else {
+				normalized = append(normalized, emptyAnthropicMessage("assistant"))
+			}
+		}
+
+		normalized = append(normalized, msg)
+	}
+
+	return normalized
+}
+
+func emptyAnthropicMessage(role string) types.MessageInput {
+	return types.MessageInput{
+		Role:    role,
+		Content: []interface{}{},
+	}
+}
+
+func chatIsToolResultMessage(anthMsg types.MessageInput) bool {
+	if anthMsg.Role != "user" {
+		return false
+	}
+
+	blocks, ok := anthMsg.Content.([]interface{})
+	if !ok || len(blocks) == 0 {
+		return false
+	}
+
+	firstBlock, ok := blocks[0].(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	blockType, _ := firstBlock["type"].(string)
+	return blockType == "tool_result"
+}
+
+func chatAppendToolResultToMessage(anthMsg *types.MessageInput, openMsg types.Message) {
+	blocks, ok := anthMsg.Content.([]interface{})
+	if !ok {
+		blocks = []interface{}{}
+	}
+
+	blocks = append(blocks, map[string]interface{}{
+		"type":        "tool_result",
+		"tool_use_id": openMsg.ToolCallID,
+		"content":     chatFlattenToolResultContent(openMsg.Content),
+	})
+
+	anthMsg.Content = blocks
+}
+
+func chatCreateToolResultMessage(openMsg types.Message) types.MessageInput {
+	return types.MessageInput{
+		Role: "user",
+		Content: []interface{}{
+			map[string]interface{}{
+				"type":        "tool_result",
+				"tool_use_id": openMsg.ToolCallID,
+				"content":     chatFlattenToolResultContent(openMsg.Content),
+			},
+		},
+	}
+}
+
+func chatFlattenToolResultContent(content interface{}) string {
+	if content == nil {
+		return ""
+	}
+
+	switch c := content.(type) {
+	case string:
+		return c
+	case []interface{}:
+		return ExtractTextFromContent(c)
+	default:
+		return ExtractTextFromContent(content)
+	}
+}
+
+func convertImageURLToAnthropicBlock(url string) (map[string]interface{}, bool) {
+	if url == "" {
+		return nil, false
+	}
+
+	if strings.HasPrefix(url, "data:") {
+		mediaType, data, err := ParseDataURI(url)
+		if err != nil {
+			return nil, false
+		}
+		return map[string]interface{}{
+			"type": "image",
+			"source": map[string]interface{}{
+				"type":       "base64",
+				"media_type": mediaType,
+				"data":       data,
+			},
+		}, true
+	}
+
+	return map[string]interface{}{
+		"type": "image",
+		"source": map[string]interface{}{
+			"type": "url",
+			"url":  url,
+		},
+	}, true
+}
+
+func isOpenAIToolChoiceNone(toolChoice interface{}) bool {
+	s, ok := toolChoice.(string)
+	return ok && s == "none"
 }
 
 // ChatToAnthropicTransformer converts OpenAI SSE responses to Anthropic format.
