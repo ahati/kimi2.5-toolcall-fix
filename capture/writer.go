@@ -196,29 +196,36 @@ func (cw *captureWriter) Chunks() []SSEChunk {
 //
 // @pre None
 // @post Returns empty string if data is nil, empty, or invalid JSON
-// @post Returns empty string if JSON does not contain "id" field
-// @post Returns non-empty string if "id" field exists and is non-empty
+// @post Returns empty string if JSON does not contain an ID field
+// @post Returns non-empty string if ID field exists and is non-empty
 //
 // @note This function is used to extract request IDs from SSE response chunks.
-// @note The ID field is expected at the top level of the JSON object.
+// @note Supports multiple formats:
+//   - OpenAI Chat/Responses: {"id": "..."}
+//   - Anthropic message_start: {"type": "message_start", "message": {"id": "..."}}
+//
 // @note Thread-safe: pure function with no side effects.
 func ExtractRequestIDFromSSEChunk(data json.RawMessage) string {
-	// Early return for empty data prevents unnecessary JSON parsing
-	// Empty data indicates no chunk or malformed SSE stream
 	if len(data) == 0 {
 		return ""
 	}
-	// Anonymous struct for targeted unmarshaling of only the ID field
-	// This avoids parsing the entire JSON structure when only ID is needed
-	var chunk struct {
+
+	var topLevel struct {
 		ID string `json:"id"`
 	}
-	// Unmarshal and check for both success and non-empty ID
-	// json.Unmarshal returns error for invalid JSON; we ignore errors silently
-	if err := json.Unmarshal(data, &chunk); err == nil && chunk.ID != "" {
-		return chunk.ID
+	if err := json.Unmarshal(data, &topLevel); err == nil && topLevel.ID != "" {
+		return topLevel.ID
 	}
-	// Return empty string for any failure case
-	// Callers should check for empty string to determine success
+
+	var msgStart struct {
+		Type    string `json:"type"`
+		Message struct {
+			ID string `json:"id"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(data, &msgStart); err == nil && msgStart.Message.ID != "" {
+		return msgStart.Message.ID
+	}
+
 	return ""
 }

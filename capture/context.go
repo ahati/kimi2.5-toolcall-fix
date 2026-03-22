@@ -12,6 +12,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // contextKey defines the type used for context keys to prevent collisions.
@@ -26,16 +28,16 @@ const captureContextKey contextKey = "capture_context"
 // It tracks the request ID, timing information, and the recorder instance.
 //
 // Lifecycle:
-//   - Created at request start via NewCaptureContext
-//   - Populated with request ID via SetRequestID
+//   - Created at request start via NewCaptureContext (with UUID as initial ID)
+//   - Populated with actual request ID via SetRequestID (if extracted from SSE)
 //   - Attached to context via WithCaptureContext
 //   - Retrieved via GetCaptureContext for recording operations
 //
 // Thread Safety: NOT thread-safe. Only access from a single goroutine per request.
 type CaptureContext struct {
 	// RequestID is the unique identifier for this request.
-	// Empty string indicates ID has not been extracted yet.
-	// Valid values: non-empty string after extraction, empty string before extraction.
+	// Initially set to a short UUID; updated with actual message ID if extracted from SSE.
+	// Valid values: 8-character UUID initially, or actual message ID after extraction.
 	RequestID string
 
 	// StartTime is the timestamp when this capture context was created.
@@ -61,21 +63,21 @@ type CaptureContext struct {
 // @return Pointer to newly allocated CaptureContext, never nil.
 //
 // @pre r != nil
-// @post Returned CaptureContext.RequestID == ""
+// @post Returned CaptureContext.RequestID is a 8-character UUID
 // @post Returned CaptureContext.Recorder != nil
 // @post Returned CaptureContext.IDExtracted == false
 // @post Returned CaptureContext.StartTime represents current time
 //
 // @note This function captures request metadata but not the request body.
 // @note The returned context should be attached to the request context via WithCaptureContext.
+// @note A short UUID is generated as initial RequestID; it may be updated via SetRequestID
+// @note if an actual message ID is extracted from the SSE response.
 func NewCaptureContext(r *http.Request) *CaptureContext {
-	// Initialize all fields explicitly to avoid zero-value confusion
-	// StartTime captures the moment request processing begins for duration tracking
+	initialID := uuid.New().String()[:8]
 	return &CaptureContext{
-		StartTime: time.Now(),
-		// Recorder is created fresh for each request to isolate capture data
-		Recorder: NewRecorder("", r.Method, r.URL.Path, r.RemoteAddr),
-		// IDExtracted starts false to indicate ID extraction is pending
+		RequestID:   initialID,
+		StartTime:   time.Now(),
+		Recorder:    NewRecorder(initialID, r.Method, r.URL.Path, r.RemoteAddr),
 		IDExtracted: false,
 	}
 }

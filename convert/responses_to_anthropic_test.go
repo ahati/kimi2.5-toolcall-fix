@@ -899,7 +899,7 @@ func TestCombineOutputItems(t *testing.T) {
 func TestPrependHistoryToInput_CombinesMessageAndFunctionCall(t *testing.T) {
 	// Initialize the conversation store
 	conversation.InitDefaultStore(conversation.Config{MaxSize: 1000})
-	
+
 	// Create a conversation with message and function_call outputs
 	conv := &conversation.Conversation{
 		ID: "resp_test_123",
@@ -922,10 +922,10 @@ func TestPrependHistoryToInput_CombinesMessageAndFunctionCall(t *testing.T) {
 			},
 		},
 	}
-	
+
 	// Store the conversation
 	conversation.StoreInDefault(conv)
-	
+
 	// Create a new input to prepend to
 	currentInput := []interface{}{
 		map[string]interface{}{
@@ -934,41 +934,41 @@ func TestPrependHistoryToInput_CombinesMessageAndFunctionCall(t *testing.T) {
 			"content": "Follow-up question",
 		},
 	}
-	
+
 	// Call prependHistoryToInput
 	result := prependHistoryToInput(conv, currentInput)
-	
+
 	// Convert result to JSON for inspection
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 	t.Logf("Result: %s", string(resultJSON))
-	
+
 	// Verify the result
 	items, ok := result.([]interface{})
 	if !ok {
 		t.Fatalf("Expected []interface{}, got %T", result)
 	}
-	
+
 	// Should have: input item, combined assistant message, current input
 	// That's 3 items
 	if len(items) != 3 {
 		t.Errorf("Expected 3 items, got %d", len(items))
 	}
-	
+
 	// Check that item 1 (the combined assistant message) has tool_calls
 	if len(items) >= 2 {
 		assistantItem, ok := items[1].(map[string]interface{})
 		if !ok {
 			t.Fatalf("items[1] is not map[string]interface{}")
 		}
-		
+
 		if assistantItem["type"] != "message" {
 			t.Errorf("items[1] type = %v, want message", assistantItem["type"])
 		}
-		
+
 		if assistantItem["role"] != "assistant" {
 			t.Errorf("items[1] role = %v, want assistant", assistantItem["role"])
 		}
-		
+
 		if _, hasToolCalls := assistantItem["tool_calls"]; !hasToolCalls {
 			t.Errorf("Combined assistant message should have tool_calls")
 		}

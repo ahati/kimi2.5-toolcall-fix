@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -287,8 +288,12 @@ func streamResponse(c *gin.Context, body io.Reader, h Handler) {
 		// Iterate over all SSE events from upstream
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
-				// Log stream error for debugging
-				logging.ErrorMsg("SSE stream error: %v", err)
+				// Context canceled is expected when client disconnects after receiving complete response
+				if errors.Is(err, context.Canceled) {
+					logging.DebugMsg("Stream completed, client disconnected")
+				} else {
+					logging.ErrorMsg("SSE stream error: %v", err)
+				}
 				return false
 			}
 			// Transform each event to downstream format
@@ -354,7 +359,12 @@ func streamWithCapture(c *gin.Context, body io.Reader, h Handler, cc *capture.Ca
 		// Iterate over all SSE events from upstream
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
-				logging.ErrorMsg("SSE stream error (capture): %v", err)
+				// Context canceled is expected when client disconnects after receiving complete response
+				if errors.Is(err, context.Canceled) {
+					logging.DebugMsg("Stream completed, client disconnected")
+				} else {
+					logging.ErrorMsg("SSE stream error (capture): %v", err)
+				}
 				return false
 			}
 			// Capture upstream events before transformation
@@ -418,7 +428,12 @@ func streamWithoutCapture(c *gin.Context, body io.Reader, h Handler) {
 	c.Stream(func(w io.Writer) bool {
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
-				logging.ErrorMsg("SSE stream error (no-capture): %v", err)
+				// Context canceled is expected when client disconnects after receiving complete response
+				if errors.Is(err, context.Canceled) {
+					logging.DebugMsg("Stream completed, client disconnected")
+				} else {
+					logging.ErrorMsg("SSE stream error (no-capture): %v", err)
+				}
 				return false
 			}
 			// Transform and send event directly to client

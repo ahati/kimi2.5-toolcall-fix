@@ -76,9 +76,9 @@ func TestToolUseBlockWithExtractedArgs(t *testing.T) {
 			Index: intPtr(1),
 		},
 		{
-			Type:      "message_delta",
+			Type:       "message_delta",
 			StopReason: "end_turn",
-			Usage:     &types.AnthropicUsage{OutputTokens: 10},
+			Usage:      &types.AnthropicUsage{OutputTokens: 10},
 		},
 		{
 			Type: "message_stop",
@@ -188,9 +188,9 @@ func TestToolCallIDConsistency(t *testing.T) {
 			Index: intPtr(0),
 		},
 		{
-			Type:      "message_delta",
+			Type:       "message_delta",
 			StopReason: "end_turn",
-			Usage:     &types.AnthropicUsage{OutputTokens: 10},
+			Usage:      &types.AnthropicUsage{OutputTokens: 10},
 		},
 		{
 			Type: "message_stop",

@@ -2,9 +2,9 @@
   "env": {
     "ANTHROPIC_AUTH_TOKEN": "sk-sp-dummy",
     "ANTHROPIC_BASE_URL": "http://host.docker.internal:8080",
-    "ANTHROPIC_MODEL": "kimi-k2.5",
+    "ANTHROPIC_MODEL": "glm-5",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2.5",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7",
     "CLAUDE_CODE_EFFORT_LEVEL": "high",
     "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
@@ -15,9 +15,9 @@
     "commit": "",
     "pr": ""
   },
-  "model": "glm-5",
   "availableModels": [
     "glm-5",
+    "kimi-k2.5",
     "MiniMax-M2.7",
     "qwen3.5-plus"
   ],

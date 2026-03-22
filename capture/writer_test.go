@@ -277,12 +277,12 @@ func TestExtractRequestIDFromSSEChunk(t *testing.T) {
 		wantID string
 	}{
 		{
-			name:   "valid ID",
+			name:   "valid top-level ID",
 			data:   json.RawMessage(`{"id": "req-123", "content": "test"}`),
 			wantID: "req-123",
 		},
 		{
-			name:   "empty ID",
+			name:   "empty top-level ID",
 			data:   json.RawMessage(`{"id": "", "content": "test"}`),
 			wantID: "",
 		},
@@ -310,6 +310,26 @@ func TestExtractRequestIDFromSSEChunk(t *testing.T) {
 			name:   "ID with nested structure",
 			data:   json.RawMessage(`{"id": "nested-test", "data": {"nested": "value"}}`),
 			wantID: "nested-test",
+		},
+		{
+			name:   "Anthropic message_start format",
+			data:   json.RawMessage(`{"type": "message_start", "message": {"id": "msg_abc123", "role": "assistant"}}`),
+			wantID: "msg_abc123",
+		},
+		{
+			name:   "Anthropic message_start with empty message ID",
+			data:   json.RawMessage(`{"type": "message_start", "message": {"id": "", "role": "assistant"}}`),
+			wantID: "",
+		},
+		{
+			name:   "Anthropic message_start missing message.id",
+			data:   json.RawMessage(`{"type": "message_start", "message": {"role": "assistant"}}`),
+			wantID: "",
+		},
+		{
+			name:   "top-level ID takes precedence over nested",
+			data:   json.RawMessage(`{"id": "top-level-id", "type": "message_start", "message": {"id": "nested-id"}}`),
+			wantID: "top-level-id",
 		},
 	}
 

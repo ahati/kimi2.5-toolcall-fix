@@ -47,6 +47,7 @@ type ResponsesHandler struct {
 }
 
 // NewResponsesHandler creates a Gin handler for the /v1/responses endpoint.
+// Creates a new handler instance per request to avoid race conditions with mutable state.
 //
 // @param cfg - Application configuration. Must not be nil.
 // @param r - Router for model resolution. Must not be nil.
@@ -55,10 +56,13 @@ type ResponsesHandler struct {
 // @pre cfg != nil
 // @pre r != nil
 func NewResponsesHandler(cfg *config.Config, r router.Router) gin.HandlerFunc {
-	return Handle(&ResponsesHandler{
-		cfg:    cfg,
-		router: r,
-	})
+	return func(c *gin.Context) {
+		h := &ResponsesHandler{
+			cfg:    cfg,
+			router: r,
+		}
+		Handle(h)(c)
+	}
 }
 
 // ValidateRequest validates the Responses API request and resolves the route.
@@ -249,7 +253,10 @@ type ResponsesHandlerNoRouter struct {
 //
 // @deprecated Use NewResponsesHandler with a router for proper model routing.
 func NewResponsesHandlerNoRouter(cfg *config.Config) gin.HandlerFunc {
-	return Handle(&ResponsesHandlerNoRouter{cfg: cfg})
+	return func(c *gin.Context) {
+		h := &ResponsesHandlerNoRouter{cfg: cfg}
+		Handle(h)(c)
+	}
 }
 
 // ValidateRequest validates the Responses API request.

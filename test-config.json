@@ -9,7 +9,7 @@
     {
       "name": "minimax_openai",
       "type": "openai",
-      "base_url": "https://api.minimax.io/v1",
+      "base_url": "https://api.minimax.io/v1/chat/completions",
       "envApiKey": "MINIMAX_IO_API_KEY"
     },
     {

@@ -242,7 +242,7 @@ func anthropicAssistantBlocksToResponsesItems(blocks []interface{}) ([]types.Inp
 				Name:      name,
 				Arguments: args,
 			})
-		// thinking — dropped (no Responses API equivalent in input)
+			// thinking — dropped (no Responses API equivalent in input)
 		}
 	}
 
@@ -333,23 +333,27 @@ type AnthropicToResponsesTransformer struct {
 	model      string
 	created    int64
 
-	outputIndex      int
-	blockTypeMap     map[int]string // block index -> type
-	toolCallItems    map[int]*types.OutputItem
-	toolCallArgs     map[int]string // block index -> accumulated arguments
+	outputIndex   int
+	blockTypeMap  map[int]string // block index -> type
+	toolCallItems map[int]*types.OutputItem
+	toolCallArgs  map[int]string // block index -> accumulated arguments
 
 	sequenceNumber int
 	completed      bool
+
+	// Token usage tracking from message_start
+	inputTokens          int
+	cacheReadInputTokens int
 }
 
 // NewAnthropicToResponsesTransformer creates a new transformer.
 func NewAnthropicToResponsesTransformer(w io.Writer) *AnthropicToResponsesTransformer {
 	return &AnthropicToResponsesTransformer{
-		w:            w,
-		created:      time.Now().Unix(),
-		blockTypeMap: make(map[int]string),
+		w:             w,
+		created:       time.Now().Unix(),
+		blockTypeMap:  make(map[int]string),
 		toolCallItems: make(map[int]*types.OutputItem),
-		toolCallArgs: make(map[int]string),
+		toolCallArgs:  make(map[int]string),
 	}
 }
 
@@ -393,6 +397,10 @@ func (t *AnthropicToResponsesTransformer) handleMessageStart(data string) error 
 	}
 	t.responseID = e.Message.ID
 	t.model = e.Message.Model
+
+	// Capture input token usage from message_start
+	t.inputTokens = e.Message.Usage.InputTokens
+	t.cacheReadInputTokens = e.Message.Usage.CacheReadInputTokens
 
 	// Emit response.created
 	resp := &types.ResponsesResponse{
@@ -552,13 +560,22 @@ func (t *AnthropicToResponsesTransformer) handleMessageDelta(data string) error 
 		eventType = types.EventResponseIncomplete
 	}
 
+	// Calculate total tokens (include cache in input for OpenAI format)
+	inputTokens := t.inputTokens + t.cacheReadInputTokens
+	totalTokens := inputTokens + e.Usage.OutputTokens
+
 	finalResp := &types.ResponsesResponse{
 		ID:     t.responseID,
 		Object: "response",
 		Model:  t.model,
 		Status: status,
 		Usage: &types.ResponsesUsage{
+			InputTokens:  inputTokens,
 			OutputTokens: e.Usage.OutputTokens,
+			TotalTokens:  totalTokens,
+			InputTokensDetails: &types.InputTokensDetails{
+				CachedTokens: t.cacheReadInputTokens,
+			},
 		},
 	}
 

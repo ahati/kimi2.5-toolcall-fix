@@ -256,12 +256,7 @@ func proxyNonStreamingRequest(c *gin.Context, h NonStreamingHandler, body []byte
 
 	// Check for non-200 responses from upstream
 	if resp.StatusCode != http.StatusOK {
-		// If endpoint not found, fall back to local counting
-		if resp.StatusCode == http.StatusNotFound {
-			handleLocalTokenCount(c, body, h)
-			return
-		}
-		handleUpstreamError(c, resp)
+		handleLocalTokenCount(c, body, h)
 		return
 	}
 
@@ -308,4 +303,3 @@ func handleLocalTokenCount(c *gin.Context, body []byte, h NonStreamingHandler) {
 	c.Header("Content-Type", "application/json")
 	c.Data(http.StatusOK, "application/json", responseJSON)
 }
-

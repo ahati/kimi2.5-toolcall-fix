@@ -2485,7 +2485,7 @@ func TestResponsesToChatConverter_CodexInputOrder(t *testing.T) {
 	// 4. function_call
 	// 5. message (assistant)
 	// 6. function_call_output
-	
+
 	input := []interface{}{
 		map[string]interface{}{
 			"type": "message",
@@ -2522,33 +2522,33 @@ func TestResponsesToChatConverter_CodexInputOrder(t *testing.T) {
 			},
 		},
 		map[string]interface{}{
-			"type":      "function_call_output",
-			"call_id":   "call_123",
-			"output":    "On branch main...",
+			"type":    "function_call_output",
+			"call_id": "call_123",
+			"output":  "On branch main...",
 		},
 	}
-	
+
 	converter := NewResponsesToChatConverter()
 	messages := converter.convertInputItems(input)
-	
+
 	t.Logf("Output messages: %d", len(messages))
 	for i, msg := range messages {
 		msgJSON, _ := json.MarshalIndent(msg, "", "  ")
 		t.Logf("Message %d: %s", i, string(msgJSON))
 	}
-	
+
 	// Expected:
 	// 1. system message (developer)
 	// 2. user message
 	// 3. user message
 	// 4. assistant message with BOTH content AND tool_calls (merged)
 	// 5. tool message (function_call_output)
-	
+
 	// Check that we have 5 messages
 	if len(messages) != 5 {
 		t.Errorf("Expected 5 messages, got %d", len(messages))
 	}
-	
+
 	// Check message 3 (should be merged assistant with tool_calls)
 	if len(messages) >= 4 {
 		assistantMsg := messages[3]
@@ -2562,7 +2562,7 @@ func TestResponsesToChatConverter_CodexInputOrder(t *testing.T) {
 			t.Errorf("Tool call name = %s, want exec_command", assistantMsg.ToolCalls[0].Function.Name)
 		}
 	}
-	
+
 	// Check message 4 (should be tool message)
 	if len(messages) >= 5 {
 		toolMsg := messages[4]
@@ -2615,41 +2615,41 @@ func TestResponsesToChatConverter_Convert_CodexInputOrder(t *testing.T) {
 				},
 			},
 			map[string]interface{}{
-				"type":      "function_call_output",
-				"call_id":   "call_123",
-				"output":    "On branch main...",
+				"type":    "function_call_output",
+				"call_id": "call_123",
+				"output":  "On branch main...",
 			},
 		},
 		"stream": true,
 	}
-	
+
 	body, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	converter := NewResponsesToChatConverter()
 	output, err := converter.Convert(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	var chatReq types.ChatCompletionRequest
 	if err := json.Unmarshal(output, &chatReq); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	t.Logf("Output messages: %d", len(chatReq.Messages))
 	for i, msg := range chatReq.Messages {
 		msgJSON, _ := json.MarshalIndent(msg, "", "  ")
 		t.Logf("Message %d: %s", i, string(msgJSON))
 	}
-	
+
 	// Expected: 5 messages (system, user, user, assistant with tool_calls, tool)
 	if len(chatReq.Messages) != 5 {
 		t.Errorf("Expected 5 messages, got %d", len(chatReq.Messages))
 	}
-	
+
 	// Check message 3 (should be merged assistant with tool_calls)
 	if len(chatReq.Messages) >= 4 {
 		assistantMsg := chatReq.Messages[3]

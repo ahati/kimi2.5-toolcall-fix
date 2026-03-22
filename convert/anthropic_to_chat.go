@@ -354,11 +354,19 @@ func AnthropicMessageInfoToChatResponse(msg *types.MessageInfo) map[string]inter
 	}
 
 	if msg.Usage != nil {
-		response["usage"] = map[string]interface{}{
+		usage := map[string]interface{}{
 			"prompt_tokens":     msg.Usage.InputTokens,
 			"completion_tokens": msg.Usage.OutputTokens,
 			"total_tokens":      msg.Usage.InputTokens + msg.Usage.OutputTokens,
 		}
+		// Include cache token details if available
+		if msg.Usage.CacheReadInputTokens > 0 || msg.Usage.CacheCreationInputTokens > 0 {
+			usage["prompt_tokens_details"] = map[string]interface{}{
+				"cached_tokens":               msg.Usage.CacheReadInputTokens,
+				"cache_creation_input_tokens": msg.Usage.CacheCreationInputTokens,
+			}
+		}
+		response["usage"] = usage
 	}
 
 	content := ""
@@ -417,22 +425,24 @@ func AnthropicMessageInfoToChatResponse(msg *types.MessageInfo) map[string]inter
 type AnthropicToChatTransformer struct {
 	w io.Writer
 
-	msgID       string
-	model       string
-	inputTokens int
+	msgID                    string
+	model                    string
+	inputTokens              int
+	cacheReadInputTokens     int
+	cacheCreationInputTokens int
 
-	created          int64
-	sequenceNumber   int
-	contentIndex     int
-	toolCallIndex    int
-	toolCallIDs      map[int]string // block index -> tool call ID
-	finishReason     string
-	usage            *types.Usage
-	messageStarted   bool
-	toolCalls        []types.ToolCall
-	currentToolCall  *anthropicToChatToolCallState
-	contentBuilder   strings.Builder
-	completed        bool
+	created         int64
+	sequenceNumber  int
+	contentIndex    int
+	toolCallIndex   int
+	toolCallIDs     map[int]string // block index -> tool call ID
+	finishReason    string
+	usage           *types.Usage
+	messageStarted  bool
+	toolCalls       []types.ToolCall
+	currentToolCall *anthropicToChatToolCallState
+	contentBuilder  strings.Builder
+	completed       bool
 }
 
 type anthropicToChatToolCallState struct {
@@ -495,6 +505,8 @@ func (t *AnthropicToChatTransformer) handleMessageStart(data string) error {
 	t.msgID = e.Message.ID
 	t.model = e.Message.Model
 	t.inputTokens = e.Message.Usage.InputTokens
+	t.cacheReadInputTokens = e.Message.Usage.CacheReadInputTokens
+	t.cacheCreationInputTokens = e.Message.Usage.CacheCreationInputTokens
 
 	// Emit first chunk with role
 	chunk := t.makeChunk(&types.Delta{Role: "assistant", Content: ""}, nil, nil)
@@ -574,6 +586,13 @@ func (t *AnthropicToChatTransformer) handleMessageDelta(data string) error {
 		PromptTokens:     t.inputTokens,
 		CompletionTokens: e.Usage.OutputTokens,
 		TotalTokens:      t.inputTokens + e.Usage.OutputTokens,
+	}
+	// Include cache token details if available
+	if t.cacheReadInputTokens > 0 || t.cacheCreationInputTokens > 0 {
+		t.usage.PromptTokensDetails = &types.PromptTokensDetails{
+			CachedTokens:             t.cacheReadInputTokens,
+			CacheCreationInputTokens: t.cacheCreationInputTokens,
+		}
 	}
 	return nil
 }

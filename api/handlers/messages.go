@@ -51,10 +51,13 @@ type MessagesHandler struct {
 //
 // @pre cfg != nil
 func NewMessagesHandler(cfg *config.Config, r router.Router) gin.HandlerFunc {
-	return Handle(&MessagesHandler{
-		cfg:         cfg,
-		modelRouter: r,
-	})
+	return func(c *gin.Context) {
+		h := &MessagesHandler{
+			cfg:         cfg,
+			modelRouter: r,
+		}
+		Handle(h)(c)
+	}
 }
 
 // ValidateRequest validates the request and resolves the model route.

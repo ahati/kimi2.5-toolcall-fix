@@ -239,11 +239,11 @@ type ChatToResponsesTransformer struct {
 	inputItems []types.InputItem
 
 	// Tool call extraction from reasoning content (for Kimi-style markup)
-	toolCallTransform bool                         // enabled by config
-	parser            *toolcall.Parser             // parser for tool call markup
-	extractedToolArgs strings.Builder              // args for extracted tool calls
-	extractedToolID   string                       // current extracted tool ID
-	extractedToolName string                       // current extracted tool name
+	toolCallTransform bool             // enabled by config
+	parser            *toolcall.Parser // parser for tool call markup
+	extractedToolArgs strings.Builder  // args for extracted tool calls
+	extractedToolID   string           // current extracted tool ID
+	extractedToolName string           // current extracted tool name
 }
 
 type chatToRespToolCallState struct {

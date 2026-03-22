@@ -70,9 +70,9 @@ func TestExtractedToolCallsPreserveIDAndName(t *testing.T) {
 			Index: intPtr(0),
 		},
 		{
-			Type:      "message_delta",
+			Type:       "message_delta",
 			StopReason: "end_turn",
-			Usage:     &types.AnthropicUsage{OutputTokens: 10},
+			Usage:      &types.AnthropicUsage{OutputTokens: 10},
 		},
 		{
 			Type: "message_stop",
@@ -224,9 +224,9 @@ func TestExtractedToolCallsPreserveIDAndName_MultipleToolCalls(t *testing.T) {
 			Index: intPtr(0),
 		},
 		{
-			Type:      "message_delta",
+			Type:       "message_delta",
 			StopReason: "end_turn",
-			Usage:     &types.AnthropicUsage{OutputTokens: 10},
+			Usage:      &types.AnthropicUsage{OutputTokens: 10},
 		},
 		{
 			Type: "message_stop",

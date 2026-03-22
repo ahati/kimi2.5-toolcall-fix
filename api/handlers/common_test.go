@@ -397,10 +397,10 @@ func (m *mockHandler) WriteError(c *gin.Context, status int, msg string) {
 	}
 }
 
-
 func (m *mockHandler) ModelInfo() (string, string) {
 	return "test-model", "test-model-upstream"
 }
+
 type mockTransformer struct {
 	w      io.Writer
 	closed bool

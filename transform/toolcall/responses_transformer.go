@@ -41,10 +41,10 @@ type ResponsesTransformer struct {
 	inReasoning bool
 
 	// Content builders
-	textContent          strings.Builder
-	toolArgs             strings.Builder
-	reasoningContent     strings.Builder
-	extractedToolArgs    strings.Builder // Args for tool calls extracted from thinking content
+	textContent       strings.Builder
+	toolArgs          strings.Builder
+	reasoningContent  strings.Builder
+	extractedToolArgs strings.Builder // Args for tool calls extracted from thinking content
 
 	// Output tracking
 	outputIndex     int    // Current output index counter (0-indexed)
@@ -357,18 +357,29 @@ func (f *ResponsesFormatter) FormatResponseCompleted(outputItems []map[string]in
 	}
 
 	// Add usage if available
+	//
+	// IMPORTANT: Anthropic and OpenAI have different semantics for cache tokens:
+	// - Anthropic: input_tokens is fresh tokens only, cache_read/cache_creation are additive
+	// - OpenAI: input_tokens is total (includes cached), cached_tokens is a subset
+	//
+	// Conversion: OpenAI input_tokens = Anthropic input_tokens + cache_read + cache_creation
 	if usage != nil {
-		totalInputTokens := usage.InputTokens + usage.CacheReadInputTokens
+		totalInputTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 		usageData := map[string]interface{}{
 			"input_tokens":  totalInputTokens,
 			"output_tokens": usage.OutputTokens,
 			"total_tokens":  totalInputTokens + usage.OutputTokens,
 		}
-		// Include cache tokens if available
-		if usage.CacheReadInputTokens > 0 {
-			usageData["input_tokens_details"] = map[string]interface{}{
-				"cached_tokens": usage.CacheReadInputTokens,
+		// Include cache token details if available (these are metadata, not additional tokens in OpenAI)
+		if usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
+			details := map[string]interface{}{}
+			if usage.CacheReadInputTokens > 0 {
+				details["cached_tokens"] = usage.CacheReadInputTokens
 			}
+			if usage.CacheCreationInputTokens > 0 {
+				details["cache_creation_input_tokens"] = usage.CacheCreationInputTokens
+			}
+			usageData["input_tokens_details"] = details
 		}
 		response["usage"] = usageData
 	}

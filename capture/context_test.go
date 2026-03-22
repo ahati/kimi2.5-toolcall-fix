@@ -21,8 +21,12 @@ func TestNewCaptureContext(t *testing.T) {
 		t.Fatal("NewCaptureContext returned nil")
 	}
 
-	if cc.RequestID != "" {
-		t.Errorf("expected empty RequestID, got %q", cc.RequestID)
+	if cc.RequestID == "" {
+		t.Error("expected non-empty RequestID (UUID)")
+	}
+
+	if len(cc.RequestID) != 8 {
+		t.Errorf("expected RequestID length 8, got %d", len(cc.RequestID))
 	}
 
 	if cc.StartTime.IsZero() {

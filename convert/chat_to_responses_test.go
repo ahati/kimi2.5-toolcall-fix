@@ -939,10 +939,10 @@ func TestChatToResponsesTransformer_OutputOrdering(t *testing.T) {
 // they are correctly extracted and converted to function_call output items.
 func TestChatToResponsesTransformer_ToolCallsInReasoning(t *testing.T) {
 	tests := []struct {
-		name                string
-		toolCallTransform   bool
-		chunks              []types.Chunk
-		validate            func(t *testing.T, output string)
+		name              string
+		toolCallTransform bool
+		chunks            []types.Chunk
+		validate          func(t *testing.T, output string)
 	}{
 		{
 			name:              "tool call extraction enabled - single tool call",

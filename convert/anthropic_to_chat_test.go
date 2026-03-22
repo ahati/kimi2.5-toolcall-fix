@@ -9,7 +9,7 @@ import (
 
 func TestAnthropicToChatRequest_Simple(t *testing.T) {
 	req := &types.MessageRequest{
-		Model:    "claude-3-opus",
+		Model:     "claude-3-opus",
 		MaxTokens: 1024,
 		Messages: []types.MessageInput{
 			{Role: "user", Content: "Hello"},
@@ -37,7 +37,7 @@ func TestAnthropicToChatRequest_Simple(t *testing.T) {
 
 func TestAnthropicToChatRequest_WithTools(t *testing.T) {
 	req := &types.MessageRequest{
-		Model:    "claude-3-opus",
+		Model:     "claude-3-opus",
 		MaxTokens: 1024,
 		Messages: []types.MessageInput{
 			{Role: "user", Content: "What's the weather?"},
@@ -67,9 +67,9 @@ func TestAnthropicToChatRequest_WithTools(t *testing.T) {
 
 func TestAnthropicToChatRequest_WithSystem(t *testing.T) {
 	req := &types.MessageRequest{
-		Model:    "claude-3-opus",
+		Model:     "claude-3-opus",
 		MaxTokens: 1024,
-		System:   "You are a helpful assistant.",
+		System:    "You are a helpful assistant.",
 		Messages: []types.MessageInput{
 			{Role: "user", Content: "Hello"},
 		},
@@ -90,7 +90,7 @@ func TestAnthropicToChatRequest_WithSystem(t *testing.T) {
 
 func TestAnthropicToChatRequest_ToolResult(t *testing.T) {
 	req := &types.MessageRequest{
-		Model:    "claude-3-opus",
+		Model:     "claude-3-opus",
 		MaxTokens: 1024,
 		Messages: []types.MessageInput{
 			{Role: "user", Content: []interface{}{
@@ -122,7 +122,7 @@ func TestAnthropicToChatRequest_ToolResult(t *testing.T) {
 
 func TestAnthropicToChatRequest_AssistantWithToolUse(t *testing.T) {
 	req := &types.MessageRequest{
-		Model:    "claude-3-opus",
+		Model:     "claude-3-opus",
 		MaxTokens: 1024,
 		Messages: []types.MessageInput{
 			{Role: "assistant", Content: []interface{}{

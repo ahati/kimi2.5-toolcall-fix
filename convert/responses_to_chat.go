@@ -170,10 +170,10 @@ func (c *ResponsesToChatConverter) convertInput(input interface{}) []types.Messa
 // that should become a single Chat Completions message.
 // This handles the case where Codex sends function_call and message separately.
 type inputItemGroup struct {
-	itemType   string          // "message", "merged_assistant", "assistant_tool_calls", or "function_call_output"
-	message    *types.Message  // Parsed message content (for message items)
+	itemType   string           // "message", "merged_assistant", "assistant_tool_calls", or "function_call_output"
+	message    *types.Message   // Parsed message content (for message items)
 	toolCalls  []types.ToolCall // Tool calls to merge (for function_call items)
-	toolOutput *types.Message  // Tool output message (for function_call_output items)
+	toolOutput *types.Message   // Tool output message (for function_call_output items)
 }
 
 // groupProcessor holds state during input item processing.

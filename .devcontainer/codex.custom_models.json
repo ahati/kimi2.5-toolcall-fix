@@ -6,7 +6,7 @@
     {
       "slug": "qwen3.5-plus",
       "display_name": "Qwen 3.5 Plus",
-      "description": "Alibaba Qwen 3.5 Plus via Anthropic endpoint",
+      "description": "Alibaba Qwen 3.5 Plus via openai-fallback-alibaba",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses"},
@@ -38,7 +38,7 @@
     {
       "slug": "qwen3-max-2026-01-23",
       "display_name": "Qwen 3 Max",
-      "description": "Alibaba Qwen 3 Max via Anthropic endpoint",
+      "description": "Alibaba Qwen 3 Max via openai-fallback-alibaba",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses"},
@@ -70,7 +70,7 @@
     {
       "slug": "qwen3-coder-plus",
       "display_name": "Qwen 3 Coder Plus",
-      "description": "Alibaba Qwen 3 Coder Plus via Anthropic endpoint",
+      "description": "Alibaba Qwen 3 Coder Plus via openai-fallback-alibaba",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses"},
@@ -102,7 +102,7 @@
     {
       "slug": "qwen3-coder-next",
       "display_name": "Qwen 3 Coder Next",
-      "description": "Alibaba Qwen 3 Coder Next via Anthropic endpoint",
+      "description": "Alibaba Qwen 3 Coder Next via openai-fallback-alibaba",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses"},
@@ -134,7 +134,7 @@
     {
       "slug": "MiniMax-M2.5",
       "display_name": "MiniMax M2.5",
-      "description": "MiniMax M2.5 via Anthropic endpoint",
+      "description": "MiniMax M2.5 via openai-fallback-alibaba",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses"},
@@ -166,7 +166,7 @@
     {
       "slug": "MiniMax-M2.7",
       "display_name": "MiniMax M2.7",
-      "description": "MiniMax M2.7 via Anthropic endpoint",
+      "description": "MiniMax M2.7 via anthropic-explicit-minimax",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses"},
@@ -198,7 +198,7 @@
     {
       "slug": "glm-5",
       "display_name": "GLM-5",
-      "description": "Zhipu AI GLM-5 via Anthropic endpoint",
+      "description": "Zhipu AI GLM-5 via openai-fallback-alibaba",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses"},
@@ -230,7 +230,7 @@
     {
       "slug": "glm-4.7",
       "display_name": "GLM-4.7",
-      "description": "Zhipu AI GLM-4.7 via Anthropic endpoint",
+      "description": "Zhipu AI GLM-4.7 via openai-fallback-alibaba",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses"},
@@ -262,7 +262,7 @@
     {
       "slug": "kimi-k2.5",
       "display_name": "Kimi K2.5",
-      "description": "Moonshot AI Kimi K2.5 via Anthropic endpoint",
+      "description": "Moonshot AI Kimi K2.5 via anthropic-explicit-alibaba",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses"},

@@ -600,11 +600,18 @@ func (t *ChatToAnthropicTransformer) handleFinishReason(reason string, usage *ty
 	}
 	// Include usage with both tokens for compatibility
 	// Some SDKs expect input_tokens in message_delta even though spec says output_tokens only
+	//
+	// IMPORTANT: OpenAI and Anthropic have different semantics for cache tokens:
+	// - OpenAI: prompt_tokens includes cached tokens, cached_tokens is a subset
+	// - Anthropic: input_tokens is fresh tokens only, cache_read_input_tokens is additive
+	//
+	// Conversion: Anthropic input_tokens = OpenAI prompt_tokens - cached_tokens - cache_creation_tokens
+	inputTokens := t.promptTokens - t.cacheReadTokens - t.cacheCreateTokens
 	usageData := map[string]interface{}{
-		"input_tokens":  t.promptTokens,
+		"input_tokens":  inputTokens,
 		"output_tokens": t.completionTokens,
 	}
-	// Include cache tokens if available
+	// Include cache tokens if available (these are additive in Anthropic's model)
 	if t.cacheReadTokens > 0 {
 		usageData["cache_read_input_tokens"] = t.cacheReadTokens
 	}

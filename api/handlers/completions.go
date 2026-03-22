@@ -47,10 +47,13 @@ type CompletionsHandler struct {
 //
 // @pre cfg != nil
 func NewCompletionsHandler(cfg *config.Config, r router.Router) gin.HandlerFunc {
-	return Handle(&CompletionsHandler{
-		cfg:         cfg,
-		modelRouter: r,
-	})
+	return func(c *gin.Context) {
+		h := &CompletionsHandler{
+			cfg:         cfg,
+			modelRouter: r,
+		}
+		Handle(h)(c)
+	}
 }
 
 // ValidateRequest validates the request and resolves the model route.
