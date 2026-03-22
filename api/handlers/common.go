@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"ai-proxy/capture"
 	"ai-proxy/logging"
@@ -417,22 +416,6 @@ func streamWithCapture(c *gin.Context, body io.Reader, h Handler, cc *capture.Ca
 
 	// Finalize capture by recording all captured data
 	finalizeCapture(cc, downstream, upstream)
-}
-
-// parseAndCaptureSSE parses SSE data and records chunks.
-func parseAndCaptureSSE(cw capture.CaptureWriter, data []byte, start time.Time) {
-	// Split by SSE event delimiter
-	events := bytes.Split(data, []byte("\n\n"))
-	for _, event := range events {
-		if len(event) == 0 {
-			continue
-		}
-		eventType := extractEventType(event)
-		dataPart := extractDataPart(event)
-		if len(dataPart) > 0 {
-			cw.RecordChunk(eventType, dataPart)
-		}
-	}
 }
 
 // streamWithoutCapture streams the response without capturing data.

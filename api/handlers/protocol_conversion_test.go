@@ -9,7 +9,6 @@ import (
 
 	"ai-proxy/config"
 	"ai-proxy/router"
-	"ai-proxy/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -46,55 +45,6 @@ func mockRoute(provider config.Provider, model, outputProtocol string) *router.R
 		Provider:       provider,
 		Model:          model,
 		OutputProtocol: outputProtocol,
-	}
-}
-
-// anthropicTool creates an Anthropic-format tool definition.
-func anthropicTool(name, description string, schema map[string]interface{}) types.ToolDef {
-	schemaBytes, _ := json.Marshal(schema)
-	return types.ToolDef{
-		Name:        name,
-		Description: description,
-		InputSchema: schemaBytes,
-	}
-}
-
-// openAIToolSchema creates the expected OpenAI tool format for comparison.
-func openAIToolSchema(name, description string, schema map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"type": "function",
-		"function": map[string]interface{}{
-			"name":        name,
-			"description": description,
-			"parameters":  schema,
-		},
-	}
-}
-
-// assertToolConverted checks that Anthropic tools were converted to OpenAI format.
-func assertToolConverted(t *testing.T, body []byte, expectedTools []map[string]interface{}) {
-	var req map[string]interface{}
-	if err := json.Unmarshal(body, &req); err != nil {
-		t.Fatalf("Failed to parse request body: %v", err)
-	}
-
-	tools, ok := req["tools"].([]interface{})
-	if !ok {
-		t.Fatal("Expected tools array in request")
-	}
-
-	if len(tools) != len(expectedTools) {
-		t.Fatalf("Expected %d tools, got %d", len(expectedTools), len(tools))
-	}
-
-	for i, expected := range expectedTools {
-		tool := tools[i].(map[string]interface{})
-		toolBytes, _ := json.Marshal(tool)
-		expectedBytes, _ := json.Marshal(expected)
-
-		if !bytes.Equal(toolBytes, expectedBytes) {
-			t.Errorf("Tool %d mismatch:\ngot: %s\nwant: %s", i, toolBytes, expectedBytes)
-		}
 	}
 }
 

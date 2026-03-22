@@ -120,18 +120,6 @@ func (c *Counter) countContentBlocks(blocks []interface{}) int {
 	return total
 }
 
-// countContentBlocksFromTyped counts tokens for typed content blocks.
-//
-// @param blocks - Array of typed content blocks.
-// @return int - Token count.
-func (c *Counter) countContentBlocksFromTyped(blocks []types.ContentBlock) int {
-	total := 0
-	for _, block := range blocks {
-		total += c.countContentBlock(block)
-	}
-	return total
-}
-
 // countToolDefinition counts tokens for a tool definition.
 // Includes the name, description, and input schema.
 //

@@ -489,22 +489,6 @@ func (p *Parser) processTrailing() []Event {
 	return []Event{{Type: EventContent, Text: text}}
 }
 
-// shouldEndSection checks if the buffer contains a section end marker.
-// This is used to determine if we should transition to trailing state.
-//
-// @brief Checks for section end marker in buffer.
-//
-// @return bool True if SectionEnd marker is present, false otherwise.
-//
-// @pre None.
-// @post No state is modified.
-//
-// @note This is a query function that does not modify parser state.
-func (p *Parser) shouldEndSection() bool {
-	endIdx := strings.Index(p.buf, p.tokens.SectionEnd)
-	return endIdx >= 0
-}
-
 // endSection handles transitioning from a tool calls section to trailing state.
 // Removes the section end marker and emits a section end event.
 //

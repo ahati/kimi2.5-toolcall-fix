@@ -31,7 +31,6 @@ type ResponsesTransformer struct {
 	messageID  string
 	model      string
 	blockIndex int
-	toolIndex  int
 	currentID  string
 	responseID string
 
@@ -150,30 +149,6 @@ func (t *ResponsesTransformer) emitMessageItemAdded() error {
 	t.outputIndex++ // Increment output index after emitting message item
 
 	return nil
-}
-
-// getOutputIndexForReasoning returns the output index for a reasoning item.
-// Since reasoning items come first, the index is simply the count of reasoning items.
-func (t *ResponsesTransformer) getOutputIndexForReasoning() int {
-	count := 0
-	for _, item := range t.outputItems {
-		if item["type"] == "reasoning" {
-			count++
-		}
-	}
-	return count
-}
-
-// getOutputIndexForToolCall returns the output index for a tool call item.
-// It's positioned after all reasoning items and previous tool calls.
-func (t *ResponsesTransformer) getOutputIndexForToolCall() int {
-	count := 0
-	for _, item := range t.outputItems {
-		if item["type"] == "reasoning" || item["type"] == "function_call" {
-			count++
-		}
-	}
-	return count
 }
 
 // FormatResponseCreated formats a response.created event.

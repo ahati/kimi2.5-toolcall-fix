@@ -16,14 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// setupResponsesTestRouter creates a test router with the ResponsesHandler.
-func setupResponsesTestRouter(cfg *config.Config, r router.Router) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.POST("/v1/responses", NewResponsesHandler(cfg, r))
-	return router
-}
-
 // mockRouter implements router.Router for testing.
 type mockRouter struct {
 	models    map[string]*router.ResolvedRoute

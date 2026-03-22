@@ -391,7 +391,6 @@ type ChatToAnthropicTransformer struct {
 
 	// Tool call tracking
 	toolCalls     map[int]*chatToolCallState // index -> state
-	currentToolID int
 
 	// Usage tracking - captured from final upstream chunk
 	promptTokens      int
@@ -639,11 +638,6 @@ func (t *ChatToAnthropicTransformer) handleFinishReason(reason string, usage *ty
 	t.deltaSent = true
 	t.toolCalls = make(map[int]*chatToolCallState)
 
-	return nil
-}
-
-// emitUsage is deprecated - usage is now captured in handleChunk and included in message_delta
-func (t *ChatToAnthropicTransformer) emitUsage(usage *types.Usage) error {
 	return nil
 }
 
