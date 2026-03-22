@@ -12,6 +12,45 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Anthropic → Responses — Converter
+// ─────────────────────────────────────────────────────────────────────────────
+
+// AnthropicToResponsesConverter converts Anthropic MessageRequest to ResponsesRequest.
+// It implements the RequestConverter interface for the Anthropic to Responses conversion.
+type AnthropicToResponsesConverter struct{}
+
+// NewAnthropicToResponsesConverter creates a new converter for Anthropic to Responses format.
+func NewAnthropicToResponsesConverter() *AnthropicToResponsesConverter {
+	return &AnthropicToResponsesConverter{}
+}
+
+// Convert transforms an Anthropic MessageRequest body to ResponsesRequest format.
+func (c *AnthropicToResponsesConverter) Convert(body []byte) ([]byte, error) {
+	return TransformAnthropicToResponses(body)
+}
+
+// TransformAnthropicToResponses converts an Anthropic MessageRequest body to ResponsesRequest format.
+// This is the primary entry point for converting Anthropic requests to Responses API format.
+//
+// Dropped fields (no Responses API equivalent):
+//   - top_k: No equivalent in Responses API
+//   - stop_sequences: No stop field in Responses API
+//   - thinking blocks in messages: No equivalent in Responses API input
+func TransformAnthropicToResponses(body []byte) ([]byte, error) {
+	var req types.MessageRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("failed to parse Anthropic request: %w", err)
+	}
+
+	out, err := AnthropicToResponsesRequest(&req)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(out)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Anthropic → Responses — Request
 // ─────────────────────────────────────────────────────────────────────────────
 

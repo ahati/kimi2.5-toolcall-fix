@@ -19,6 +19,48 @@ import (
 // Chat Completions → Responses — Request
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ChatToResponsesConverter converts OpenAI ChatCompletionRequest to ResponsesRequest.
+// It implements the RequestConverter interface for the Chat to Responses conversion.
+type ChatToResponsesConverter struct{}
+
+// NewChatToResponsesConverter creates a new converter for Chat to Responses format.
+func NewChatToResponsesConverter() *ChatToResponsesConverter {
+	return &ChatToResponsesConverter{}
+}
+
+// Convert transforms an OpenAI ChatCompletionRequest body to ResponsesRequest format.
+// This is the main entry point for request conversion.
+func (c *ChatToResponsesConverter) Convert(body []byte) ([]byte, error) {
+	return TransformChatToResponses(body)
+}
+
+// TransformChatToResponses converts a Chat Completions request body to Responses API format.
+// This is the main entry point for the Chat→Responses request transformation.
+//
+// Field mappings:
+//   - max_completion_tokens/max_tokens → max_output_tokens (prefer max_completion_tokens)
+//   - System messages → instructions (join with \n\n if multiple)
+//   - messages → input array (exclude system messages)
+//   - user field → metadata.user_id
+//   - tools format: keep type:"function", flatten function.parameters to parameters at top level
+//   - tool_choice:"required" → "required" (same)
+//   - tool_choice:{type:"function",function:{name}} → {type:"function",name} (flatten)
+//
+// Dropped: stop, n, response_format, frequency_penalty, presence_penalty, logprobs, seed
+func TransformChatToResponses(body []byte) ([]byte, error) {
+	var req types.ChatCompletionRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("failed to parse ChatCompletionRequest: %w", err)
+	}
+
+	out, err := ChatToResponsesRequest(&req)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(out)
+}
+
 // ChatToResponsesRequest converts a Chat Completions Request into a Responses Request.
 //
 // Dropped: n, stop, response_format, frequency_penalty, presence_penalty,

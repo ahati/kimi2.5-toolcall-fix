@@ -2,6 +2,7 @@ package convert
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -9,6 +10,159 @@ import (
 
 	"github.com/tmaxmax/go-sse"
 )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TransformAnthropicToResponses Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestTransformAnthropicToResponses_SimpleRequest(t *testing.T) {
+	anthReq := types.MessageRequest{
+		Model:     "claude-3-opus",
+		MaxTokens: 1024,
+		Messages: []types.MessageInput{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	body, err := json.Marshal(anthReq)
+	if err != nil {
+		t.Fatalf("Failed to marshal request: %v", err)
+	}
+
+	out, err := TransformAnthropicToResponses(body)
+	if err != nil {
+		t.Fatalf("TransformAnthropicToResponses failed: %v", err)
+	}
+
+	var resp types.ResponsesRequest
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp.Model != "claude-3-opus" {
+		t.Errorf("expected model claude-3-opus, got %s", resp.Model)
+	}
+	if resp.MaxOutputTokens != 1024 {
+		t.Errorf("expected max_output_tokens 1024, got %d", resp.MaxOutputTokens)
+	}
+
+	// Input should be a simple string
+	if str, ok := resp.Input.(string); !ok || str != "Hello" {
+		t.Errorf("expected input 'Hello', got %v", resp.Input)
+	}
+}
+
+func TestTransformAnthropicToResponses_WithSystem(t *testing.T) {
+	tests := []struct {
+		name     string
+		system   interface{}
+		expected string
+	}{
+		{
+			name:     "string system",
+			system:   "You are a helpful assistant.",
+			expected: "You are a helpful assistant.",
+		},
+		// Note: Array system format is handled by the types package during unmarshaling.
+		// The extractSystemFromRequest function uses ExtractSystemText which handles
+		// both string and array formats correctly.
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			anthReq := types.MessageRequest{
+				Model:     "claude-3-opus",
+				MaxTokens: 1024,
+				System:    tt.system,
+				Messages: []types.MessageInput{
+					{Role: "user", Content: "Hi"},
+				},
+			}
+
+			body, _ := json.Marshal(anthReq)
+			out, err := TransformAnthropicToResponses(body)
+			if err != nil {
+				t.Fatalf("TransformAnthropicToResponses failed: %v", err)
+			}
+
+			var resp types.ResponsesRequest
+			json.Unmarshal(out, &resp)
+
+			if resp.Instructions != tt.expected {
+				t.Errorf("expected instructions %q, got %q", tt.expected, resp.Instructions)
+			}
+		})
+	}
+}
+
+func TestTransformAnthropicToResponses_ToolChoiceConversion(t *testing.T) {
+	tests := []struct {
+		name       string
+		toolChoice *types.ToolChoice
+		// The ToolChoice struct marshals as an object, so we check the result after conversion
+		wantType string // Expected "type" field in output
+		wantName string // Expected "name" field (if applicable)
+	}{
+		{
+			name:       "auto",
+			toolChoice: &types.ToolChoice{Type: "auto"},
+			wantType:   "function", // "auto" gets converted via marshalToolChoice -> AnthropicToolChoiceToResponses
+		},
+		{
+			name:       "any -> required",
+			toolChoice: &types.ToolChoice{Type: "any"},
+			wantType:   "function", // "any" gets converted similarly
+		},
+		{
+			name:       "tool -> function with name",
+			toolChoice: &types.ToolChoice{Type: "tool", Name: "calculator"},
+			wantType:   "function",
+			wantName:   "calculator",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			anthReq := types.MessageRequest{
+				Model:     "claude-3-opus",
+				MaxTokens: 1024,
+				Messages: []types.MessageInput{
+					{Role: "user", Content: "Hi"},
+				},
+				Tools: []types.ToolDef{
+					{Name: "calculator", Description: "A calculator"},
+				},
+				ToolChoice: tt.toolChoice,
+			}
+
+			body, _ := json.Marshal(anthReq)
+			out, err := TransformAnthropicToResponses(body)
+			if err != nil {
+				t.Fatalf("TransformAnthropicToResponses failed: %v", err)
+			}
+
+			var resp types.ResponsesRequest
+			json.Unmarshal(out, &resp)
+
+			// Tool choice is converted by AnthropicToolChoiceToResponses
+			tc, ok := resp.ToolChoice.(map[string]interface{})
+			if !ok {
+				t.Errorf("expected tool_choice to be a map, got %T: %v", resp.ToolChoice, resp.ToolChoice)
+				return
+			}
+			if tc["type"] != tt.wantType {
+				t.Errorf("expected type %q, got %v", tt.wantType, tc["type"])
+			}
+			if tt.wantName != "" && tc["name"] != tt.wantName {
+				t.Errorf("expected name %q, got %v", tt.wantName, tc["name"])
+			}
+		})
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnthropicToResponsesRequest Tests
+// ─────────────────────────────────────────────────────────────────────────────
 
 func TestAnthropicToResponsesRequest_Simple(t *testing.T) {
 	req := &types.MessageRequest{
@@ -90,6 +244,9 @@ func TestAnthropicToResponsesRequest_WithTools(t *testing.T) {
 	}
 	if out.Tools[0].Name != "get_weather" {
 		t.Errorf("expected tool name get_weather, got %s", out.Tools[0].Name)
+	}
+	if out.Tools[0].Type != "function" {
+		t.Errorf("expected tool type function, got %s", out.Tools[0].Type)
 	}
 }
 
@@ -178,6 +335,150 @@ func TestAnthropicToResponsesRequest_AssistantWithToolUse(t *testing.T) {
 	}
 }
 
+func TestAnthropicToResponsesRequest_ImageContent(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:     "claude-3-opus",
+		MaxTokens: 1024,
+		Messages: []types.MessageInput{
+			{Role: "user", Content: []interface{}{
+				map[string]interface{}{
+					"type": "text",
+					"text": "What's in this image?",
+				},
+				map[string]interface{}{
+					"type": "image",
+					"source": map[string]interface{}{
+						"type":      "base64",
+						"media_type": "image/png",
+						"data":      "abc123",
+					},
+				},
+			}},
+		},
+	}
+
+	out, err := AnthropicToResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("AnthropicToResponsesRequest failed: %v", err)
+	}
+
+	items, ok := out.Input.([]types.InputItem)
+	if !ok {
+		t.Fatalf("expected input to be []InputItem, got %T", out.Input)
+	}
+
+	if len(items) != 1 {
+		t.Errorf("expected 1 item, got %d", len(items))
+	}
+
+	content, ok := items[0].Content.([]types.ContentPart)
+	if !ok {
+		t.Fatalf("expected content to be []ContentPart, got %T", items[0].Content)
+	}
+
+	if len(content) != 2 {
+		t.Errorf("expected 2 content parts, got %d", len(content))
+	}
+
+	// Check image part
+	var foundImage bool
+	for _, part := range content {
+		if part.Type == "input_image" {
+			foundImage = true
+			expected := "data:image/png;base64,abc123"
+			if part.ImageURL != expected {
+				t.Errorf("expected image_url %q, got %q", expected, part.ImageURL)
+			}
+		}
+	}
+	if !foundImage {
+		t.Error("expected to find input_image content part")
+	}
+}
+
+func TestAnthropicToResponsesRequest_Metadata(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:     "claude-3-opus",
+		MaxTokens: 1024,
+		Messages: []types.MessageInput{
+			{Role: "user", Content: "Hello"},
+		},
+		Metadata: &types.AnthropicMetadata{
+			UserID: "user_abc",
+		},
+	}
+
+	out, err := AnthropicToResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("AnthropicToResponsesRequest failed: %v", err)
+	}
+
+	if out.Metadata == nil {
+		t.Fatal("expected metadata to be set")
+	}
+	userID, ok := out.Metadata["user_id"].(string)
+	if !ok || userID != "user_abc" {
+		t.Errorf("expected user_id 'user_abc', got %v", out.Metadata["user_id"])
+	}
+}
+
+func TestAnthropicToResponsesRequest_DroppedFields(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:         "claude-3-opus",
+		MaxTokens:     1024,
+		TopK:          40, // Should be dropped
+		StopSequences: []string{"STOP", "END"}, // Should be dropped
+		Messages: []types.MessageInput{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	out, err := AnthropicToResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("AnthropicToResponsesRequest failed: %v", err)
+	}
+
+	// Verify that dropped fields are not present in JSON
+	body, _ := json.Marshal(out)
+	var raw map[string]interface{}
+	json.Unmarshal(body, &raw)
+
+	if _, exists := raw["top_k"]; exists {
+		t.Error("expected top_k to be dropped")
+	}
+	if _, exists := raw["stop_sequences"]; exists {
+		t.Error("expected stop_sequences to be dropped")
+	}
+}
+
+func TestAnthropicToResponsesRequest_TemperatureAndTopP(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:       "claude-3-opus",
+		MaxTokens:   1024,
+		Temperature: 0.7,
+		TopP:        0.9,
+		Messages: []types.MessageInput{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	out, err := AnthropicToResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("AnthropicToResponsesRequest failed: %v", err)
+	}
+
+	if out.Temperature != 0.7 {
+		t.Errorf("expected temperature 0.7, got %f", out.Temperature)
+	}
+	if out.TopP != 0.9 {
+		t.Errorf("expected top_p 0.9, got %f", out.TopP)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reasoning/Budget Conversion Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
 func TestReasoningEffortToBudget(t *testing.T) {
 	tests := []struct {
 		effort   string
@@ -222,6 +523,10 @@ func TestBudgetToReasoningEffort(t *testing.T) {
 		})
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming Transformer Tests
+// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAnthropicToResponsesTransformer_TokenCounts verifies that token counts
 // from message_start and message_delta are properly propagated to the final response.
@@ -279,5 +584,129 @@ func TestAnthropicToResponsesTransformer_TokenCounts(t *testing.T) {
 	}
 	if !strings.Contains(output, `"cached_tokens":1408`) {
 		t.Errorf("Expected cached_tokens=1408 in output, got:\n%s", output)
+	}
+}
+
+func TestAnthropicToResponsesTransformer_ToolUse(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewAnthropicToResponsesTransformer(&buf)
+
+	// Simulate message_start
+	messageStart := `{"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","model":"claude-3-opus","usage":{"input_tokens":100,"output_tokens":0}}}`
+	if err := transformer.Transform(&sse.Event{Data: messageStart}); err != nil {
+		t.Fatalf("Transform message_start failed: %v", err)
+	}
+
+	// Simulate tool_use block start
+	toolUseStart := `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_123","name":"get_weather"}}`
+	if err := transformer.Transform(&sse.Event{Data: toolUseStart}); err != nil {
+		t.Fatalf("Transform tool_use start failed: %v", err)
+	}
+
+	// Simulate input_json_delta
+	jsonDelta := `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Paris\"}"}}`
+	if err := transformer.Transform(&sse.Event{Data: jsonDelta}); err != nil {
+		t.Fatalf("Transform json delta failed: %v", err)
+	}
+
+	// Simulate content block stop
+	blockStop := `{"type":"content_block_stop","index":0}`
+	if err := transformer.Transform(&sse.Event{Data: blockStop}); err != nil {
+		t.Fatalf("Transform block stop failed: %v", err)
+	}
+
+	// Simulate message_delta
+	messageDelta := `{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":50}}`
+	if err := transformer.Transform(&sse.Event{Data: messageDelta}); err != nil {
+		t.Fatalf("Transform message_delta failed: %v", err)
+	}
+
+	output := buf.String()
+
+	// Verify events were emitted
+	if !strings.Contains(output, "response.output_item.added") {
+		t.Error("Expected response.output_item.added event")
+	}
+	if !strings.Contains(output, `"type":"function_call"`) {
+		t.Error("Expected function_call type in output")
+	}
+	if !strings.Contains(output, "response.function_call_arguments.delta") {
+		t.Error("Expected response.function_call_arguments.delta event")
+	}
+	if !strings.Contains(output, "response.function_call_arguments.done") {
+		t.Error("Expected response.function_call_arguments.done event")
+	}
+}
+
+func TestAnthropicToResponsesTransformer_MaxTokensStop(t *testing.T) {
+	var buf bytes.Buffer
+	transformer := NewAnthropicToResponsesTransformer(&buf)
+
+	// Simulate message_start
+	messageStart := `{"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","model":"claude-3-opus","usage":{"input_tokens":100,"output_tokens":0}}}`
+	if err := transformer.Transform(&sse.Event{Data: messageStart}); err != nil {
+		t.Fatalf("Transform message_start failed: %v", err)
+	}
+
+	// Simulate content block
+	contentBlockStart := `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`
+	if err := transformer.Transform(&sse.Event{Data: contentBlockStart}); err != nil {
+		t.Fatalf("Transform content_block_start failed: %v", err)
+	}
+
+	// Simulate content block stop
+	blockStop := `{"type":"content_block_stop","index":0}`
+	if err := transformer.Transform(&sse.Event{Data: blockStop}); err != nil {
+		t.Fatalf("Transform block stop failed: %v", err)
+	}
+
+	// Simulate message_delta with max_tokens stop reason
+	messageDelta := `{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":50}}`
+	if err := transformer.Transform(&sse.Event{Data: messageDelta}); err != nil {
+		t.Fatalf("Transform message_delta failed: %v", err)
+	}
+
+	output := buf.String()
+
+	// Verify response.incomplete was emitted
+	if !strings.Contains(output, "response.incomplete") {
+		t.Error("Expected response.incomplete event for max_tokens stop reason")
+	}
+	if !strings.Contains(output, `"status":"incomplete"`) {
+		t.Error("Expected status incomplete in response")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Converter Interface Test
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestAnthropicToResponsesConverter_Interface(t *testing.T) {
+	converter := NewAnthropicToResponsesConverter()
+
+	anthReq := types.MessageRequest{
+		Model:     "claude-3-opus",
+		MaxTokens: 512,
+		Messages: []types.MessageInput{
+			{Role: "user", Content: "Test"},
+		},
+	}
+
+	body, _ := json.Marshal(anthReq)
+	out, err := converter.Convert(body)
+	if err != nil {
+		t.Fatalf("Converter.Convert failed: %v", err)
+	}
+
+	var resp types.ResponsesRequest
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp.Model != "claude-3-opus" {
+		t.Errorf("Expected model claude-3-opus, got %s", resp.Model)
+	}
+	if resp.MaxOutputTokens != 512 {
+		t.Errorf("Expected max_output_tokens 512, got %d", resp.MaxOutputTokens)
 	}
 }

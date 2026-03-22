@@ -139,6 +139,13 @@ func (h *CompletionsHandler) TransformRequest(body []byte) ([]byte, error) {
 		}
 
 		return json.Marshal(req)
+	case "responses":
+		// Convert Chat Completions to Responses API format
+		updatedBody, err := json.Marshal(req)
+		if err != nil {
+			return nil, err
+		}
+		return convert.TransformChatToResponses(updatedBody)
 	default:
 		// Unknown protocol - pass through as-is
 		return json.Marshal(req)
@@ -223,6 +230,9 @@ func (h *CompletionsHandler) CreateTransformer(w io.Writer) transform.SSETransfo
 			return toolcall.NewOpenAITransformer(w)
 		}
 		return transform.NewPassthroughTransformer(w)
+	case "responses":
+		// Convert Responses SSE back to Chat Completions format
+		return convert.NewChatToResponsesTransformer(w)
 	default:
 		return transform.NewPassthroughTransformer(w)
 	}

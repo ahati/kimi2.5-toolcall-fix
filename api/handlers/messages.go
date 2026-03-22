@@ -144,6 +144,9 @@ func (h *MessagesHandler) TransformRequest(body []byte) ([]byte, error) {
 	case "anthropic":
 		// Pass through without transformation
 		return updatedBody, nil
+	case "responses":
+		// Convert Anthropic Messages to Responses API format
+		return convert.TransformAnthropicToResponses(updatedBody)
 	default:
 		// Unknown protocol - pass through as-is
 		return updatedBody, nil
@@ -203,6 +206,9 @@ func (h *MessagesHandler) ForwardHeaders(c *gin.Context, req *http.Request) {
 				req.Header[k] = v
 			}
 		}
+	case "responses":
+		// Forward custom headers for Responses API
+		forwardCustomHeaders(c, req, "X-")
 	default:
 		// Forward X-* headers by default
 		forwardCustomHeaders(c, req, "X-")
@@ -237,6 +243,10 @@ func (h *MessagesHandler) CreateTransformer(w io.Writer) transform.SSETransforme
 		if h.route.ToolCallTransform {
 			return toolcall.NewAnthropicTransformer(w)
 		}
+		return transform.NewPassthroughTransformer(w)
+	case "responses":
+		// Convert OpenAI Responses SSE back to Anthropic format
+		// For now, use passthrough since Responses API output doesn't need conversion back
 		return transform.NewPassthroughTransformer(w)
 	default:
 		return transform.NewPassthroughTransformer(w)

@@ -1293,3 +1293,481 @@ func TestChatToResponsesTransformer_ReasoningDetails(t *testing.T) {
 		}
 	})
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Request Transformation Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestTransformChatToResponses tests the request transformation function.
+func TestTransformChatToResponses(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantErr  bool
+		validate func(t *testing.T, output []byte)
+	}{
+		{
+			name: "simple user message",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [
+					{"role": "user", "content": "Hello, world!"}
+				]
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.Model != "gpt-4o" {
+					t.Errorf("Expected model gpt-4o, got %s", req.Model)
+				}
+				// Single user message should be returned as string
+				if str, ok := req.Input.(string); !ok || str != "Hello, world!" {
+					t.Errorf("Expected input string 'Hello, world!', got %v", req.Input)
+				}
+			},
+		},
+		{
+			name: "system message becomes instructions",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [
+					{"role": "system", "content": "You are helpful."},
+					{"role": "user", "content": "Hi"}
+				]
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.Instructions != "You are helpful." {
+					t.Errorf("Expected instructions 'You are helpful.', got %q", req.Instructions)
+				}
+			},
+		},
+		{
+			name: "multiple system messages joined with double newline",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [
+					{"role": "system", "content": "You are helpful."},
+					{"role": "system", "content": "Be concise."},
+					{"role": "user", "content": "Hi"}
+				]
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				expected := "You are helpful.\n\nBe concise."
+				if req.Instructions != expected {
+					t.Errorf("Expected instructions %q, got %q", expected, req.Instructions)
+				}
+			},
+		},
+		{
+			name: "max_tokens becomes max_output_tokens",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [{"role": "user", "content": "Hi"}],
+				"max_tokens": 1000
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.MaxOutputTokens != 1000 {
+					t.Errorf("Expected max_output_tokens 1000, got %d", req.MaxOutputTokens)
+				}
+			},
+		},
+		{
+			name: "user field becomes metadata.user_id",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [{"role": "user", "content": "Hi"}],
+				"user": "user_123"
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.Metadata == nil {
+					t.Fatal("Expected metadata to be set")
+				}
+				if userID, ok := req.Metadata["user_id"].(string); !ok || userID != "user_123" {
+					t.Errorf("Expected metadata.user_id 'user_123', got %v", req.Metadata)
+				}
+			},
+		},
+		{
+			name: "tools conversion",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [{"role": "user", "content": "Hi"}],
+				"tools": [
+					{
+						"type": "function",
+						"function": {
+							"name": "get_weather",
+							"description": "Get weather",
+							"parameters": {"type": "object"}
+						}
+					}
+				]
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if len(req.Tools) != 1 {
+					t.Fatalf("Expected 1 tool, got %d", len(req.Tools))
+				}
+				if req.Tools[0].Type != "function" {
+					t.Errorf("Expected tool type 'function', got %s", req.Tools[0].Type)
+				}
+				if req.Tools[0].Name != "get_weather" {
+					t.Errorf("Expected tool name 'get_weather', got %s", req.Tools[0].Name)
+				}
+				if req.Tools[0].Description != "Get weather" {
+					t.Errorf("Expected tool description 'Get weather', got %s", req.Tools[0].Description)
+				}
+			},
+		},
+		{
+			name: "tool_choice string passes through",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [{"role": "user", "content": "Hi"}],
+				"tool_choice": "required"
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.ToolChoice != "required" {
+					t.Errorf("Expected tool_choice 'required', got %v", req.ToolChoice)
+				}
+			},
+		},
+		{
+			name: "tool_choice object flattens function wrapper",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [{"role": "user", "content": "Hi"}],
+				"tool_choice": {"type": "function", "function": {"name": "get_weather"}}
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				choice, ok := req.ToolChoice.(map[string]interface{})
+				if !ok {
+					t.Fatalf("Expected tool_choice to be an object, got %T", req.ToolChoice)
+				}
+				if choice["type"] != "function" {
+					t.Errorf("Expected tool_choice type 'function', got %v", choice["type"])
+				}
+				if choice["name"] != "get_weather" {
+					t.Errorf("Expected tool_choice name 'get_weather', got %v", choice["name"])
+				}
+			},
+		},
+		{
+			name: "assistant message with text and tool_calls",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [
+					{"role": "user", "content": "Hi"},
+					{"role": "assistant", "content": "Let me check.", "tool_calls": [
+						{"id": "call_123", "type": "function", "function": {"name": "search", "arguments": "{\"q\":\"test\"}"}}
+					]}
+				]
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				// When unmarshaling JSON into interface{}, we get []interface{} not []InputItem
+				itemsRaw, ok := req.Input.([]interface{})
+				if !ok {
+					t.Fatalf("Expected input to be []interface{}, got %T", req.Input)
+				}
+				// Convert to []InputItem for easier testing
+				items := make([]types.InputItem, len(itemsRaw))
+				for i, item := range itemsRaw {
+					data, err := json.Marshal(item)
+					if err != nil {
+						t.Fatalf("Failed to remarshal item %d: %v", i, err)
+					}
+					if err := json.Unmarshal(data, &items[i]); err != nil {
+						t.Fatalf("Failed to unmarshal item %d: %v", i, err)
+					}
+				}
+				// Should have: user message, assistant message, function_call
+				if len(items) != 3 {
+					t.Errorf("Expected 3 input items, got %d", len(items))
+					return
+				}
+				// Check assistant message
+				if items[1].Type != "message" || items[1].Role != "assistant" {
+					t.Errorf("Expected item 1 to be assistant message, got type=%s role=%s", items[1].Type, items[1].Role)
+				}
+				// Check function_call
+				if items[2].Type != "function_call" {
+					t.Errorf("Expected item 2 to be function_call, got %s", items[2].Type)
+				}
+				if items[2].CallID != "call_123" {
+					t.Errorf("Expected call_id 'call_123', got %s", items[2].CallID)
+				}
+				if items[2].Name != "search" {
+					t.Errorf("Expected function name 'search', got %s", items[2].Name)
+				}
+				if items[2].Arguments != `{"q":"test"}` {
+					t.Errorf("Expected arguments, got %s", items[2].Arguments)
+				}
+			},
+		},
+		{
+			name: "tool message becomes function_call_output",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [
+					{"role": "user", "content": "Hi"},
+					{"role": "tool", "tool_call_id": "call_123", "content": "Result here"}
+				]
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				// When unmarshaling JSON into interface{}, we get []interface{} not []InputItem
+				itemsRaw, ok := req.Input.([]interface{})
+				if !ok {
+					t.Fatalf("Expected input to be []interface{}, got %T", req.Input)
+				}
+				// Convert to []InputItem for easier testing
+				items := make([]types.InputItem, len(itemsRaw))
+				for i, item := range itemsRaw {
+					data, err := json.Marshal(item)
+					if err != nil {
+						t.Fatalf("Failed to remarshal item %d: %v", i, err)
+					}
+					if err := json.Unmarshal(data, &items[i]); err != nil {
+						t.Fatalf("Failed to unmarshal item %d: %v", i, err)
+					}
+				}
+				// Should have: user message, function_call_output
+				if len(items) != 2 {
+					t.Errorf("Expected 2 input items, got %d", len(items))
+					return
+				}
+				// Check function_call_output
+				if items[1].Type != "function_call_output" {
+					t.Errorf("Expected item 1 to be function_call_output, got %s", items[1].Type)
+				}
+				if items[1].CallID != "call_123" {
+					t.Errorf("Expected call_id 'call_123', got %s", items[1].CallID)
+				}
+				if items[1].Output != "Result here" {
+					t.Errorf("Expected output 'Result here', got %s", items[1].Output)
+				}
+			},
+		},
+		{
+			name: "temperature and top_p pass through",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [{"role": "user", "content": "Hi"}],
+				"temperature": 0.7,
+				"top_p": 0.9
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if req.Temperature != 0.7 {
+					t.Errorf("Expected temperature 0.7, got %f", req.Temperature)
+				}
+				if req.TopP != 0.9 {
+					t.Errorf("Expected top_p 0.9, got %f", req.TopP)
+				}
+			},
+		},
+		{
+			name: "stream flag passes through",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [{"role": "user", "content": "Hi"}],
+				"stream": true
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				if !req.Stream {
+					t.Error("Expected stream to be true")
+				}
+			},
+		},
+		{
+			name: "user message with image_url content",
+			input: `{
+				"model": "gpt-4o",
+				"messages": [
+					{
+						"role": "user",
+						"content": [
+							{"type": "text", "text": "What is this?"},
+							{"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}
+						]
+					}
+				]
+			}`,
+			wantErr: false,
+			validate: func(t *testing.T, output []byte) {
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(output, &req); err != nil {
+					t.Fatalf("Failed to parse output: %v", err)
+				}
+				// When unmarshaling JSON into interface{}, we get []interface{} not []InputItem
+				itemsRaw, ok := req.Input.([]interface{})
+				if !ok {
+					t.Fatalf("Expected input to be []interface{}, got %T", req.Input)
+				}
+				// Convert to []InputItem for easier testing
+				items := make([]types.InputItem, len(itemsRaw))
+				for i, item := range itemsRaw {
+					data, err := json.Marshal(item)
+					if err != nil {
+						t.Fatalf("Failed to remarshal item %d: %v", i, err)
+					}
+					if err := json.Unmarshal(data, &items[i]); err != nil {
+						t.Fatalf("Failed to unmarshal item %d: %v", i, err)
+					}
+				}
+				if len(items) != 1 {
+					t.Errorf("Expected 1 input item, got %d", len(items))
+					return
+				}
+				if items[0].Type != "message" || items[0].Role != "user" {
+					t.Errorf("Expected user message, got type=%s role=%s", items[0].Type, items[0].Role)
+				}
+				// Content should be converted - same approach as Input
+				contentRaw, ok := items[0].Content.([]interface{})
+				if !ok {
+					t.Fatalf("Expected content to be []interface{}, got %T", items[0].Content)
+				}
+				content := make([]types.ContentPart, len(contentRaw))
+				for i, part := range contentRaw {
+					data, err := json.Marshal(part)
+					if err != nil {
+						t.Fatalf("Failed to remarshal content part %d: %v", i, err)
+					}
+					if err := json.Unmarshal(data, &content[i]); err != nil {
+						t.Fatalf("Failed to unmarshal content part %d: %v", i, err)
+					}
+				}
+				if len(content) != 2 {
+					t.Errorf("Expected 2 content parts, got %d", len(content))
+				}
+				// First should be input_text
+				if content[0].Type != "input_text" {
+					t.Errorf("Expected first part type 'input_text', got %s", content[0].Type)
+				}
+				// Second should be input_image
+				if content[1].Type != "input_image" {
+					t.Errorf("Expected second part type 'input_image', got %s", content[1].Type)
+				}
+				if content[1].ImageURL != "https://example.com/image.png" {
+					t.Errorf("Expected image URL, got %s", content[1].ImageURL)
+				}
+			},
+		},
+		{
+			name:    "invalid JSON returns error",
+			input:   `{invalid json}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := TransformChatToResponses([]byte(tt.input))
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if tt.validate != nil {
+				tt.validate(t, output)
+			}
+		})
+	}
+}
+
+// TestChatToResponsesConverter_Convert tests the converter interface.
+func TestChatToResponsesConverter_Convert(t *testing.T) {
+	converter := NewChatToResponsesConverter()
+
+	input := `{
+		"model": "gpt-4o",
+		"messages": [
+			{"role": "system", "content": "Be helpful."},
+			{"role": "user", "content": "Hello"}
+		],
+		"max_tokens": 500
+	}`
+
+	output, err := converter.Convert([]byte(input))
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+
+	var req types.ResponsesRequest
+	if err := json.Unmarshal(output, &req); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if req.Model != "gpt-4o" {
+		t.Errorf("Expected model gpt-4o, got %s", req.Model)
+	}
+	if req.Instructions != "Be helpful." {
+		t.Errorf("Expected instructions 'Be helpful.', got %q", req.Instructions)
+	}
+	if req.MaxOutputTokens != 500 {
+		t.Errorf("Expected max_output_tokens 500, got %d", req.MaxOutputTokens)
+	}
+}
