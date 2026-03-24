@@ -50,10 +50,14 @@ func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
 	if maxTokens == 0 {
 		maxTokens = defaultAnthropicMaxTokens
 	}
+	stream := true
+	if openReq.Stream != nil {
+		stream = *openReq.Stream
+	}
 	anthReq := types.MessageRequest{
 		Model:       openReq.Model,
 		MaxTokens:   maxTokens,
-		Stream:      openReq.Stream,
+		Stream:      stream,
 		Temperature: ClampTemperatureToAnthropic(openReq.Temperature),
 		TopP:        openReq.TopP,
 	}

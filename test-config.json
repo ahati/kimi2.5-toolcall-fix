@@ -33,56 +33,56 @@
       "provider": "chutes",
       "model": "moonshotai/Kimi-K2.5-TEE",
       "type": "auto",
-      "tool_call_transform": true
+      "kimi_tool_call_transform": true
     },
-    "zai-org/GLM-5-TEE": {
-      "provider": "chutes",
-      "model": "zai-org/GLM-5-TEE",
+    "glm-5": {
+      "provider": "alibaba",
+      "model": "glm-5",
       "type": "auto",
-      "tool_call_transform": false
+      "glm5_tool_call_transform": true
     },
     "kimi-k2.5": {
       "provider": "alibaba",
       "model": "kimi-k2.5",
       "type": "anthropic",
-      "tool_call_transform": true
+      "kimi_tool_call_transform": true
     },
     "gpt-5.4": {
       "provider": "alibaba",
       "model": "glm-5",
-      "tool_call_transform": false
+      "kimi_tool_call_transform": false
     },
     "gpt-5.3-codex": {
       "provider": "alibaba",
       "model": "glm-5",
-      "tool_call_transform": false
+      "glm5_tool_call_transform": true
     },
     "gpt-5.1-codex-mini": {
       "provider": "minimax",
       "model": "MiniMax-M2.7",
       "type": "auto",
-      "tool_call_transform": false,
+      "kimi_tool_call_transform": false,
       "reasoning_split": true
     },
     "gpt-5-mini": {
       "provider": "minimax",
       "model": "MiniMax-M2.7",
       "type": "auto",
-      "tool_call_transform": false,
+      "kimi_tool_call_transform": false,
       "reasoning_split": true
     },
     "MiniMax-M2.7": {
       "provider": "minimax",
       "model": "MiniMax-M2.7",
       "type": "auto",
-      "tool_call_transform": false,
+      "kimi_tool_call_transform": false,
       "reasoning_split": true
     },
     "qwen3-max": {
       "provider": "alibaba",
       "model": "qwen3-max-2026-01-23",
       "type": "auto",
-      "tool_call_transform": false
+      "kimi_tool_call_transform": false
     }
   },
   "fallback": {
@@ -90,6 +90,6 @@
     "provider": "alibaba",
     "model": "{model}",
     "type": "auto",
-    "tool_call_transform": false
+    "kimi_tool_call_transform": false
   }
 }

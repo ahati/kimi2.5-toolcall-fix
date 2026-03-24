@@ -30,7 +30,7 @@ func TestLoaderLoad(t *testing.T) {
 				"gpt-4": {
 					"provider": "openai-main",
 					"model": "gpt-4-turbo",
-					"tool_call_transform": true
+					"kimi_tool_call_transform": true
 				}
 			},
 			"fallback": {
@@ -115,7 +115,7 @@ func TestLoaderLoad(t *testing.T) {
 				"enabled": true,
 				"provider": "fallback-provider",
 				"model": "claude-3-opus",
-				"tool_call_transform": false
+				"kimi_tool_call_transform": false
 			}
 		}`
 
@@ -686,19 +686,19 @@ func TestLoaderValidateIntegration(t *testing.T) {
 				"gpt-4": {
 					"provider": "openai-main",
 					"model": "gpt-4-turbo",
-					"tool_call_transform": true
+					"kimi_tool_call_transform": true
 				},
 				"claude-3": {
 					"provider": "anthropic-main",
 					"model": "claude-3-opus-20240229",
-					"tool_call_transform": false
+					"kimi_tool_call_transform": false
 				}
 			},
 			"fallback": {
 				"enabled": true,
 				"provider": "openai-main",
 				"model": "gpt-3.5-turbo",
-				"tool_call_transform": false
+				"kimi_tool_call_transform": false
 			}
 		}`
 
@@ -1053,19 +1053,19 @@ func BenchmarkLoaderLoad(b *testing.B) {
 			"gpt-4": {
 				"provider": "openai-main",
 				"model": "gpt-4-turbo",
-				"tool_call_transform": true
+				"kimi_tool_call_transform": true
 			},
 			"claude-3": {
 				"provider": "anthropic-main",
 				"model": "claude-3-opus-20240229",
-				"tool_call_transform": false
+				"kimi_tool_call_transform": false
 			}
 		},
 		"fallback": {
 			"enabled": true,
 			"provider": "openai-main",
 			"model": "gpt-3.5-turbo",
-			"tool_call_transform": false
+			"kimi_tool_call_transform": false
 		}
 	}`
 
@@ -1099,7 +1099,7 @@ func TestLoaderJSONUnmarshalErrorWrapping(t *testing.T) {
 			"test": {
 				"provider": "test",
 				"model": "test-model",
-				"tool_call_transform": "not-a-bool"
+				"kimi_tool_call_transform": "not-a-bool"
 			}
 		},
 		"fallback": {"enabled": false}

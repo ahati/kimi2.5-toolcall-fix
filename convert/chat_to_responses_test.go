@@ -1017,7 +1017,7 @@ func TestChatToResponsesTransformer_ToolCallsInReasoning(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			transformer := NewChatToResponsesTransformer(&buf)
-			transformer.SetToolCallTransform(tt.toolCallTransform)
+			transformer.SetKimiToolCallTransform(tt.toolCallTransform)
 
 			for _, chunk := range tt.chunks {
 				data, _ := json.Marshal(chunk)
@@ -1629,7 +1629,7 @@ func TestTransformChatToResponses(t *testing.T) {
 				if err := json.Unmarshal(output, &req); err != nil {
 					t.Fatalf("Failed to parse output: %v", err)
 				}
-				if !req.Stream {
+				if req.Stream == nil || !*req.Stream {
 					t.Error("Expected stream to be true")
 				}
 			},

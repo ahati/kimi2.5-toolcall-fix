@@ -537,6 +537,25 @@ func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.Ca
 			}
 		}
 	}
+
+	// Extract and log token usage from captured chunks
+	// This provides a compact summary of request costs in a powerline-style format
+	upstreamUsage := capture.ExtractTokenUsageFromChunks(upstream.Chunks())
+	downstreamUsage := capture.ExtractTokenUsageFromChunks(downstream.Chunks())
+
+	// Compact one-line log with emojis:
+	// 📤 = upstream (to LLM), 📥 = downstream (to client)
+	// ⬆️ = input tokens, ⬇️ = output tokens, 💾 = cache tokens
+	logging.InfoMsg("|📤 ⬆️ %d ⬇️ %d 💾 %d|  |📥 ⬆️ %d ⬇️ %d 💾 %d| [%s] [%s]",
+		upstreamUsage.InputTokens,
+		upstreamUsage.OutputTokens,
+		upstreamUsage.CacheReadTokens+upstreamUsage.CacheCreationTokens,
+		downstreamUsage.InputTokens,
+		downstreamUsage.OutputTokens,
+		downstreamUsage.CacheReadTokens+downstreamUsage.CacheCreationTokens,
+		cc.SessionID,
+		cc.RequestID,
+	)
 }
 
 // handleUpstreamError processes an error response from the upstream API

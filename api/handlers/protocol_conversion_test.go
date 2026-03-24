@@ -836,11 +836,11 @@ func TestMessagesHandler_CreateTransformer_MultiProtocol(t *testing.T) {
 			handler := &MessagesHandler{
 				cfg: &config.Config{},
 				route: &router.ResolvedRoute{
-					Provider:          provider,
-					Model:             "test-model",
-					OutputProtocol:    tt.outputProtocol,
-					IsPassthrough:     tt.isPassthrough,
-					ToolCallTransform: false,
+					Provider:              provider,
+					Model:                 "test-model",
+					OutputProtocol:        tt.outputProtocol,
+					IsPassthrough:         tt.isPassthrough,
+					KimiToolCallTransform: false,
 				},
 			}
 

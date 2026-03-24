@@ -424,10 +424,10 @@ func TestCrossProtocol_MultiModalOrdering(t *testing.T) {
 // Note: The MessagesHandler -> Chat Completions path does not currently convert stop_sequences to stop.
 func TestCrossProtocol_StopSequenceHandling(t *testing.T) {
 	tests := []struct {
-		name            string
-		outputProto     string
-		request         string
-		handler         interface {
+		name        string
+		outputProto string
+		request     string
+		handler     interface {
 			TransformRequest(body []byte) ([]byte, error)
 		}
 		expectStopField bool
@@ -525,10 +525,10 @@ func TestCrossProtocol_StopSequenceHandling(t *testing.T) {
 // Note: Temperature 0 is treated as "not set" and omitted from the output.
 func TestCrossProtocol_TemperatureClamping(t *testing.T) {
 	tests := []struct {
-		name           string
-		inputTemp      float64
-		expectedTemp   float64 // -1 means "not set" (omitted from output)
-		outputProto    string
+		name         string
+		inputTemp    float64
+		expectedTemp float64 // -1 means "not set" (omitted from output)
+		outputProto  string
 	}{
 		{
 			name:         "Temperature 0.5 passes through",

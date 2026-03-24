@@ -109,19 +109,19 @@ func TestSchemaJSONUnmarshal(t *testing.T) {
 			"gpt-4": {
 				"provider": "openai-main",
 				"model": "gpt-4-turbo",
-				"tool_call_transform": true
+				"kimi_tool_call_transform": true
 			},
 			"claude-3": {
 				"provider": "anthropic-main",
 				"model": "claude-3-opus-20240229",
-				"tool_call_transform": false
+				"kimi_tool_call_transform": false
 			}
 		},
 		"fallback": {
 			"enabled": true,
 			"provider": "openai-main",
 			"model": "gpt-3.5-turbo",
-			"tool_call_transform": true
+			"kimi_tool_call_transform": true
 		}
 	}`
 
@@ -164,8 +164,8 @@ func TestSchemaJSONUnmarshal(t *testing.T) {
 		if gpt4Config.Model != "gpt-4-turbo" {
 			t.Errorf("Expected model 'gpt-4-turbo', got %q", gpt4Config.Model)
 		}
-		if !gpt4Config.ToolCallTransform {
-			t.Error("Expected ToolCallTransform to be true")
+		if !gpt4Config.KimiToolCallTransform {
+			t.Error("Expected KimiToolCallTransform to be true")
 		}
 	}
 
@@ -176,8 +176,8 @@ func TestSchemaJSONUnmarshal(t *testing.T) {
 		if claudeConfig.Provider != "anthropic-main" {
 			t.Errorf("Expected model provider 'anthropic-main', got %q", claudeConfig.Provider)
 		}
-		if claudeConfig.ToolCallTransform {
-			t.Error("Expected ToolCallTransform to be false")
+		if claudeConfig.KimiToolCallTransform {
+			t.Error("Expected KimiToolCallTransform to be false")
 		}
 	}
 
@@ -200,7 +200,7 @@ func TestSchemaJSONUnmarshalMinimal(t *testing.T) {
 			"enabled": false,
 			"provider": "",
 			"model": "",
-			"tool_call_transform": false
+			"kimi_tool_call_transform": false
 		}
 	}`
 
@@ -260,8 +260,8 @@ func TestSchemaJSONUnmarshalPartial(t *testing.T) {
 	if !ok {
 		t.Error("Expected 'test-model' to exist in models")
 	} else {
-		if testModel.ToolCallTransform {
-			t.Error("Expected ToolCallTransform to default to false")
+		if testModel.KimiToolCallTransform {
+			t.Error("Expected KimiToolCallTransform to default to false")
 		}
 	}
 }
@@ -277,16 +277,16 @@ func TestSchemaJSONMarshal(t *testing.T) {
 		},
 		Models: map[string]ModelConfig{
 			"test-model": {
-				Provider:          "test-provider",
-				Model:             "test-model-v1",
-				ToolCallTransform: true,
+				Provider:              "test-provider",
+				Model:                 "test-model-v1",
+				KimiToolCallTransform: true,
 			},
 		},
 		Fallback: FallbackConfig{
-			Enabled:           true,
-			Provider:          "test-provider",
-			Model:             "fallback-model",
-			ToolCallTransform: false,
+			Enabled:               true,
+			Provider:              "test-provider",
+			Model:                 "fallback-model",
+			KimiToolCallTransform: false,
 		},
 	}
 
@@ -389,7 +389,7 @@ func TestModelConfigJSONUnmarshal(t *testing.T) {
 	jsonData := `{
 		"provider": "test-provider",
 		"model": "gpt-4",
-		"tool_call_transform": true
+		"kimi_tool_call_transform": true
 	}`
 
 	var config ModelConfig
@@ -403,8 +403,8 @@ func TestModelConfigJSONUnmarshal(t *testing.T) {
 	if config.Model != "gpt-4" {
 		t.Errorf("Model = %q, want 'gpt-4'", config.Model)
 	}
-	if !config.ToolCallTransform {
-		t.Error("ToolCallTransform should be true")
+	if !config.KimiToolCallTransform {
+		t.Error("KimiToolCallTransform should be true")
 	}
 }
 
@@ -413,7 +413,7 @@ func TestFallbackConfigJSONUnmarshal(t *testing.T) {
 		"enabled": true,
 		"provider": "fallback-provider",
 		"model": "fallback-model",
-		"tool_call_transform": false
+		"kimi_tool_call_transform": false
 	}`
 
 	var config FallbackConfig
@@ -430,8 +430,8 @@ func TestFallbackConfigJSONUnmarshal(t *testing.T) {
 	if config.Model != "fallback-model" {
 		t.Errorf("Model = %q, want 'fallback-model'", config.Model)
 	}
-	if config.ToolCallTransform {
-		t.Error("ToolCallTransform should be false")
+	if config.KimiToolCallTransform {
+		t.Error("KimiToolCallTransform should be false")
 	}
 }
 

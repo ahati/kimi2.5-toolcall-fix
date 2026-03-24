@@ -227,7 +227,7 @@ func TestResponsesToChatConverter_Convert(t *testing.T) {
 			},
 		},
 		{
-			name: "input without stream still forces upstream streaming",
+			name: "stream false is respected",
 			input: `{
 				"model": "gpt-4o",
 				"input": "Hello",
@@ -239,11 +239,12 @@ func TestResponsesToChatConverter_Convert(t *testing.T) {
 				if err := json.Unmarshal(output, &req); err != nil {
 					t.Fatalf("Failed to parse output: %v", err)
 				}
-				if !req.Stream {
-					t.Error("Expected upstream stream to be forced true")
+				if req.Stream {
+					t.Error("Expected stream to be false")
 				}
-				if req.StreamOptions == nil || !req.StreamOptions.IncludeUsage {
-					t.Error("Expected stream_options.include_usage to be enabled")
+				// StreamOptions should not be set when not streaming
+				if req.StreamOptions != nil {
+					t.Error("Expected stream_options to be nil when not streaming")
 				}
 			},
 		},
@@ -603,6 +604,173 @@ func TestResponsesToChatTransformer_ErrorEvent(t *testing.T) {
 	}
 	if !strings.Contains(output, "Rate limit exceeded") {
 		t.Errorf("Expected error message in output, got: %s", output)
+	}
+}
+
+// TestResponsesToChatTransformer_ResponseIncomplete tests response.incomplete event handling.
+func TestResponsesToChatTransformer_ResponseIncomplete(t *testing.T) {
+	tests := []struct {
+		name     string
+		events   []types.ResponsesStreamEvent
+		validate func(t *testing.T, output string)
+	}{
+		{
+			name: "response.incomplete with max_output_tokens",
+			events: []types.ResponsesStreamEvent{
+				{
+					Type: "response.created",
+					Response: &types.ResponsesResponse{
+						ID:    "resp_123",
+						Model: "gpt-4o",
+					},
+				},
+				{
+					Type:   "response.output_text.delta",
+					Delta:  "Partial response...",
+					ItemID: "msg_123",
+				},
+				{
+					Type: "response.incomplete",
+					Response: &types.ResponsesResponse{
+						ID:     "resp_123",
+						Model:  "gpt-4o",
+						Status: "incomplete",
+						IncompleteDetails: &types.IncompleteDetails{
+							Reason: "max_output_tokens",
+						},
+						Usage: &types.ResponsesUsage{
+							InputTokens:  10,
+							OutputTokens: 100,
+							TotalTokens:  110,
+						},
+					},
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				if !strings.Contains(output, `"finish_reason":"length"`) {
+					t.Error("Expected finish_reason 'length' for incomplete response")
+				}
+				if !strings.Contains(output, `"completion_tokens":100`) {
+					t.Error("Expected completion_tokens in usage")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			transformer := NewResponsesToChatTransformer(&buf)
+
+			for _, event := range tt.events {
+				data, err := json.Marshal(event)
+				if err != nil {
+					t.Fatalf("Failed to marshal event: %v", err)
+				}
+				err = transformer.Transform(&sse.Event{Data: string(data)})
+				if err != nil {
+					t.Errorf("Transform returned error: %v", err)
+				}
+			}
+
+			output := buf.String()
+			if tt.validate != nil {
+				tt.validate(t, output)
+			}
+		})
+	}
+}
+
+// TestResponsesToChatTransformer_ResponseFailed tests response.failed event handling.
+func TestResponsesToChatTransformer_ResponseFailed(t *testing.T) {
+	tests := []struct {
+		name     string
+		events   []types.ResponsesStreamEvent
+		validate func(t *testing.T, output string)
+	}{
+		{
+			name: "response.failed with error",
+			events: []types.ResponsesStreamEvent{
+				{
+					Type: "response.created",
+					Response: &types.ResponsesResponse{
+						ID:    "resp_123",
+						Model: "gpt-4o",
+					},
+				},
+				{
+					Type: "response.failed",
+					Response: &types.ResponsesResponse{
+						ID:     "resp_123",
+						Model:  "gpt-4o",
+						Status: "failed",
+						Error: &types.ResponsesError{
+							Code:    "content_filter",
+							Message: "Content was filtered",
+						},
+					},
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				if !strings.Contains(output, `"error"`) {
+					t.Error("Expected error in output")
+				}
+				if !strings.Contains(output, "Content was filtered") {
+					t.Error("Expected error message in output")
+				}
+			},
+		},
+		{
+			name: "response.failed without error details",
+			events: []types.ResponsesStreamEvent{
+				{
+					Type: "response.created",
+					Response: &types.ResponsesResponse{
+						ID:    "resp_456",
+						Model: "gpt-4o",
+					},
+				},
+				{
+					Type: "response.failed",
+					Response: &types.ResponsesResponse{
+						ID:     "resp_456",
+						Model:  "gpt-4o",
+						Status: "failed",
+					},
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				if !strings.Contains(output, `"error"`) {
+					t.Error("Expected error in output")
+				}
+				if !strings.Contains(output, "Response failed") {
+					t.Error("Expected default error message in output")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			transformer := NewResponsesToChatTransformer(&buf)
+
+			for _, event := range tt.events {
+				data, err := json.Marshal(event)
+				if err != nil {
+					t.Fatalf("Failed to marshal event: %v", err)
+				}
+				err = transformer.Transform(&sse.Event{Data: string(data)})
+				if err != nil {
+					t.Errorf("Transform returned error: %v", err)
+				}
+			}
+
+			output := buf.String()
+			if tt.validate != nil {
+				tt.validate(t, output)
+			}
+		})
 	}
 }
 
@@ -1364,6 +1532,140 @@ func TestResponsesToChatConverter_PreviousResponseID(t *testing.T) {
 	}
 }
 
+// TestResponsesToChatTransformer_MultipleReasoningSummaryParts tests multiple reasoning summary parts.
+func TestResponsesToChatTransformer_MultipleReasoningSummaryParts(t *testing.T) {
+	tests := []struct {
+		name     string
+		events   []types.ResponsesStreamEvent
+		validate func(t *testing.T, output string)
+	}{
+		{
+			name: "multiple reasoning summary parts",
+			events: []types.ResponsesStreamEvent{
+				{
+					Type: "response.created",
+					Response: &types.ResponsesResponse{
+						ID:    "resp_123",
+						Model: "gpt-4o",
+					},
+				},
+				{
+					Type: "response.output_item.added",
+					OutputItem: &types.OutputItem{
+						Type: "reasoning",
+						ID:   "rs_123",
+					},
+				},
+				{
+					Type:   "response.reasoning_summary_part.added",
+					ItemID: "rs_123",
+				},
+				{
+					Type:   "response.reasoning_summary_text.delta",
+					ItemID: "rs_123",
+					Delta:  "First thought...",
+				},
+				{
+					Type:   "response.reasoning_summary_text.delta",
+					ItemID: "rs_123",
+					Delta:  " Second thought.",
+				},
+				{
+					Type:   "response.reasoning_summary_text.done",
+					ItemID: "rs_123",
+				},
+				{
+					Type:   "response.reasoning_summary_part.added",
+					ItemID: "rs_123",
+				},
+				{
+					Type:   "response.reasoning_summary_text.delta",
+					ItemID: "rs_123",
+					Delta:  "Third thought...",
+				},
+				{
+					Type:   "response.reasoning_summary_text.done",
+					ItemID: "rs_123",
+				},
+				{
+					Type: "response.output_item.done",
+					OutputItem: &types.OutputItem{
+						Type: "reasoning",
+						ID:   "rs_123",
+					},
+				},
+				{
+					Type: "response.output_item.added",
+					OutputItem: &types.OutputItem{
+						Type: "message",
+						ID:   "msg_123",
+						Role: "assistant",
+					},
+				},
+				{
+					Type:   "response.output_text.delta",
+					ItemID: "msg_123",
+					Delta:  "Final answer.",
+				},
+				{
+					Type: "response.completed",
+					Response: &types.ResponsesResponse{
+						ID:     "resp_123",
+						Model:  "gpt-4o",
+						Status: "completed",
+						Output: []types.OutputItem{
+							{Type: "reasoning", ID: "rs_123"},
+							{Type: "message", ID: "msg_123"},
+						},
+					},
+				},
+			},
+			validate: func(t *testing.T, output string) {
+				// All reasoning deltas should be present
+				if !strings.Contains(output, `"reasoning":"First thought..."`) {
+					t.Error("Expected first reasoning delta in output")
+				}
+				if !strings.Contains(output, `"reasoning":" Second thought."`) {
+					t.Error("Expected second reasoning delta in output")
+				}
+				if !strings.Contains(output, `"reasoning":"Third thought..."`) {
+					t.Error("Expected third reasoning delta in output")
+				}
+				// Text content should also be present
+				if !strings.Contains(output, `"content":"Final answer."`) {
+					t.Error("Expected text content in output")
+				}
+				if !strings.Contains(output, `"finish_reason":"stop"`) {
+					t.Error("Expected finish_reason 'stop' in output")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			transformer := NewResponsesToChatTransformer(&buf)
+
+			for _, event := range tt.events {
+				data, err := json.Marshal(event)
+				if err != nil {
+					t.Fatalf("Failed to marshal event: %v", err)
+				}
+				err = transformer.Transform(&sse.Event{Data: string(data)})
+				if err != nil {
+					t.Errorf("Transform returned error: %v", err)
+				}
+			}
+
+			output := buf.String()
+			if tt.validate != nil {
+				tt.validate(t, output)
+			}
+		})
+	}
+}
+
 // TestResponsesToChatConverter_ParallelToolCalls tests parallel_tool_calls false conversion.
 // Category A2 (Responses → Chat): MEDIUM priority
 func TestResponsesToChatConverter_ParallelToolCalls(t *testing.T) {
@@ -1526,10 +1828,17 @@ func TestResponsesToChatTransformer_ResponseCompletedWithReasoning(t *testing.T)
 					},
 				},
 			},
-			skip:    true,
-			skipMsg: "SKIP: Testing Responses→Chat transformer with reasoning items - need to verify reasoning handling",
+			skip: false,
 			validate: func(t *testing.T, output string) {
-				// Reasoning items should be handled gracefully (filtered or transformed)
+				// Reasoning should be streamed in the reasoning field
+				if !strings.Contains(output, `"reasoning":"Let me think about this..."`) {
+					t.Error("Expected reasoning content in output")
+				}
+				// Text content should also be present
+				if !strings.Contains(output, `"content":"The answer is 42."`) {
+					t.Error("Expected text content in output")
+				}
+				// Should have finish_reason stop
 				if !strings.Contains(output, `"finish_reason":"stop"`) {
 					t.Error("Expected finish_reason 'stop' in output")
 				}
@@ -2139,7 +2448,7 @@ func TestResponsesToChatConverter_InputFileContentType(t *testing.T) {
 		validate func(t *testing.T, output []byte)
 	}{
 		{
-			name: "input_file with filename converted to placeholder",
+			name: "input_file with filename and content preserved",
 			input: `{
 				"model": "gpt-4o",
 				"input": [
@@ -2148,7 +2457,7 @@ func TestResponsesToChatConverter_InputFileContentType(t *testing.T) {
 						"role": "user",
 						"content": [
 							{"type": "input_text", "text": "Check this file:"},
-							{"type": "input_file", "file_data": {"filename": "document.pdf"}}
+							{"type": "input_file", "file_data": {"filename": "document.pdf", "file_data": "base64content"}}
 						]
 					}
 				]
@@ -2161,22 +2470,35 @@ func TestResponsesToChatConverter_InputFileContentType(t *testing.T) {
 				if len(req.Messages) != 1 {
 					t.Fatalf("Expected 1 message, got %d", len(req.Messages))
 				}
-				// When there are only text-like parts, content is returned as a string
-				content, ok := req.Messages[0].Content.(string)
+				// When there's a file, content is returned as an array
+				content, ok := req.Messages[0].Content.([]interface{})
 				if !ok {
-					t.Fatalf("Expected content to be string, got %T", req.Messages[0].Content)
+					t.Fatalf("Expected content to be array, got %T", req.Messages[0].Content)
 				}
-				// Check that file placeholder is present in the string
-				if !strings.Contains(content, "[File attached: document.pdf]") {
-					t.Errorf("Expected file placeholder in content, got %q", content)
+				// Find the file part
+				var foundFile bool
+				for _, part := range content {
+					partMap, ok := part.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					if partType, _ := partMap["type"].(string); partType == "file" {
+						foundFile = true
+						if partMap["filename"] != "document.pdf" {
+							t.Errorf("Expected filename 'document.pdf', got %v", partMap["filename"])
+						}
+						if partMap["file_data"] != "base64content" {
+							t.Errorf("Expected file_data to be preserved, got %v", partMap["file_data"])
+						}
+					}
 				}
-				if !strings.Contains(content, "Check this file:") {
-					t.Errorf("Expected text content in content, got %q", content)
+				if !foundFile {
+					t.Error("Expected file part in content")
 				}
 			},
 		},
 		{
-			name: "input_file only in message",
+			name: "input_file with filename only (no content)",
 			input: `{
 				"model": "gpt-4o",
 				"input": [
@@ -2197,12 +2519,23 @@ func TestResponsesToChatConverter_InputFileContentType(t *testing.T) {
 				if len(req.Messages) != 1 {
 					t.Fatalf("Expected 1 message, got %d", len(req.Messages))
 				}
-				content, ok := req.Messages[0].Content.(string)
+				// File part should still be created
+				content, ok := req.Messages[0].Content.([]interface{})
 				if !ok {
-					t.Fatalf("Expected content to be string, got %T", req.Messages[0].Content)
+					t.Fatalf("Expected content to be array, got %T", req.Messages[0].Content)
 				}
-				if content != "[File attached: data.csv]" {
-					t.Errorf("Expected file placeholder, got %q", content)
+				if len(content) != 1 {
+					t.Fatalf("Expected 1 content part, got %d", len(content))
+				}
+				partMap, ok := content[0].(map[string]interface{})
+				if !ok {
+					t.Fatalf("Expected content part to be map, got %T", content[0])
+				}
+				if partMap["type"] != "file" {
+					t.Errorf("Expected type 'file', got %v", partMap["type"])
+				}
+				if partMap["filename"] != "data.csv" {
+					t.Errorf("Expected filename 'data.csv', got %v", partMap["filename"])
 				}
 			},
 		},
@@ -2216,6 +2549,72 @@ func TestResponsesToChatConverter_InputFileContentType(t *testing.T) {
 				t.Fatalf("Convert returned error: %v", err)
 			}
 			tt.validate(t, output)
+		})
+	}
+}
+
+// TestResponsesToChatConverter_StreamFlag tests that the stream flag is respected.
+func TestResponsesToChatConverter_StreamFlag(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantStream  bool
+		wantOptions bool
+	}{
+		{
+			name: "stream true (explicit)",
+			input: `{
+				"model": "gpt-4o",
+				"input": "Hello",
+				"stream": true
+			}`,
+			wantStream:  true,
+			wantOptions: true,
+		},
+		{
+			name: "stream false (explicit)",
+			input: `{
+				"model": "gpt-4o",
+				"input": "Hello",
+				"stream": false
+			}`,
+			wantStream:  false,
+			wantOptions: false,
+		},
+		{
+			name: "stream not specified (defaults to true)",
+			input: `{
+				"model": "gpt-4o",
+				"input": "Hello"
+			}`,
+			wantStream:  true,
+			wantOptions: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewResponsesToChatConverter()
+			output, err := converter.Convert([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("Convert returned error: %v", err)
+			}
+
+			var req types.ChatCompletionRequest
+			if err := json.Unmarshal(output, &req); err != nil {
+				t.Fatalf("Failed to parse output: %v", err)
+			}
+
+			if req.Stream != tt.wantStream {
+				t.Errorf("Expected Stream=%v, got Stream=%v", tt.wantStream, req.Stream)
+			}
+
+			if tt.wantOptions && req.StreamOptions == nil {
+				t.Error("Expected StreamOptions to be set when streaming")
+			}
+			if !tt.wantOptions && req.StreamOptions != nil {
+				t.Error("Expected StreamOptions to be nil when not streaming")
+			}
 		})
 	}
 }

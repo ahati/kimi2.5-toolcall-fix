@@ -23,7 +23,7 @@ func TestToolUseBlockWithExtractedArgs(t *testing.T) {
 	var buf bytes.Buffer
 	transformer := NewResponsesTransformer(&buf)
 	// Enable tool call extraction for this test
-	transformer.SetToolCallTransform(true)
+	transformer.SetKimiToolCallTransform(true)
 
 	events := []types.Event{
 		{
@@ -132,7 +132,7 @@ func TestToolCallIDConsistency(t *testing.T) {
 	var buf bytes.Buffer
 	transformer := NewResponsesTransformer(&buf)
 	// Enable tool call extraction for this test
-	transformer.SetToolCallTransform(true)
+	transformer.SetKimiToolCallTransform(true)
 
 	events := []types.Event{
 		{

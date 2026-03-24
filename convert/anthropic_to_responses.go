@@ -58,9 +58,10 @@ func TransformAnthropicToResponses(body []byte) ([]byte, error) {
 //
 // Dropped: top_k, stop_sequences (Responses API has no stop field).
 func AnthropicToResponsesRequest(req *types.MessageRequest) (*types.ResponsesRequest, error) {
+	stream := req.Stream
 	out := &types.ResponsesRequest{
 		Model:        req.Model,
-		Stream:       req.Stream,
+		Stream:       &stream,
 		Instructions: extractSystemFromRequest(req.System),
 	}
 

@@ -390,7 +390,7 @@ type ChatToAnthropicTransformer struct {
 	messageStopSent bool   // Track if message_stop was already sent
 
 	// Tool call tracking
-	toolCalls     map[int]*chatToolCallState // index -> state
+	toolCalls map[int]*chatToolCallState // index -> state
 
 	// Usage tracking - captured from final upstream chunk
 	promptTokens      int

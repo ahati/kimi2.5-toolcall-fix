@@ -1,7 +1,7 @@
 # ==========================================
 # GLOBAL SETTINGS & DEFAULTS
 # ==========================================
-model = "kimi-k2.5"
+model = "glm-5"
 model_provider = "proxy_ai"
 model_catalog_json = "/home/vscode/custom_models.json"
 disabled_providers = ["opencode"]
@@ -9,7 +9,7 @@ model_reasoning_effort = "high"
 model_reasoning_summary="detailed"
 hide_agent_reasoning = false
 show_raw_agent_reasoning = true
-approvals_reviewer = "guardian_subagent"
+approvals_reviewer = "user"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 # ==========================================
@@ -140,6 +140,9 @@ modalities = ["text"]
 thinking_budget = 1024
 
 [projects."/workspaces/kimi-k2.5-fix-proxy"]
+trust_level = "trusted"
+
+[projects."/workspaces/temporary/codex"]
 trust_level = "trusted"
 
 [notice]

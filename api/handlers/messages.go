@@ -229,7 +229,7 @@ func (h *MessagesHandler) CreateTransformer(w io.Writer) transform.SSETransforme
 	}
 
 	// Passthrough: no transformation needed
-	if h.route.IsPassthrough && !h.route.ToolCallTransform {
+	if h.route.IsPassthrough && !h.route.KimiToolCallTransform {
 		return transform.NewPassthroughTransformer(w)
 	}
 
@@ -240,7 +240,7 @@ func (h *MessagesHandler) CreateTransformer(w io.Writer) transform.SSETransforme
 		return convert.NewChatToAnthropicTransformer(w)
 	case "anthropic":
 		// Use Anthropic transformer for tool call handling
-		if h.route.ToolCallTransform {
+		if h.route.KimiToolCallTransform {
 			return toolcall.NewAnthropicTransformer(w)
 		}
 		return transform.NewPassthroughTransformer(w)

@@ -66,9 +66,10 @@ func TransformChatToResponses(body []byte) ([]byte, error) {
 // Dropped: n, stop, response_format, frequency_penalty, presence_penalty,
 // logprobs, seed — none have Responses API equivalents.
 func ChatToResponsesRequest(req *types.ChatCompletionRequest) (*types.ResponsesRequest, error) {
+	stream := req.Stream
 	out := &types.ResponsesRequest{
 		Model:       req.Model,
-		Stream:      req.Stream,
+		Stream:      &stream,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		ToolChoice:  ChatToolChoiceToResponses(marshalToolChoiceFromRequest(req.ToolChoice)),
@@ -283,9 +284,13 @@ type ChatToResponsesTransformer struct {
 	// Tool call extraction from reasoning content (for Kimi-style markup)
 	toolCallTransform bool             // enabled by config
 	parser            *toolcall.Parser // parser for tool call markup
-	extractedToolArgs strings.Builder  // args for extracted tool calls
-	extractedToolID   string           // current extracted tool ID
-	extractedToolName string           // current extracted tool name
+	extractedToolArgs strings.Builder
+	extractedToolID   string
+	extractedToolName string
+
+	// GLM-5 tool call extraction from reasoning_content
+	glm5Parser            *toolcall.GLM5Parser
+	glm5ToolCallTransform bool
 }
 
 type chatToRespToolCallState struct {
@@ -300,6 +305,7 @@ func NewChatToResponsesTransformer(w io.Writer) *ChatToResponsesTransformer {
 		created:        time.Now().Unix(),
 		sequenceNumber: 0,
 		parser:         toolcall.NewParser(toolcall.DefaultTokens),
+		glm5Parser:     toolcall.NewGLM5Parser(),
 	}
 }
 
@@ -309,11 +315,18 @@ func (t *ChatToResponsesTransformer) SetInputItems(items []types.InputItem) {
 	t.inputItems = items
 }
 
-// SetToolCallTransform enables or disables tool call extraction from reasoning content.
+// SetKimiToolCallTransform enables or disables tool call extraction from reasoning content.
 // When enabled, the transformer will parse Kimi-style tool call markup in reasoning text
 // and emit proper function_call output items.
-func (t *ChatToResponsesTransformer) SetToolCallTransform(enabled bool) {
+func (t *ChatToResponsesTransformer) SetKimiToolCallTransform(enabled bool) {
 	t.toolCallTransform = enabled
+}
+
+// SetGLM5ToolCallTransform enables or disables GLM-5 XML tool call extraction.
+// When enabled, the transformer will parse <tool_call> tags in reasoning_content
+// and emit proper function_call output items.
+func (t *ChatToResponsesTransformer) SetGLM5ToolCallTransform(enabled bool) {
+	t.glm5ToolCallTransform = enabled
 }
 
 func (t *ChatToResponsesTransformer) nextSeq() int {

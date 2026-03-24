@@ -96,9 +96,12 @@ type ModelConfig struct {
 	// "auto" means use the incoming request's protocol for passthrough.
 	// Empty defaults to provider's default protocol.
 	Type string `json:"type,omitempty"`
-	// ToolCallTransform enables tool call transformation for this model.
+	// KimiToolCallTransform enables tool call transformation for this model.
 	// When true, tool calls are transformed between OpenAI and Anthropic formats.
-	ToolCallTransform bool `json:"tool_call_transform"`
+	KimiToolCallTransform bool `json:"kimi_tool_call_transform"`
+	// GLM5ToolCallTransform enables GLM-5 style XML tool call extraction.
+	// When true, extracts tool calls from <tool_call> tags in reasoning_content.
+	GLM5ToolCallTransform bool `json:"glm5_tool_call_transform"`
 	// ReasoningSplit enables separate reasoning output for providers that support it.
 	// When true, adds "reasoning_split": true to the ChatCompletionRequest.
 	// Supported by MiniMax M2.7 to return reasoning in reasoning_details field
@@ -117,8 +120,10 @@ type FallbackConfig struct {
 	Model string `json:"model"`
 	// Type specifies the output protocol for fallback: "openai", "anthropic", or "auto".
 	Type string `json:"type,omitempty"`
-	// ToolCallTransform enables tool call transformation for fallback requests.
-	ToolCallTransform bool `json:"tool_call_transform"`
+	// KimiToolCallTransform enables tool call transformation for fallback requests.
+	KimiToolCallTransform bool `json:"kimi_tool_call_transform"`
+	// GLM5ToolCallTransform enables GLM-5 style XML tool call extraction for fallback.
+	GLM5ToolCallTransform bool `json:"glm5_tool_call_transform"`
 	// ReasoningSplit enables separate reasoning output for fallback requests.
 	ReasoningSplit bool `json:"reasoning_split,omitempty"`
 }

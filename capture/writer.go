@@ -229,3 +229,131 @@ func ExtractRequestIDFromSSEChunk(data json.RawMessage) string {
 
 	return ""
 }
+
+// TokenUsage holds extracted token counts from SSE stream
+type TokenUsage struct {
+	// InputTokens is the number of input/prompt tokens
+	InputTokens int
+	// OutputTokens is the number of output/completion tokens
+	OutputTokens int
+	// CacheReadTokens is the number of tokens read from cache
+	CacheReadTokens int
+	// CacheCreationTokens is the number of tokens used to create cache
+	CacheCreationTokens int
+}
+
+// ExtractTokenUsageFromChunks extracts token usage from SSE chunks.
+// It scans through all chunks looking for usage data in various API formats.
+//
+// Supports:
+//   - OpenAI: {"usage":{"prompt_tokens":X,"completion_tokens":Y,"prompt_tokens_details":{"cached_tokens":Z}}}
+//   - Anthropic: {"usage":{"input_tokens":X,"output_tokens":Y,"cache_read_input_tokens":Z,"cache_creation_input_tokens":W}}
+//   - Responses: {"usage":{"input_tokens":X,"output_tokens":Y,"input_tokens_details":{"cached_tokens":Z}}}
+//
+// @param chunks - SSE chunks to extract usage from
+// @return TokenUsage with aggregated token counts
+//
+// @pre None
+// @post Returns zero values if no usage found
+// @post Returns last usage values found if multiple usages present
+//
+// @note Thread-safe: pure function with no side effects
+func ExtractTokenUsageFromChunks(chunks []SSEChunk) TokenUsage {
+	var usage TokenUsage
+	for _, chunk := range chunks {
+		if len(chunk.Data) == 0 {
+			continue
+		}
+		// Parse usage from this chunk
+		extractUsageFromJSON(chunk.Data, &usage)
+	}
+	return usage
+}
+
+// extractUsageFromJSON parses JSON data and extracts token usage.
+// Handles multiple API formats by checking various field names.
+//
+// @param data - JSON data to parse
+// @param usage - TokenUsage to populate
+//
+// @pre data is valid JSON
+// @post usage fields updated if usage data found
+func extractUsageFromJSON(data json.RawMessage, usage *TokenUsage) {
+	// Try to parse as generic map to handle different formats
+	var root map[string]interface{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return
+	}
+
+	// Find usage object - could be top-level or nested
+	var usageObj map[string]interface{}
+
+	if u, ok := root["usage"].(map[string]interface{}); ok {
+		usageObj = u
+	} else {
+		// Check for nested in message (Anthropic message_start)
+		if msg, ok := root["message"].(map[string]interface{}); ok {
+			if u, ok := msg["usage"].(map[string]interface{}); ok {
+				usageObj = u
+			}
+		}
+		// Check for nested in response (Responses API)
+		if resp, ok := root["response"].(map[string]interface{}); ok {
+			if u, ok := resp["usage"].(map[string]interface{}); ok {
+				usageObj = u
+			}
+		}
+		// Check for nested in delta (Anthropic message_delta)
+		if delta, ok := root["delta"].(map[string]interface{}); ok {
+			if u, ok := delta["usage"].(map[string]interface{}); ok {
+				usageObj = u
+			}
+		}
+	}
+
+	if usageObj == nil {
+		return
+	}
+
+	// Extract input tokens - try multiple field names
+	if v, ok := usageObj["input_tokens"].(float64); ok {
+		usage.InputTokens = int(v)
+	} else if v, ok := usageObj["prompt_tokens"].(float64); ok {
+		usage.InputTokens = int(v)
+	}
+
+	// Extract output tokens - try multiple field names
+	if v, ok := usageObj["output_tokens"].(float64); ok {
+		usage.OutputTokens = int(v)
+	} else if v, ok := usageObj["completion_tokens"].(float64); ok {
+		usage.OutputTokens = int(v)
+	}
+
+	// Extract cache read tokens - check both Anthropic and OpenAI formats
+	if v, ok := usageObj["cache_read_input_tokens"].(float64); ok {
+		usage.CacheReadTokens = int(v)
+	}
+	if v, ok := usageObj["cached_tokens"].(float64); ok {
+		usage.CacheReadTokens = int(v)
+	}
+
+	// Extract cache creation tokens
+	if v, ok := usageObj["cache_creation_input_tokens"].(float64); ok {
+		usage.CacheCreationTokens = int(v)
+	}
+
+	// Check for nested cache details in OpenAI format
+	if details, ok := usageObj["prompt_tokens_details"].(map[string]interface{}); ok {
+		if v, ok := details["cached_tokens"].(float64); ok {
+			usage.CacheReadTokens = int(v)
+		}
+		if v, ok := details["cache_creation_input_tokens"].(float64); ok {
+			usage.CacheCreationTokens = int(v)
+		}
+	}
+	if details, ok := usageObj["input_tokens_details"].(map[string]interface{}); ok {
+		if v, ok := details["cached_tokens"].(float64); ok {
+			usage.CacheReadTokens = int(v)
+		}
+	}
+}

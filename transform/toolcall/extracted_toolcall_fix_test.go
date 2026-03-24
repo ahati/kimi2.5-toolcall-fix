@@ -15,7 +15,7 @@ func TestExtractedToolCallsPreserveIDAndName(t *testing.T) {
 	var buf bytes.Buffer
 	transformer := NewResponsesTransformer(&buf)
 	// Enable tool call extraction for this test
-	transformer.SetToolCallTransform(true)
+	transformer.SetKimiToolCallTransform(true)
 
 	events := []types.Event{
 		{
@@ -144,7 +144,7 @@ func TestExtractedToolCallsPreserveIDAndName_MultipleToolCalls(t *testing.T) {
 	var buf bytes.Buffer
 	transformer := NewResponsesTransformer(&buf)
 	// Enable tool call extraction for this test
-	transformer.SetToolCallTransform(true)
+	transformer.SetKimiToolCallTransform(true)
 
 	events := []types.Event{
 		{

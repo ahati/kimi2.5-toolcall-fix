@@ -30,8 +30,10 @@ type ResolvedRoute struct {
 	Model string
 	// OutputProtocol specifies the protocol to use: "openai", "anthropic", or "auto".
 	OutputProtocol string
-	// ToolCallTransform enables tool call transformation for this route.
-	ToolCallTransform bool
+	// KimiToolCallTransform enables tool call transformation for this route.
+	KimiToolCallTransform bool
+	// GLM5ToolCallTransform enables GLM-5 XML tool call extraction for this route.
+	GLM5ToolCallTransform bool
 	// ReasoningSplit enables separate reasoning output for this route.
 	ReasoningSplit bool
 	// IsPassthrough indicates when no protocol transformation is needed.
@@ -88,12 +90,13 @@ func (r *router) Resolve(modelName string) (*ResolvedRoute, error) {
 		}
 
 		return &ResolvedRoute{
-			Provider:          provider,
-			Model:             modelConfig.Model,
-			OutputProtocol:    outputProtocol,
-			ToolCallTransform: modelConfig.ToolCallTransform,
-			ReasoningSplit:    modelConfig.ReasoningSplit,
-			IsPassthrough:     false,
+			Provider:              provider,
+			Model:                 modelConfig.Model,
+			OutputProtocol:        outputProtocol,
+			KimiToolCallTransform: modelConfig.KimiToolCallTransform,
+			GLM5ToolCallTransform: modelConfig.GLM5ToolCallTransform,
+			ReasoningSplit:        modelConfig.ReasoningSplit,
+			IsPassthrough:         false,
 		}, nil
 	}
 
@@ -115,12 +118,13 @@ func (r *router) Resolve(modelName string) (*ResolvedRoute, error) {
 		}
 
 		return &ResolvedRoute{
-			Provider:          provider,
-			Model:             model,
-			OutputProtocol:    outputProtocol,
-			ToolCallTransform: r.schema.Fallback.ToolCallTransform,
-			ReasoningSplit:    r.schema.Fallback.ReasoningSplit,
-			IsPassthrough:     false,
+			Provider:              provider,
+			Model:                 model,
+			OutputProtocol:        outputProtocol,
+			KimiToolCallTransform: r.schema.Fallback.KimiToolCallTransform,
+			GLM5ToolCallTransform: r.schema.Fallback.GLM5ToolCallTransform,
+			ReasoningSplit:        r.schema.Fallback.ReasoningSplit,
+			IsPassthrough:         false,
 		}, nil
 	}
 

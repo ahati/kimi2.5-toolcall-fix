@@ -6,6 +6,99 @@ import (
 	"time"
 )
 
+// Tokens defines the delimiter strings used to mark tool call sections in LLM output.
+// These tokens are emitted by Kimi models to indicate the structure of tool calls.
+//
+// @brief Configuration struct for tool call delimiter tokens used in parsing.
+//
+// @note Token values must not contain other token values as substrings, as this
+//
+//	could cause incorrect parsing behavior. Each token should be uniquely
+//	identifiable within the input stream.
+//
+// @note Changes to token values must be synchronized with the upstream LLM
+//
+//	configuration. Mismatched tokens will result in parsing failures.
+//
+// @pre All token fields must be non-empty strings.
+// @post Parser behavior is determined by the configured token values.
+type Tokens struct {
+	// SectionBegin marks the start of a tool calls section.
+	// Must be unique and not a substring of other tokens.
+	// Example: ""
+	SectionBegin string
+
+	// CallBegin marks the start of an individual tool call.
+	// Must be unique and not a substring of other tokens.
+	// Example: ""
+	CallBegin string
+
+	// ArgBegin marks the start of tool call arguments.
+	// Must be unique and not a substring of other tokens.
+	// Example: ""
+	ArgBegin string
+
+	// CallEnd marks the end of an individual tool call.
+	// Must be unique and not a substring of other tokens.
+	// Example: ""
+	CallEnd string
+
+	// SectionEnd marks the end of a tool calls section.
+	// Must be unique and not a substring of other tokens.
+	// Example: ""
+	SectionEnd string
+}
+
+// DefaultTokens contains the standard delimiter tokens used by Kimi models.
+// These tokens are specific to the Moonshot AI / Kimi model family.
+//
+// @brief Pre-configured Tokens instance with Kimi model delimiters.
+//
+// @note These values are model-specific and may change with model updates.
+//
+//	Use DefaultTokens for Kimi models; create custom Tokens for other models.
+//
+// @pre None (constant configuration).
+// @post Contains valid, non-overlapping token values.
+var DefaultTokens = Tokens{
+	SectionBegin: "<|tool_calls_section_begin|>",
+	CallBegin:    "<|tool_call_begin|>",
+	ArgBegin:     "<|tool_call_argument_begin|>",
+	CallEnd:      "<|tool_call_end|>",
+	SectionEnd:   "<|tool_calls_section_end|>",
+}
+
+// ContainsAny reports whether s contains any tool call marker tokens.
+// This is a fast pre-check to determine if parsing is needed.
+//
+// @brief Performs a quick check for tool call markers in a string.
+//
+// @param s The string to check for tool call markers.
+//
+//	Can be empty (returns false).
+//	Must be valid UTF-8 for correct behavior.
+//
+// @return bool Returns true if any tool call marker is present.
+//
+//	Returns false if no markers are found or string is empty.
+//
+// @pre s must be valid UTF-8 for correct substring matching.
+// @post No state is modified; this is a pure query function.
+//
+// @note This function uses a simplified check for "<|tool_call" prefix,
+//
+//	which covers all tool call markers. This is more efficient than
+//	checking each token individually.
+//
+// @note A true result does not guarantee valid tool call structure;
+//
+//	it only indicates that parsing should be attempted.
+func (t Tokens) ContainsAny(s string) bool {
+	// Check for the common prefix of all tool call markers.
+	// This is more efficient than multiple Contains calls.
+	return strings.Contains(s, "<|tool_call")
+}
+
 // state represents the parser's current position within a tool call sequence.
 // The parser uses a finite state machine to track parsing progress.
 //
@@ -395,6 +488,29 @@ func (p *Parser) processReadingID() []Event {
 	// "<id>:<function_name>" or just "<function_name>"
 	rawID := strings.TrimSpace(p.buf[:argIdx])
 	id, name := p.parseToolCallID(rawID)
+
+	// If validation failed (empty ID/name), this is not a valid tool call.
+	// Emit the entire tool call section as regular content.
+	if id == "" || name == "" {
+		// Find the end of this tool call to emit everything as content
+		// Search in the remaining buffer after ArgBegin position
+		remainingBuf := p.buf[argIdx+len(p.tokens.ArgBegin):]
+		endIdx := strings.Index(remainingBuf, p.tokens.CallEnd)
+		if endIdx < 0 {
+			// CallEnd not found yet - emit what we have and wait for more
+			content := p.buf
+			p.buf = ""
+			return []Event{{Type: EventContent, Text: content}}
+		}
+		// Emit everything including markers as content
+		totalLen := argIdx + len(p.tokens.ArgBegin) + endIdx + len(p.tokens.CallEnd)
+		content := p.buf[:totalLen]
+		p.buf = p.buf[totalLen:]
+		// Go back to inSection state to look for more tool calls or section end
+		p.state = stateInSection
+		return []Event{{Type: EventContent, Text: content}}
+	}
+
 	// Remove processed content and ArgBegin from buffer.
 	p.buf = p.buf[argIdx+len(p.tokens.ArgBegin):]
 	// Transition to reading arguments state.
@@ -534,6 +650,12 @@ func (p *Parser) endSection(endIdx int) []Event {
 //	The timestamp component ensures IDs are unique even across sessions.
 func (p *Parser) parseToolCallID(raw string) (string, string) {
 	raw = strings.TrimSpace(raw)
+
+	// Validate that this looks like a tool call, not random text.
+	if !p.isValidToolCallID(raw) {
+		return "", ""
+	}
+
 	name := p.extractFunctionName(raw)
 	// Check for standard ID prefixes from the LLM.
 	if strings.HasPrefix(raw, "call_") || strings.HasPrefix(raw, "toolu_") {
@@ -544,6 +666,32 @@ func (p *Parser) parseToolCallID(raw string) (string, string) {
 	// This ensures uniqueness within and across sessions.
 	id := fmt.Sprintf("call_%d_%d", p.toolIndex, time.Now().UnixMilli())
 	return id, name
+}
+
+// isValidToolCallID checks if the raw text looks like a valid tool call ID/name.
+// Real tool calls have short, single-line identifiers without special formatting.
+func (p *Parser) isValidToolCallID(raw string) bool {
+	// Reject if empty
+	if raw == "" {
+		return false
+	}
+
+	// Reject if very long (real tool call IDs are typically < 100 chars)
+	if len(raw) > 200 {
+		return false
+	}
+
+	// Reject if contains newlines (tool call IDs are single-line)
+	if strings.Contains(raw, "\n") {
+		return false
+	}
+
+	// Reject if looks like formatted text (contains markdown or code blocks)
+	if strings.Contains(raw, "```") || strings.Contains(raw, "**") {
+		return false
+	}
+
+	return true
 }
 
 // extractFunctionName parses the function name from raw tool call ID text.

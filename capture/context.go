@@ -11,6 +11,7 @@ package capture
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,6 +40,11 @@ type CaptureContext struct {
 	// Initially set to a short UUID; updated with actual message ID if extracted from SSE.
 	// Valid values: 8-character UUID initially, or actual message ID after extraction.
 	RequestID string
+
+	// SessionID identifies a group of related requests (e.g., a user conversation).
+	// Extracted from "X-Session-ID" or "Session_id" header (whichever is present), or defaults to RequestID if not provided.
+	// Valid values: any non-empty string; typically a UUID or meaningful identifier.
+	SessionID string
 
 	// StartTime is the timestamp when this capture context was created.
 	// Used for calculating elapsed time throughout the request lifecycle.
@@ -74,8 +80,24 @@ type CaptureContext struct {
 // @note if an actual message ID is extracted from the SSE response.
 func NewCaptureContext(r *http.Request) *CaptureContext {
 	initialID := uuid.New().String()[:8]
+
+	// Extract session ID from header - check all possible case variations
+	sessionID := ""
+	for key, values := range r.Header {
+		if strings.EqualFold(key, "Session_id") || strings.EqualFold(key, "X-Session-ID") {
+			if len(values) > 0 {
+				sessionID = values[0]
+				break
+			}
+		}
+	}
+	if sessionID == "" {
+		sessionID = initialID
+	}
+
 	return &CaptureContext{
 		RequestID:   initialID,
+		SessionID:   sessionID,
 		StartTime:   time.Now(),
 		Recorder:    NewRecorder(initialID, r.Method, r.URL.Path, r.RemoteAddr),
 		IDExtracted: false,

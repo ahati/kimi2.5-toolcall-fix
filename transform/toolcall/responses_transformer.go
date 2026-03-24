@@ -81,6 +81,10 @@ type ResponsesTransformer struct {
 
 	// Tool call extraction from thinking content (for Kimi-style markup)
 	toolCallTransform bool // enabled by config
+
+	// GLM-5 tool call extraction from reasoning_content
+	glm5Parser            *GLM5Parser
+	glm5ToolCallTransform bool
 }
 
 // ResponsesFormatter formats events in OpenAI Responses API format.
@@ -480,6 +484,7 @@ func NewResponsesTransformer(output io.Writer) *ResponsesTransformer {
 		sseWriter:      transform.NewSSEWriter(output),
 		formatter:      NewResponsesFormatter("", ""),
 		parser:         NewParser(DefaultTokens),
+		glm5Parser:     NewGLM5Parser(),
 		outputItems:    make([]map[string]interface{}, 0),
 		sequenceNumber: 0,
 		summaryIndex:   0,
@@ -492,11 +497,18 @@ func (t *ResponsesTransformer) SetInputItems(items []types.InputItem) {
 	t.inputItems = items
 }
 
-// SetToolCallTransform enables or disables tool call extraction from thinking content.
+// SetKimiToolCallTransform enables or disables tool call extraction from thinking content.
 // When enabled, the transformer will parse Kimi-style tool call markup in thinking text
 // and emit proper function_call output items.
-func (t *ResponsesTransformer) SetToolCallTransform(enabled bool) {
+func (t *ResponsesTransformer) SetKimiToolCallTransform(enabled bool) {
 	t.toolCallTransform = enabled
+}
+
+// SetGLM5ToolCallTransform enables or disables GLM-5 XML tool call extraction.
+// When enabled, the transformer will parse <tool_call> tags in reasoning content
+// and emit proper function_call output items.
+func (t *ResponsesTransformer) SetGLM5ToolCallTransform(enabled bool) {
+	t.glm5ToolCallTransform = enabled
 }
 
 func (t *ResponsesTransformer) nextSequenceNumber() int {
@@ -676,6 +688,11 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 		var thinkingDelta types.ThinkingDelta
 		if err := json.Unmarshal(event.Delta, &thinkingDelta); err == nil && thinkingDelta.Type == "thinking_delta" {
 			if t.inReasoning {
+				// Check for GLM-5 tool call format (XML-based)
+				if t.glm5ToolCallTransform && strings.Contains(thinkingDelta.Thinking, "<tool_call>") {
+					logging.InfoMsg("[%s] GLM-5 tool call detected in thinking content, extracting", t.messageID)
+					return t.processGLM5ToolCalls(thinkingDelta.Thinking)
+				}
 				// Check if content contains tool call markup (only when toolCallTransform is enabled)
 				if t.toolCallTransform {
 					wasIdle := t.parser.IsIdle()
@@ -707,6 +724,18 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 		}
 	}
 
+	return nil
+}
+
+// processGLM5ToolCalls handles thinking content that contains GLM-5 XML tool calls.
+// It extracts tool calls and emits appropriate Responses API events.
+func (t *ResponsesTransformer) processGLM5ToolCalls(text string) error {
+	events := t.glm5Parser.Parse(text)
+	for _, e := range events {
+		if err := t.writeParserEvent(e); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -17,7 +17,8 @@ type ResponsesRequest struct {
 	// MaxOutputTokens is the maximum number of tokens to generate.
 	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
 	// Stream enables streaming responses when true.
-	Stream bool `json:"stream,omitempty"`
+	// Use pointer to distinguish between "not specified" (nil) and "explicitly false".
+	Stream *bool `json:"stream,omitempty"`
 	// Tools is a list of tools the model may call.
 	Tools []ResponsesTool `json:"tools,omitempty"`
 	// ToolChoice specifies which tool the model should use.

@@ -216,7 +216,7 @@ func (h *CompletionsHandler) CreateTransformer(w io.Writer) transform.SSETransfo
 	}
 
 	// Passthrough: no transformation needed
-	if h.route.IsPassthrough && !h.route.ToolCallTransform {
+	if h.route.IsPassthrough && !h.route.KimiToolCallTransform && !h.route.GLM5ToolCallTransform {
 		return transform.NewPassthroughTransformer(w)
 	}
 
@@ -226,8 +226,11 @@ func (h *CompletionsHandler) CreateTransformer(w io.Writer) transform.SSETransfo
 		return convert.NewChatToAnthropicTransformer(w)
 	case "openai":
 		// Use OpenAI transformer for tool call handling
-		if h.route.ToolCallTransform {
-			return toolcall.NewOpenAITransformer(w)
+		if h.route.KimiToolCallTransform || h.route.GLM5ToolCallTransform {
+			t := toolcall.NewOpenAITransformer(w)
+			t.SetKimiToolCallTransform(h.route.KimiToolCallTransform)
+			t.SetGLM5ToolCallTransform(h.route.GLM5ToolCallTransform)
+			return t
 		}
 		return transform.NewPassthroughTransformer(w)
 	case "responses":

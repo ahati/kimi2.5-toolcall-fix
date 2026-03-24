@@ -200,7 +200,7 @@ func (h *ResponsesHandler) CreateTransformer(w io.Writer) transform.SSETransform
 	}
 
 	// Passthrough: no transformation needed
-	if h.route.IsPassthrough && !h.route.ToolCallTransform {
+	if h.route.IsPassthrough && !h.route.KimiToolCallTransform {
 		return transform.NewPassthroughTransformer(w)
 	}
 
@@ -209,7 +209,8 @@ func (h *ResponsesHandler) CreateTransformer(w io.Writer) transform.SSETransform
 		// ChatToResponsesTransformer converts Chat Completions to Responses format
 		// Tool call extraction from markup is enabled when tool_call_transform is true
 		t := convert.NewChatToResponsesTransformer(w)
-		t.SetToolCallTransform(h.route.ToolCallTransform)
+		t.SetKimiToolCallTransform(h.route.KimiToolCallTransform)
+		t.SetGLM5ToolCallTransform(h.route.GLM5ToolCallTransform)
 		t.SetInputItems(h.inputItems)
 		return t
 	case "anthropic":
@@ -217,7 +218,8 @@ func (h *ResponsesHandler) CreateTransformer(w io.Writer) transform.SSETransform
 		// This conversion is always needed for /v1/responses endpoint
 		// Tool call extraction from markup is enabled when tool_call_transform is true
 		t := toolcall.NewResponsesTransformer(w)
-		t.SetToolCallTransform(h.route.ToolCallTransform)
+		t.SetKimiToolCallTransform(h.route.KimiToolCallTransform)
+		t.SetGLM5ToolCallTransform(h.route.GLM5ToolCallTransform)
 		t.SetInputItems(h.inputItems)
 		return t
 	default:

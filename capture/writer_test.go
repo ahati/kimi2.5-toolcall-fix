@@ -342,3 +342,101 @@ func TestExtractRequestIDFromSSEChunk(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractTokenUsageFromChunks(t *testing.T) {
+	tests := []struct {
+		name         string
+		chunks       []SSEChunk
+		wantInput    int
+		wantOutput   int
+		wantCache    int
+		wantCacheCrt int
+	}{
+		{
+			name:   "empty chunks",
+			chunks: []SSEChunk{},
+		},
+		{
+			name: "OpenAI format with usage",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"id":"1","choices":[{"delta":{"content":"hi"}}]}`)},
+				{Data: json.RawMessage(`{"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`)},
+			},
+			wantInput:  10,
+			wantOutput: 5,
+		},
+		{
+			name: "Anthropic format with usage",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":25,"output_tokens":0}}}`)},
+				{Data: json.RawMessage(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":15}}`)},
+			},
+			wantInput:  25,
+			wantOutput: 15,
+		},
+		{
+			name: "Anthropic format with cache tokens",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":100,"output_tokens":0,"cache_read_input_tokens":50,"cache_creation_input_tokens":10}}}`)},
+				{Data: json.RawMessage(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20}}`)},
+			},
+			wantInput:    100,
+			wantOutput:   20,
+			wantCache:    50,
+			wantCacheCrt: 10,
+		},
+		{
+			name: "Responses API format with usage",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":30,"output_tokens":10,"total_tokens":40}}}`)},
+			},
+			wantInput:  30,
+			wantOutput: 10,
+		},
+		{
+			name: "OpenAI format with cache tokens",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40}}}`)},
+			},
+			wantInput: 100,
+			wantOutput: 20,
+			wantCache: 40,
+		},
+		{
+			name: "chunk with raw data only",
+			chunks: []SSEChunk{
+				{Raw: "some raw data"},
+			},
+		},
+		{
+			name: "invalid JSON",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`not json`)},
+			},
+		},
+		{
+			name: "no usage field",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"id":"1","choices":[]}`)},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractTokenUsageFromChunks(tt.chunks)
+			if got.InputTokens != tt.wantInput {
+				t.Errorf("expected InputTokens %d, got %d", tt.wantInput, got.InputTokens)
+			}
+			if got.OutputTokens != tt.wantOutput {
+				t.Errorf("expected OutputTokens %d, got %d", tt.wantOutput, got.OutputTokens)
+			}
+			if got.CacheReadTokens != tt.wantCache {
+				t.Errorf("expected CacheReadTokens %d, got %d", tt.wantCache, got.CacheReadTokens)
+			}
+			if got.CacheCreationTokens != tt.wantCacheCrt {
+				t.Errorf("expected CacheCreationTokens %d, got %d", tt.wantCacheCrt, got.CacheCreationTokens)
+			}
+		})
+	}
+}

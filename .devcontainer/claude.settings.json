@@ -5,11 +5,17 @@
     "ANTHROPIC_MODEL": "glm-5",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2.5",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3.5-plus",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION": "MiniMax-M2.7",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": "MiniMax M2.7",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": "MiniMax M2.7 - 200k context, efficient",
     "CLAUDE_CODE_EFFORT_LEVEL": "high",
     "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+    "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1",
+    "CLAUDE_CODE_EXTRA_BODY": "{\"output_config\": null}"
   },
   "attribution": {
     "commit": "",
@@ -21,6 +27,11 @@
     "MiniMax-M2.7",
     "qwen3.5-plus"
   ],
+  "modelOverrides": {
+    "claude-opus-4-6": "glm-5",
+    "claude-sonnet-4-6": "kimi-k2.5",
+    "claude-haiku-4-5": "qwen3.5-plus"
+  },
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true,
     "clangd-lsp@claude-plugins-official": true,
@@ -34,5 +45,6 @@
   "showThinkingSummaries": true,
   "skipDangerousModePermissionPrompt": true,
   "terminalProgressBarEnabled": false,
-  "defaultMode": "bypassPermissions"
+  "defaultMode": "bypassPermissions",
+  "model": "opus"
 }

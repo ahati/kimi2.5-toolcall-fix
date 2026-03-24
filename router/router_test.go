@@ -33,14 +33,14 @@ func TestResolve_ExactModelMatch(t *testing.T) {
 		},
 		Models: map[string]config.ModelConfig{
 			"gpt-4": {
-				Provider:          "openai",
-				Model:             "gpt-4-turbo",
-				ToolCallTransform: false,
+				Provider:              "openai",
+				Model:                 "gpt-4-turbo",
+				KimiToolCallTransform: false,
 			},
 			"claude": {
-				Provider:          "anthropic",
-				Model:             "claude-3-opus",
-				ToolCallTransform: true,
+				Provider:              "anthropic",
+				Model:                 "claude-3-opus",
+				KimiToolCallTransform: true,
 			},
 		},
 	}
@@ -64,8 +64,8 @@ func TestResolve_ExactModelMatch(t *testing.T) {
 	if route.OutputProtocol != "openai" {
 		t.Errorf("expected output protocol 'openai', got '%s'", route.OutputProtocol)
 	}
-	if route.ToolCallTransform != false {
-		t.Error("expected ToolCallTransform to be false")
+	if route.KimiToolCallTransform != false {
+		t.Error("expected KimiToolCallTransform to be false")
 	}
 
 	// Test exact match for claude
@@ -82,8 +82,8 @@ func TestResolve_ExactModelMatch(t *testing.T) {
 	if route.OutputProtocol != "anthropic" {
 		t.Errorf("expected output protocol 'anthropic', got '%s'", route.OutputProtocol)
 	}
-	if route.ToolCallTransform != true {
-		t.Error("expected ToolCallTransform to be true")
+	if route.KimiToolCallTransform != true {
+		t.Error("expected KimiToolCallTransform to be true")
 	}
 }
 
@@ -100,10 +100,10 @@ func TestResolve_FallbackWithPlaceholder(t *testing.T) {
 			},
 		},
 		Fallback: config.FallbackConfig{
-			Enabled:           true,
-			Provider:          "fallback-provider",
-			Model:             "prefix-{model}-suffix",
-			ToolCallTransform: true,
+			Enabled:               true,
+			Provider:              "fallback-provider",
+			Model:                 "prefix-{model}-suffix",
+			KimiToolCallTransform: true,
 		},
 	}
 
@@ -123,8 +123,8 @@ func TestResolve_FallbackWithPlaceholder(t *testing.T) {
 	if route.Model != "prefix-unknown-model-suffix" {
 		t.Errorf("expected model 'prefix-unknown-model-suffix', got '%s'", route.Model)
 	}
-	if route.ToolCallTransform != true {
-		t.Error("expected ToolCallTransform to be true")
+	if route.KimiToolCallTransform != true {
+		t.Error("expected KimiToolCallTransform to be true")
 	}
 }
 

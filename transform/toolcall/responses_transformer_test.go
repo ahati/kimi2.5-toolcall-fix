@@ -1977,7 +1977,7 @@ func TestResponsesTransformer_ToolCallsInThinkingContent(t *testing.T) {
 			var buf bytes.Buffer
 			transformer := NewResponsesTransformer(&buf)
 			// Enable tool call extraction for these tests
-			transformer.SetToolCallTransform(true)
+			transformer.SetKimiToolCallTransform(true)
 
 			for _, e := range tt.events {
 				data, _ := json.Marshal(e)

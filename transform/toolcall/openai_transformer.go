@@ -3,6 +3,7 @@ package toolcall
 import (
 	"encoding/json"
 	"io"
+	"strings"
 
 	"ai-proxy/logging"
 	"ai-proxy/transform"
@@ -15,9 +16,12 @@ type OpenAITransformer struct {
 	sseWriter   *transform.SSEWriter
 	formatter   *OpenAIFormatter
 	parser      *Parser
+	glm5Parser  *GLM5Parser
 	messageID   string
 	model       string
 	inReasoning bool
+	toolCallTransform    bool
+	glm5ToolCallTransform bool
 }
 
 func NewOpenAITransformer(output io.Writer) *OpenAITransformer {
@@ -25,7 +29,18 @@ func NewOpenAITransformer(output io.Writer) *OpenAITransformer {
 		sseWriter: transform.NewSSEWriter(output),
 		formatter: NewOpenAIFormatter("", ""),
 		parser:    NewParser(DefaultTokens),
+		glm5Parser: NewGLM5Parser(),
 	}
+}
+
+// SetKimiToolCallTransform enables or disables tool call extraction from reasoning content.
+func (t *OpenAITransformer) SetKimiToolCallTransform(enabled bool) {
+	t.toolCallTransform = enabled
+}
+
+// SetGLM5ToolCallTransform enables or disables GLM-5 XML tool call extraction.
+func (t *OpenAITransformer) SetGLM5ToolCallTransform(enabled bool) {
+	t.glm5ToolCallTransform = enabled
 }
 
 func (t *OpenAITransformer) Transform(event *sse.Event) error {
@@ -103,6 +118,19 @@ func (t *OpenAITransformer) handleChunk(chunk types.Chunk, rawData string) error
 }
 
 func (t *OpenAITransformer) processText(text string) error {
+	// Check for GLM-5 XML tool calls first
+	if t.glm5ToolCallTransform && strings.Contains(text, "<tool_call>") {
+		logging.InfoMsg("[%s] GLM-5 tool call detected in reasoning content, extracting", t.messageID)
+		events := t.glm5Parser.Parse(text)
+		for _, e := range events {
+			if err := t.writeEvent(e); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// Check for Kimi-style tool call markup (always try if not idle or contains markup)
 	if !t.parser.IsIdle() || t.parser.tokens.ContainsAny(text) {
 		logging.InfoMsg("[%s] Tool call markup detected in reasoning content, transforming to tool_calls format", t.messageID)
 		events := t.parser.Parse(text)

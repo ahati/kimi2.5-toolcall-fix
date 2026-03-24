@@ -1,6 +1,7 @@
 package toolcall
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -594,5 +595,66 @@ func TestParser_ToolIndexIncrement(t *testing.T) {
 
 	if toolStarts != 3 {
 		t.Errorf("expected 3 tool starts, got %d", toolStarts)
+	}
+}
+
+// TestParser_InvalidToolCallID tests that invalid tool call IDs are rejected
+// and emitted as regular content instead.
+func TestParser_InvalidToolCallID(t *testing.T) {
+	p := NewParser(DefaultTokens)
+
+	// Test with a very long ID (should be rejected)
+	longID := strings.Repeat("a", 300)
+	input := fmt.Sprintf("<|tool_calls_section_begin|><|tool_call_begin|>%s<|tool_call_argument_begin|>{}<|tool_call_end|><|tool_calls_section_end|>", longID)
+	events := p.Parse(input)
+
+	// Should emit content, not tool call
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events (content + section end), got %d: %+v", len(events), events)
+	}
+	if events[0].Type != EventContent {
+		t.Errorf("expected EventContent for invalid ID, got %v", events[0].Type)
+	}
+	if events[1].Type != EventSectionEnd {
+		t.Errorf("expected EventSectionEnd, got %v", events[1].Type)
+	}
+
+	// Test with ID containing newlines (should be rejected)
+	p.Reset()
+	input = "<|tool_calls_section_begin|><|tool_call_begin|>func\nwith\nnewlines<|tool_call_argument_begin|>{}<|tool_call_end|><|tool_calls_section_end|>"
+	events = p.Parse(input)
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events for newline ID, got %d: %+v", len(events), events)
+	}
+	if events[0].Type != EventContent {
+		t.Errorf("expected EventContent for newline ID, got %v", events[0].Type)
+	}
+
+	// Test with ID containing markdown (should be rejected)
+	p.Reset()
+	input = "<|tool_calls_section_begin|><|tool_call_begin|>**bold**<|tool_call_argument_begin|>{}<|tool_call_end|><|tool_calls_section_end|>"
+	events = p.Parse(input)
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events for markdown ID, got %d: %+v", len(events), events)
+	}
+	if events[0].Type != EventContent {
+		t.Errorf("expected EventContent for markdown ID, got %v", events[0].Type)
+	}
+
+	// Test that valid IDs still work
+	p.Reset()
+	input = "<|tool_calls_section_begin|><|tool_call_begin|>bash<|tool_call_argument_begin|>{}<|tool_call_end|><|tool_calls_section_end|>"
+	events = p.Parse(input)
+
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events for valid ID, got %d: %+v", len(events), events)
+	}
+	if events[0].Type != EventToolStart {
+		t.Errorf("expected EventToolStart for valid ID, got %v", events[0].Type)
+	}
+	if events[0].Name != "bash" {
+		t.Errorf("expected name 'bash', got %s", events[0].Name)
 	}
 }

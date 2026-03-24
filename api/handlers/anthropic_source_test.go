@@ -1003,10 +1003,10 @@ func TestAnthropicToResponses_Tools(t *testing.T) {
 // Expected: "any" → "required", {type:"tool",name} → {type:"function",name}.
 func TestAnthropicToResponses_ToolChoice(t *testing.T) {
 	tests := []struct {
-		name           string
-		toolChoice     string
-		expectedType   string
-		expectedName   string
+		name         string
+		toolChoice   string
+		expectedType string
+		expectedName string
 	}{
 		{
 			name:         "tool maps to function object",

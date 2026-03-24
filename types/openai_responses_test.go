@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// boolPtr is a helper function to create a pointer to a bool value.
+func boolPtr(b bool) *bool { return &b }
+
 // TestResponsesRequest_MarshalUnmarshal tests marshaling and unmarshaling of ResponsesRequest.
 func TestResponsesRequest_MarshalUnmarshal(t *testing.T) {
 	tests := []struct {
@@ -17,7 +20,7 @@ func TestResponsesRequest_MarshalUnmarshal(t *testing.T) {
 			request: ResponsesRequest{
 				Model:           "gpt-4o",
 				Input:           "Hello, world!",
-				Stream:          true,
+				Stream:          boolPtr(true),
 				MaxOutputTokens: 100,
 			},
 			wantJSON: `{"model":"gpt-4o","input":"Hello, world!","max_output_tokens":100,"stream":true}`,
@@ -30,7 +33,7 @@ func TestResponsesRequest_MarshalUnmarshal(t *testing.T) {
 					{Type: "message", Role: "user", Content: "Hello"},
 					{Type: "message", Role: "assistant", Content: "Hi there"},
 				},
-				Stream: true,
+				Stream: boolPtr(true),
 			},
 			wantJSON: `{"model":"gpt-4o","input":[{"type":"message","role":"user","content":"Hello"},{"type":"message","role":"assistant","content":"Hi there"}],"stream":true}`,
 		},
@@ -40,7 +43,7 @@ func TestResponsesRequest_MarshalUnmarshal(t *testing.T) {
 				Model:        "gpt-4o",
 				Input:        "What is 2+2?",
 				Instructions: "You are a helpful math tutor.",
-				Stream:       true,
+				Stream:       boolPtr(true),
 			},
 			wantJSON: `{"model":"gpt-4o","input":"What is 2+2?","instructions":"You are a helpful math tutor.","stream":true}`,
 		},
@@ -49,7 +52,7 @@ func TestResponsesRequest_MarshalUnmarshal(t *testing.T) {
 			request: ResponsesRequest{
 				Model:  "o3",
 				Input:  "Solve this complex problem",
-				Stream: true,
+				Stream: boolPtr(true),
 				Reasoning: &ReasoningConfig{
 					Summary: "detailed",
 				},
@@ -62,7 +65,7 @@ func TestResponsesRequest_MarshalUnmarshal(t *testing.T) {
 				Model:              "gpt-4o",
 				Input:              "Tell me more",
 				PreviousResponseID: "resp_123abc",
-				Stream:             true,
+				Stream:             boolPtr(true),
 			},
 			wantJSON: `{"model":"gpt-4o","input":"Tell me more","stream":true,"previous_response_id":"resp_123abc"}`,
 		},
@@ -73,7 +76,7 @@ func TestResponsesRequest_MarshalUnmarshal(t *testing.T) {
 				Input:       "Creative writing",
 				Temperature: 0.8,
 				TopP:        0.9,
-				Stream:      true,
+				Stream:      boolPtr(true),
 			},
 			wantJSON: `{"model":"gpt-4o","input":"Creative writing","stream":true,"temperature":0.8,"top_p":0.9}`,
 		},
@@ -108,8 +111,16 @@ func TestResponsesRequest_MarshalUnmarshal(t *testing.T) {
 			if gotReq.Model != tt.request.Model {
 				t.Errorf("Model = %s, want %s", gotReq.Model, tt.request.Model)
 			}
-			if gotReq.Stream != tt.request.Stream {
-				t.Errorf("Stream = %v, want %v", gotReq.Stream, tt.request.Stream)
+			// Compare stream values (handle nil pointers)
+			var gotStream, wantStream bool
+			if gotReq.Stream != nil {
+				gotStream = *gotReq.Stream
+			}
+			if tt.request.Stream != nil {
+				wantStream = *tt.request.Stream
+			}
+			if gotStream != wantStream {
+				t.Errorf("Stream = %v, want %v", gotStream, wantStream)
 			}
 		})
 	}
@@ -134,7 +145,7 @@ func TestResponsesRequest_WithTools(t *testing.T) {
 				Type: "web_search",
 			},
 		},
-		Stream: true,
+		Stream: boolPtr(true),
 	}
 
 	data, err := json.Marshal(request)
@@ -660,7 +671,7 @@ func TestParallelToolCalls(t *testing.T) {
 		Model:             "gpt-4o",
 		Input:             "Call multiple tools",
 		ParallelToolCalls: true,
-		Stream:            true,
+		Stream:            boolPtr(true),
 	}
 
 	data, err := json.Marshal(request)
@@ -684,7 +695,7 @@ func TestMaxOutputTokens(t *testing.T) {
 		Model:           "gpt-4o",
 		Input:           "Hello",
 		MaxOutputTokens: 500,
-		Stream:          true,
+		Stream:          boolPtr(true),
 	}
 
 	data, err := json.Marshal(request)
@@ -718,7 +729,7 @@ func BenchmarkResponsesRequest_Marshal(b *testing.B) {
 				},
 			},
 		},
-		Stream: true,
+		Stream: boolPtr(true),
 	}
 
 	b.ResetTimer()

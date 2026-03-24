@@ -62,17 +62,25 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 		maxTokens = 65536 // Default max tokens (64k) for OpenAI-compatible APIs
 	}
 
+	// Respect the stream flag from the request, default to true for streaming
+	stream := true
+	if req.Stream != nil {
+		stream = *req.Stream
+	}
+
 	chatReq := &types.ChatCompletionRequest{
 		Model:       req.Model,
 		MaxTokens:   maxTokens,
-		Stream:      true,
+		Stream:      stream,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 	}
 
 	// Request usage statistics in the final streaming chunk.
-	chatReq.StreamOptions = &types.StreamOptions{
-		IncludeUsage: true,
+	if stream {
+		chatReq.StreamOptions = &types.StreamOptions{
+			IncludeUsage: true,
+		}
 	}
 
 	// Convert parallel_tool_calls if set
@@ -101,6 +109,8 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 	chatReq.ResponseFormat = req.ResponseFormat
 
 	// Forward reasoning effort to Chat Completions
+	// Note: reasoning.summary ("concise"/"detailed") is not forwarded because
+	// Chat Completions API has no equivalent field for summary style preference.
 	if req.Reasoning != nil && req.Reasoning.Effort != "" {
 		chatReq.ReasoningEffort = req.Reasoning.Effort
 	}
@@ -503,12 +513,15 @@ func (c *ResponsesToChatConverter) extractTextFromParts(parts []interface{}) str
 				result.WriteString(text)
 			}
 		case "input_file":
-			// File attachments - extract filename as placeholder
+			// Include file content if available, otherwise use placeholder
 			if fileData, ok := partMap["file_data"].(map[string]interface{}); ok {
-				if filename, ok := fileData["filename"].(string); ok {
-					if result.Len() > 0 {
-						result.WriteString("\n")
-					}
+				if result.Len() > 0 {
+					result.WriteString("\n")
+				}
+				// Try to include actual file data
+				if content, ok := fileData["file_data"].(string); ok && content != "" {
+					result.WriteString(content)
+				} else if filename, ok := fileData["filename"].(string); ok {
 					result.WriteString("[File attached: " + filename + "]")
 				}
 			}
@@ -524,7 +537,8 @@ func (c *ResponsesToChatConverter) hasNonTextParts(parts []interface{}) bool {
 			continue
 		}
 		partType, _ := partMap["type"].(string)
-		if partType != "input_text" && partType != "text" && partType != "output_text" && partType != "input_file" && partType != "refusal" {
+		// input_file, input_image need structured conversion
+		if partType != "input_text" && partType != "text" && partType != "output_text" && partType != "refusal" {
 			return true
 		}
 	}
@@ -568,14 +582,20 @@ func (c *ResponsesToChatConverter) convertContentParts(parts []interface{}) []in
 				})
 			}
 		case "input_file":
-			// Convert input_file to text placeholder
+			// Preserve file data in the content part
+			// Chat Completions doesn't have a standard file type, but we pass through
+			// the data so downstream providers can handle it
 			if fileData, ok := partMap["file_data"].(map[string]interface{}); ok {
-				if filename, ok := fileData["filename"].(string); ok {
-					result = append(result, map[string]interface{}{
-						"type": "text",
-						"text": "[File attached: " + filename + "]",
-					})
+				filePart := map[string]interface{}{
+					"type": "file",
 				}
+				if filename, ok := fileData["filename"].(string); ok {
+					filePart["filename"] = filename
+				}
+				if content, ok := fileData["file_data"].(string); ok && content != "" {
+					filePart["file_data"] = content
+				}
+				result = append(result, filePart)
 			}
 		default:
 			// Pass through other content types
@@ -651,6 +671,11 @@ type ResponsesToChatTransformer struct {
 	toolCallIndex   int
 	currentToolCall *responsesToolCallState
 
+	// Reasoning state
+	reasoningIndex     int
+	currentReasoningID string
+	reasoningBuilder   strings.Builder
+
 	contentBuilder strings.Builder
 
 	finishReason string
@@ -706,6 +731,14 @@ func (t *ResponsesToChatTransformer) handleEvent(event *types.ResponsesStreamEve
 		return nil // No action needed
 	case "response.output_text.delta":
 		return t.handleOutputTextDelta(event)
+	case "response.reasoning_summary_part.added":
+		return t.handleReasoningSummaryPartAdded(event)
+	case "response.reasoning_summary_text.delta":
+		return t.handleReasoningSummaryTextDelta(event)
+	case "response.reasoning_summary_text.done":
+		return t.handleReasoningSummaryTextDone(event)
+	case "response.reasoning_summary_part.done":
+		return nil // No action needed, already handled in text.done
 	case "response.function_call_arguments.delta":
 		return t.handleFunctionCallArgsDelta(event)
 	case "response.content_part.done":
@@ -714,6 +747,10 @@ func (t *ResponsesToChatTransformer) handleEvent(event *types.ResponsesStreamEve
 		return t.handleOutputItemDone(event)
 	case "response.completed":
 		return t.handleResponseCompleted(event)
+	case "response.incomplete":
+		return t.handleResponseIncomplete(event)
+	case "response.failed":
+		return t.handleResponseFailed(event)
 	case "error":
 		return t.handleError(event)
 	default:
@@ -737,13 +774,18 @@ func (t *ResponsesToChatTransformer) handleOutputItemAdded(event *types.Response
 		return nil
 	}
 
-	if event.OutputItem.Type == "function_call" {
+	switch event.OutputItem.Type {
+	case "function_call":
 		t.currentToolCall = &responsesToolCallState{
 			id:   event.OutputItem.ID,
 			name: event.OutputItem.Name,
 		}
 		t.toolNames[event.OutputItem.ID] = event.OutputItem.Name
 		t.toolCallIndex++
+	case "reasoning":
+		// Track reasoning item for subsequent delta events
+		t.currentReasoningID = event.OutputItem.ID
+		t.reasoningBuilder.Reset()
 	}
 
 	return nil
@@ -819,10 +861,13 @@ func (t *ResponsesToChatTransformer) handleOutputItemDone(event *types.Responses
 		return nil
 	}
 
-	// For function_call items, send the complete tool call
-	if event.OutputItem.Type == "function_call" && t.currentToolCall != nil {
+	switch event.OutputItem.Type {
+	case "function_call":
 		// The tool call has been streamed incrementally, just clear state
 		t.currentToolCall = nil
+	case "reasoning":
+		// Clear reasoning state
+		t.currentReasoningID = ""
 	}
 
 	return nil
@@ -881,6 +926,107 @@ func (t *ResponsesToChatTransformer) handleError(event *types.ResponsesStreamEve
 	}
 	if event.Error.Code != "" {
 		errResp.Error.Code = event.Error.Code
+	}
+
+	data, err := json.Marshal(errResp)
+	if err != nil {
+		return err
+	}
+
+	return t.writeData(data)
+}
+
+// handleReasoningSummaryPartAdded handles response.reasoning_summary_part.added event.
+func (t *ResponsesToChatTransformer) handleReasoningSummaryPartAdded(event *types.ResponsesStreamEvent) error {
+	if event.ItemID == "" {
+		return nil
+	}
+
+	// Track the current reasoning item
+	t.currentReasoningID = event.ItemID
+	t.reasoningBuilder.Reset()
+
+	return nil
+}
+
+// handleReasoningSummaryTextDelta handles response.reasoning_summary_text.delta event.
+func (t *ResponsesToChatTransformer) handleReasoningSummaryTextDelta(event *types.ResponsesStreamEvent) error {
+	if event.Delta == "" {
+		return nil
+	}
+
+	t.reasoningBuilder.WriteString(event.Delta)
+
+	// Emit the reasoning delta in the Chat Completions format
+	chunk := t.createChunk()
+	chunk.Choices = []types.Choice{
+		{
+			Index: t.contentIndex,
+			Delta: types.Delta{
+				Reasoning: event.Delta,
+			},
+		},
+	}
+
+	return t.writeChunk(chunk)
+}
+
+// handleReasoningSummaryTextDone handles response.reasoning_summary_text.done event.
+func (t *ResponsesToChatTransformer) handleReasoningSummaryTextDone(event *types.ResponsesStreamEvent) error {
+	// Reasoning text is complete, clear state
+	t.currentReasoningID = ""
+	t.reasoningIndex++
+
+	return nil
+}
+
+// handleResponseIncomplete handles response.incomplete event.
+func (t *ResponsesToChatTransformer) handleResponseIncomplete(event *types.ResponsesStreamEvent) error {
+	t.finishReason = "length"
+
+	// Send final chunk with finish_reason
+	chunk := t.createChunk()
+	chunk.Choices = []types.Choice{
+		{
+			Index:        t.contentIndex,
+			Delta:        types.Delta{},
+			FinishReason: &t.finishReason,
+		},
+	}
+
+	// Add usage if available
+	if event.Response != nil && event.Response.Usage != nil {
+		chunk.Usage = &types.Usage{
+			PromptTokens:     event.Response.Usage.InputTokens,
+			CompletionTokens: event.Response.Usage.OutputTokens,
+			TotalTokens:      event.Response.Usage.TotalTokens,
+		}
+	}
+
+	return t.writeChunk(chunk)
+}
+
+// handleResponseFailed handles response.failed event.
+func (t *ResponsesToChatTransformer) handleResponseFailed(event *types.ResponsesStreamEvent) error {
+	var errMsg string
+	var errCode string
+
+	if event.Response != nil && event.Response.Error != nil {
+		errMsg = event.Response.Error.Message
+		errCode = event.Response.Error.Code
+	}
+	if errMsg == "" {
+		errMsg = "Response failed"
+	}
+
+	errResp := types.ErrorResponse{
+		Error: types.ErrorDetail{
+			Type:    "api_error",
+			Message: errMsg,
+		},
+	}
+	if errCode != "" {
+		errResp.Error.Code = errCode
 	}
 
 	data, err := json.Marshal(errResp)

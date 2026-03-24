@@ -5,6 +5,13 @@
   "experimental": {
     "openTelemetry": false
   },
+  "mcp": {
+    "exa": {
+      "type": "remote",
+      "url": "https://mcp.exa.ai/mcp",
+      "enabled": true
+    }
+  },
   "provider": {
     "proxy-ai": {
       "id": "proxy-ai",

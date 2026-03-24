@@ -348,9 +348,9 @@ func TestAnthropicToResponsesRequest_ImageContent(t *testing.T) {
 				map[string]interface{}{
 					"type": "image",
 					"source": map[string]interface{}{
-						"type":      "base64",
+						"type":       "base64",
 						"media_type": "image/png",
-						"data":      "abc123",
+						"data":       "abc123",
 					},
 				},
 			}},
@@ -426,7 +426,7 @@ func TestAnthropicToResponsesRequest_DroppedFields(t *testing.T) {
 	req := &types.MessageRequest{
 		Model:         "claude-3-opus",
 		MaxTokens:     1024,
-		TopK:          40, // Should be dropped
+		TopK:          40,                      // Should be dropped
 		StopSequences: []string{"STOP", "END"}, // Should be dropped
 		Messages: []types.MessageInput{
 			{Role: "user", Content: "Hello"},
