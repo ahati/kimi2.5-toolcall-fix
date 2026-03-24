@@ -543,16 +543,23 @@ func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.Ca
 	upstreamUsage := capture.ExtractTokenUsageFromChunks(upstream.Chunks())
 	downstreamUsage := capture.ExtractTokenUsageFromChunks(downstream.Chunks())
 
+	// Extract finish reasons from both upstream and downstream chunks
+	// Upstream: reason from LLM API, Downstream: reason sent to client (may differ after transformation)
+	upstreamReason := capture.ExtractFinishReasonFromChunks(upstream.Chunks())
+	downstreamReason := capture.ExtractFinishReasonFromChunks(downstream.Chunks())
+
 	// Compact one-line log with emojis:
 	// 📤 = upstream (to LLM), 📥 = downstream (to client)
 	// ⬆️ = input tokens, ⬇️ = output tokens, 💾 = cache tokens
-	logging.InfoMsg("|📤 ⬆️ %d ⬇️ %d 💾 %d|  |📥 ⬆️ %d ⬇️ %d 💾 %d| [%s] [%s]",
+	logging.InfoMsg("|📤 ⬆️ %d ⬇️ %d 💾 %d %s|  |📥 ⬆️ %d ⬇️ %d 💾 %d %s| [%s] [%s]",
 		upstreamUsage.InputTokens,
 		upstreamUsage.OutputTokens,
 		upstreamUsage.CacheReadTokens+upstreamUsage.CacheCreationTokens,
+		upstreamReason,
 		downstreamUsage.InputTokens,
 		downstreamUsage.OutputTokens,
 		downstreamUsage.CacheReadTokens+downstreamUsage.CacheCreationTokens,
+		downstreamReason,
 		cc.SessionID,
 		cc.RequestID,
 	)
