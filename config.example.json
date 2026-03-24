@@ -35,5 +35,15 @@
     "model": "{model}",
     "type": "auto",
     "kimi_tool_call_transform": true
+  },
+  "summarizer": {
+    "enabled": false,
+    "mode": "local",
+    "local": {
+      "model_path": "./models/Qwen3.5-0.8B-Q4_K_M.gguf",
+      "context_size": 2048,
+      "threads": 4,
+      "max_summary_tokens": 50
+    }
   }
 }

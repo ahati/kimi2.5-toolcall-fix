@@ -361,7 +361,7 @@ func (m *mockHandler) ValidateRequest(body []byte) error {
 	return m.validateErr
 }
 
-func (m *mockHandler) TransformRequest(body []byte) ([]byte, error) {
+func (m *mockHandler) TransformRequest(ctx context.Context, body []byte) ([]byte, error) {
 	if m.transformErr != nil {
 		return nil, m.transformErr
 	}

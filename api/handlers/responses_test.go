@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -141,7 +142,7 @@ func TestResponsesHandler_TransformRequest_OpenAI(t *testing.T) {
 	}
 
 	body := []byte(`{"model":"gpt-4o","input":"Hello","stream":true}`)
-	transformed, err := handler.TransformRequest(body)
+	transformed, err := handler.TransformRequest(context.TODO(), body)
 
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
@@ -188,7 +189,7 @@ func TestResponsesHandler_TransformRequest_Anthropic(t *testing.T) {
 	}
 
 	body := []byte(`{"model":"claude-3-opus","input":"Hello","instructions":"Be helpful","stream":true}`)
-	transformed, err := handler.TransformRequest(body)
+	transformed, err := handler.TransformRequest(context.TODO(), body)
 
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
@@ -507,7 +508,7 @@ func BenchmarkResponsesHandler_TransformRequest_OpenAI(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := handler.TransformRequest(body)
+		_, err := handler.TransformRequest(context.TODO(), body)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -535,7 +536,7 @@ func BenchmarkResponsesHandler_TransformRequest_Anthropic(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := handler.TransformRequest(body)
+		_, err := handler.TransformRequest(context.TODO(), body)
 		if err != nil {
 			b.Fatal(err)
 		}

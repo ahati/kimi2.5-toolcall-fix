@@ -19,6 +19,7 @@ import (
 // ResponsesToChatConverter converts OpenAI ResponsesRequest to ChatCompletionRequest.
 type ResponsesToChatConverter struct {
 	reasoningSplit bool
+	cacheHit       bool
 }
 
 // NewResponsesToChatConverter creates a new converter for Responses to Chat format.
@@ -33,6 +34,11 @@ func (c *ResponsesToChatConverter) SetReasoningSplit(enabled bool) {
 	c.reasoningSplit = enabled
 }
 
+// CacheHit returns true if the converter found a cached conversation during conversion.
+func (c *ResponsesToChatConverter) CacheHit() bool {
+	return c.cacheHit
+}
+
 // Convert transforms a ResponsesRequest body to ChatCompletionRequest format.
 func (c *ResponsesToChatConverter) Convert(body []byte) ([]byte, error) {
 	var req types.ResponsesRequest
@@ -45,13 +51,26 @@ func (c *ResponsesToChatConverter) Convert(body []byte) ([]byte, error) {
 }
 
 // convertRequest transforms a ResponsesRequest to ChatCompletionRequest.
-// When previous_response_id is provided, it fetches the conversation history
-// from the store and prepends it to the current input.
+// When previous_response_id is provided, it walks the conversation chain
+// from the store and prepends all history to the current input.
 func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *types.ChatCompletionRequest {
-	// Fetch conversation history if previous_response_id is provided
+	var reasoningItemID string
+
+	// Fetch conversation history chain if previous_response_id is provided
 	if req.PreviousResponseID != "" {
-		if hist := conversation.GetFromDefault(req.PreviousResponseID); hist != nil {
-			req.Input = prependHistoryToInput(hist, req.Input)
+		chain := conversation.WalkChainFromDefault(req.PreviousResponseID)
+		if len(chain) > 0 {
+			// Mark cache hit
+			c.cacheHit = true
+			// Prepend all conversations in the chain (oldest first)
+			for _, hist := range chain {
+				req.Input = prependHistoryToInput(hist, req.Input)
+				// Capture reasoning_item_id from the most recent conversation
+				// (the last one in the chain, which is the most recent turn)
+				if hist.ReasoningItemID != "" {
+					reasoningItemID = hist.ReasoningItemID
+				}
+			}
 		} else {
 			logging.InfoMsg("Warning: Previous response ID not found in conversation store: %s", req.PreviousResponseID)
 		}
@@ -118,6 +137,11 @@ func (c *ResponsesToChatConverter) convertRequest(req *types.ResponsesRequest) *
 	// Enable reasoning_split if configured (for MiniMax and similar providers)
 	if c.reasoningSplit {
 		chatReq.ReasoningSplit = true
+	}
+
+	// Pass reasoning_item_id to upstream for reasoning continuity across turns
+	if reasoningItemID != "" {
+		chatReq.ReasoningItemID = reasoningItemID
 	}
 
 	// Convert metadata.user_id to user field

@@ -128,6 +128,42 @@ type FallbackConfig struct {
 	ReasoningSplit bool `json:"reasoning_split,omitempty"`
 }
 
+// SummarizerConfig defines the configuration for the reasoning summarizer.
+// The summarizer uses a small fast model to generate concise summaries of
+// the model's internal reasoning process.
+type SummarizerConfig struct {
+	// Enabled determines whether summarization is active.
+	Enabled bool `json:"enabled"`
+	// Mode specifies the summarizer mode: "http" (API calls) or "local" (llama.cpp).
+	// Default is "http".
+	Mode string `json:"mode,omitempty"`
+	// Provider is the name of the provider to use for HTTP summarization.
+	Provider string `json:"provider"`
+	// Model is the model to use for summarization (e.g., "gpt-4o-mini", "claude-3-haiku").
+	Model string `json:"model"`
+	// Prompt is an optional custom prompt for summarization.
+	// If empty, a default prompt is used.
+	Prompt string `json:"prompt,omitempty"`
+	// Local contains configuration for local llama.cpp summarization.
+	Local LocalSummarizerConfig `json:"local,omitempty"`
+}
+
+// LocalSummarizerConfig defines configuration for local llama.cpp summarization.
+type LocalSummarizerConfig struct {
+	// ModelPath is the path to the GGUF model file.
+	ModelPath string `json:"model_path"`
+	// ContextSize is the context window size for the model.
+	ContextSize int `json:"context_size,omitempty"`
+	// Threads is the number of CPU threads to use (0 = auto).
+	Threads int `json:"threads,omitempty"`
+	// GPULayers is the number of layers to offload to GPU (0 = CPU-only).
+	GPULayers int `json:"gpu_layers,omitempty"`
+	// MaxSummaryTokens is the maximum number of tokens to generate.
+	MaxSummaryTokens int `json:"max_summary_tokens,omitempty"`
+	// MaxReasoningChars limits input reasoning text length (0 = unlimited).
+	MaxReasoningChars int `json:"max_reasoning_chars,omitempty"`
+}
+
 // Schema is the root configuration structure for the multi-provider proxy.
 // It contains all provider definitions, model mappings, and fallback settings.
 type Schema struct {
@@ -137,4 +173,6 @@ type Schema struct {
 	Models map[string]ModelConfig `json:"models"`
 	// Fallback defines the fallback behavior for failed requests.
 	Fallback FallbackConfig `json:"fallback"`
+	// Summarizer defines the summarizer configuration.
+	Summarizer SummarizerConfig `json:"summarizer"`
 }

@@ -1,14 +1,17 @@
 package convert
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"ai-proxy/capture"
 	"ai-proxy/conversation"
 	"ai-proxy/logging"
+	"ai-proxy/summarizer"
 	"ai-proxy/transform/toolcall"
 	"ai-proxy/types"
 
@@ -281,6 +284,18 @@ type ChatToResponsesTransformer struct {
 	// Input items for conversation storage
 	inputItems []types.InputItem
 
+	// previousResponseID stores the parent conversation ID for chain traversal
+	previousResponseID string
+
+	// shouldStore controls whether to store the conversation (default: true)
+	// Set to false when store:false is specified in the request
+	shouldStore bool
+
+	// reasoningSummaryMode controls how reasoning is summarized.
+	// Values: "" (no summary), "concise", "detailed"
+	// When set, the summarizer service is called to generate a summary.
+	reasoningSummaryMode string
+
 	// Tool call extraction from reasoning content (for Kimi-style markup)
 	toolCallTransform bool             // enabled by config
 	parser            *toolcall.Parser // parser for tool call markup
@@ -291,6 +306,9 @@ type ChatToResponsesTransformer struct {
 	// GLM-5 tool call extraction from reasoning_content
 	glm5Parser            *toolcall.GLM5Parser
 	glm5ToolCallTransform bool
+
+	// ctx is the request context for cache status tracking
+	ctx context.Context
 }
 
 type chatToRespToolCallState struct {
@@ -304,6 +322,7 @@ func NewChatToResponsesTransformer(w io.Writer) *ChatToResponsesTransformer {
 		w:              w,
 		created:        time.Now().Unix(),
 		sequenceNumber: 0,
+		shouldStore:    true, // default to storing
 		parser:         toolcall.NewParser(toolcall.DefaultTokens),
 		glm5Parser:     toolcall.NewGLM5Parser(),
 	}
@@ -313,6 +332,27 @@ func NewChatToResponsesTransformer(w io.Writer) *ChatToResponsesTransformer {
 // This should be called before streaming starts to capture the original request input.
 func (t *ChatToResponsesTransformer) SetInputItems(items []types.InputItem) {
 	t.inputItems = items
+}
+
+// SetStore controls whether to store the conversation.
+// Set to false when the request specifies store:false.
+// Default is true (conversations are stored).
+func (t *ChatToResponsesTransformer) SetStore(store bool) {
+	t.shouldStore = store
+}
+
+// SetPreviousResponseID sets the parent conversation ID for chain traversal.
+// This should be called before streaming starts to link the new conversation
+// to its parent in the conversation chain.
+func (t *ChatToResponsesTransformer) SetPreviousResponseID(id string) {
+	t.previousResponseID = id
+}
+
+// SetReasoningSummaryMode sets the reasoning summary mode.
+// Values: "" (no summary), "concise", "detailed"
+// When set, the summarizer service is called to generate a summary of reasoning content.
+func (t *ChatToResponsesTransformer) SetReasoningSummaryMode(mode string) {
+	t.reasoningSummaryMode = mode
 }
 
 // SetKimiToolCallTransform enables or disables tool call extraction from reasoning content.
@@ -327,6 +367,12 @@ func (t *ChatToResponsesTransformer) SetKimiToolCallTransform(enabled bool) {
 // and emit proper function_call output items.
 func (t *ChatToResponsesTransformer) SetGLM5ToolCallTransform(enabled bool) {
 	t.glm5ToolCallTransform = enabled
+}
+
+// SetContext sets the request context for cache status tracking.
+// When a conversation is stored, the cache-created status is set in the capture context.
+func (t *ChatToResponsesTransformer) SetContext(ctx context.Context) {
+	t.ctx = ctx
 }
 
 func (t *ChatToResponsesTransformer) nextSeq() int {
@@ -433,19 +479,32 @@ func (t *ChatToResponsesTransformer) handleChunk(chunk *types.Chunk) error {
 }
 
 func (t *ChatToResponsesTransformer) emitResponseCreated() error {
-	event := map[string]interface{}{
+	resp := map[string]interface{}{
+		"id":         t.responseID,
+		"object":     "response",
+		"created_at": t.created,
+		"model":      t.model,
+		"status":     "in_progress",
+		"output":     []interface{}{},
+	}
+
+	// Emit response.created
+	createdEvent := map[string]interface{}{
 		"type":            "response.created",
 		"sequence_number": t.nextSeq(),
-		"response": map[string]interface{}{
-			"id":         t.responseID,
-			"object":     "response",
-			"created_at": t.created,
-			"model":      t.model,
-			"status":     "in_progress",
-			"output":     []interface{}{},
-		},
+		"response":        resp,
 	}
-	return t.writeEvent(event)
+	if err := t.writeEvent(createdEvent); err != nil {
+		return err
+	}
+
+	// Emit response.in_progress
+	inProgressEvent := map[string]interface{}{
+		"type":            "response.in_progress",
+		"sequence_number": t.nextSeq(),
+		"response":        resp,
+	}
+	return t.writeEvent(inProgressEvent)
 }
 
 func (t *ChatToResponsesTransformer) emitTextDelta(text string) error {
@@ -498,6 +557,19 @@ func (t *ChatToResponsesTransformer) finalizeReasoning() error {
 	}
 
 	reasoningText := t.reasoningBuilder.String()
+
+	// If reasoning summary mode is set, call the summarizer service
+	if t.reasoningSummaryMode != "" {
+		if svc := summarizer.GetDefaultService(); svc != nil {
+			summary, err := svc.Summarize(context.Background(), reasoningText)
+			if err != nil {
+				logging.ErrorMsg("[%s] Failed to summarize reasoning: %v", t.responseID, err)
+				// Fall through to use original reasoning text
+			} else {
+				reasoningText = summary
+			}
+		}
+	}
 
 	// Emit response.reasoning_summary_text.done
 	textDoneEvent := map[string]interface{}{
@@ -986,7 +1058,14 @@ func (t *ChatToResponsesTransformer) handleFinish() error {
 
 // storeConversation saves the conversation to the default store for previous_response_id support.
 // This enables multi-turn conversations without re-sending the entire history.
+// Storage is skipped if shouldStore is false (ZDR mode).
 func (t *ChatToResponsesTransformer) storeConversation(outputItems []map[string]interface{}) {
+	// Skip storage if disabled (ZDR mode)
+	if !t.shouldStore {
+		logging.DebugMsg("[%s] Skipping conversation storage (store:false)", t.responseID)
+		return
+	}
+
 	// Only store if we have a response ID and the store is initialized
 	if t.responseID == "" {
 		return
@@ -994,22 +1073,32 @@ func (t *ChatToResponsesTransformer) storeConversation(outputItems []map[string]
 
 	// Convert outputItems to types.OutputItem slice
 	outputs := make([]types.OutputItem, 0, len(outputItems))
+	var reasoningItemID string
 	for _, item := range outputItems {
 		outputItem := convertChatToOutputItem(item)
 		if outputItem != nil {
 			outputs = append(outputs, *outputItem)
+			// Extract reasoning item ID if this is a reasoning item
+			if outputItem.Type == "reasoning" && outputItem.ID != "" {
+				reasoningItemID = outputItem.ID
+			}
 		}
 	}
 
 	// Store the conversation
 	conv := &conversation.Conversation{
-		ID:     t.responseID,
-		Input:  t.inputItems,
-		Output: outputs,
+		ID:                 t.responseID,
+		PreviousResponseID: t.previousResponseID,
+		Input:              t.inputItems,
+		Output:             outputs,
+		ReasoningItemID:    reasoningItemID,
 	}
 	conversation.StoreInDefault(conv)
-	logging.DebugMsg("[%s] Stored conversation with %d input items and %d output items",
-		t.responseID, len(t.inputItems), len(outputs))
+	logging.DebugMsg("[%s] Stored conversation with %d input items and %d output items, reasoning_item_id=%s",
+		t.responseID, len(t.inputItems), len(outputs), reasoningItemID)
+
+	// Mark cache-created in the capture context
+	capture.SetCacheCreated(t.ctx)
 }
 
 // convertChatToOutputItem converts a map[string]interface{} to types.OutputItem.

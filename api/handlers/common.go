@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"ai-proxy/capture"
 	"ai-proxy/logging"
@@ -168,7 +169,7 @@ func Handle(h Handler) gin.HandlerFunc {
 		}
 
 		// Step 4: Transform request to upstream format
-		transformedBody, err := h.TransformRequest(body)
+		transformedBody, err := h.TransformRequest(c.Request.Context(), body)
 		if err != nil {
 			// Transformation failure indicates internal error
 			h.WriteError(c, http.StatusInternalServerError, "Failed to transform request")
@@ -297,6 +298,8 @@ func streamResponse(c *gin.Context, body io.Reader, h Handler) {
 
 	// Create transformer to convert upstream format to downstream format
 	transformer := h.CreateTransformer(c.Writer)
+	// Set context for cache status tracking
+	setContextOnTransformer(transformer, c.Request.Context())
 	// Ensure transformer resources are cleaned up
 	defer transformer.Close()
 
@@ -376,6 +379,8 @@ func streamWithCapture(c *gin.Context, body io.Reader, h Handler, cc *capture.Ca
 		timingWriter := newTimingCaptureWriter(w, downstream)
 		// Create transformer that writes to our timing-aware writer
 		transformer := h.CreateTransformer(timingWriter)
+		// Set context for cache status tracking
+		setContextOnTransformer(transformer, c.Request.Context())
 		defer func() {
 			timingWriter.FlushRemaining()
 			transformer.Close()
@@ -433,6 +438,8 @@ func streamWithoutCapture(c *gin.Context, body io.Reader, h Handler) {
 
 	// Create transformer without capture wrapper
 	transformer := h.CreateTransformer(c.Writer)
+	// Set context for cache status tracking
+	setContextOnTransformer(transformer, c.Request.Context())
 	defer transformer.Close()
 
 	// Stream events without capture overhead
@@ -493,6 +500,14 @@ func emitStreamError(transformer transform.SSETransformer, err error) {
 	}
 }
 
+// setContextOnTransformer sets the context on transformers that support it.
+// This enables cache status tracking during response transformation.
+func setContextOnTransformer(transformer transform.SSETransformer, ctx context.Context) {
+	if ct, ok := transformer.(interface{ SetContext(context.Context) }); ok {
+		ct.SetContext(ctx)
+	}
+}
+
 // finalizeCapture completes the capture process by recording response data
 // and extracting request IDs from the SSE stream.
 //
@@ -543,19 +558,56 @@ func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.Ca
 	upstreamUsage := capture.ExtractTokenUsageFromChunks(upstream.Chunks())
 	downstreamUsage := capture.ExtractTokenUsageFromChunks(downstream.Chunks())
 
+	// Extract finish reasons from both upstream and downstream chunks
+	// Upstream: reason from LLM API, Downstream: reason sent to client (may differ after transformation)
+	upstreamReason := capture.ExtractFinishReasonFromChunks(upstream.Chunks())
+	downstreamReason := capture.ExtractFinishReasonFromChunks(downstream.Chunks())
+
+	// Build cache status indicators (separate items)
+	var cacheParts []string
+	if cc.CacheHit {
+		cacheParts = append(cacheParts, "🗄️ cache-hit")
+	}
+	if cc.CacheCreated {
+		cacheParts = append(cacheParts, "🗃️ cache-created")
+	}
+	cacheStatus := strings.Join(cacheParts, " ")
+
 	// Compact one-line log with emojis:
 	// 📤 = upstream (to LLM), 📥 = downstream (to client)
-	// ⬆️ = input tokens, ⬇️ = output tokens, 💾 = cache tokens
-	logging.InfoMsg("|📤 ⬆️ %d ⬇️ %d 💾 %d|  |📥 ⬆️ %d ⬇️ %d 💾 %d| [%s] [%s]",
-		upstreamUsage.InputTokens,
-		upstreamUsage.OutputTokens,
-		upstreamUsage.CacheReadTokens+upstreamUsage.CacheCreationTokens,
-		downstreamUsage.InputTokens,
-		downstreamUsage.OutputTokens,
-		downstreamUsage.CacheReadTokens+downstreamUsage.CacheCreationTokens,
-		cc.SessionID,
-		cc.RequestID,
-	)
+	// ⬆️ = input tokens, ⬇️ = output tokens, 📖 = cache read, 💾  = cache creation
+	if cacheStatus != "" {
+		logging.InfoMsg("|📤 ⬆️ %d ⬇️ %d 📖 %d 💾  %d %s|  |📥 ⬆️ %d ⬇️ %d 📖 %d 💾  %d %s| %s [%s] [%s]",
+			upstreamUsage.InputTokens,
+			upstreamUsage.OutputTokens,
+			upstreamUsage.CacheReadTokens,
+			upstreamUsage.CacheCreationTokens,
+			upstreamReason,
+			downstreamUsage.InputTokens,
+			downstreamUsage.OutputTokens,
+			downstreamUsage.CacheReadTokens,
+			downstreamUsage.CacheCreationTokens,
+			downstreamReason,
+			cacheStatus,
+			cc.SessionID,
+			cc.RequestID,
+		)
+	} else {
+		logging.InfoMsg("|📤 ⬆️ %d ⬇️ %d 📖 %d 💾  %d %s|  |📥 ⬆️ %d ⬇️ %d 📖 %d 💾  %d %s| [%s] [%s]",
+			upstreamUsage.InputTokens,
+			upstreamUsage.OutputTokens,
+			upstreamUsage.CacheReadTokens,
+			upstreamUsage.CacheCreationTokens,
+			upstreamReason,
+			downstreamUsage.InputTokens,
+			downstreamUsage.OutputTokens,
+			downstreamUsage.CacheReadTokens,
+			downstreamUsage.CacheCreationTokens,
+			downstreamReason,
+			cc.SessionID,
+			cc.RequestID,
+		)
+	}
 }
 
 // handleUpstreamError processes an error response from the upstream API

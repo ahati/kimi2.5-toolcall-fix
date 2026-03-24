@@ -13,7 +13,6 @@
     "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
-    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
     "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1",
     "CLAUDE_CODE_EXTRA_BODY": "{\"output_config\": null}"
   },
@@ -21,6 +20,7 @@
     "commit": "",
     "pr": ""
   },
+  "model": "haiku",
   "availableModels": [
     "glm-5",
     "kimi-k2.5",
@@ -45,6 +45,5 @@
   "showThinkingSummaries": true,
   "skipDangerousModePermissionPrompt": true,
   "terminalProgressBarEnabled": false,
-  "defaultMode": "bypassPermissions",
-  "model": "opus"
+  "defaultMode": "bypassPermissions"
 }

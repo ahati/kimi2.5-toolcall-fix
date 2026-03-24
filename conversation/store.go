@@ -17,10 +17,17 @@ import (
 type Conversation struct {
 	// ID is the unique identifier for this conversation (response_id).
 	ID string
+	// PreviousResponseID points to the parent conversation in the chain.
+	// This enables linked-list traversal for multi-turn conversations.
+	PreviousResponseID string
 	// Input contains the original input items from the request.
 	Input []types.InputItem
 	// Output contains the response output items.
 	Output []types.OutputItem
+	// ReasoningItemID is the ID of the reasoning output item, if any.
+	// This is passed to the upstream LLM on continuation to enable
+	// reasoning continuity across turns.
+	ReasoningItemID string
 	// CreatedAt is the timestamp when the conversation was created.
 	CreatedAt time.Time
 	// ExpiresAt is the timestamp when the conversation should be expired.
@@ -94,6 +101,30 @@ func (s *Store) Get(id string) *Conversation {
 		return conv
 	}
 	return nil
+}
+
+// WalkChain walks the linked-list chain of conversations backward from the given ID.
+// It returns all conversations in chronological order (oldest first).
+// The chain traversal follows PreviousResponseID pointers until it reaches
+// a conversation with no parent or a missing conversation.
+func (s *Store) WalkChain(id string) []*Conversation {
+	var chain []*Conversation
+	cursor := id
+	for cursor != "" {
+		conv := s.Get(cursor)
+		if conv == nil {
+			break
+		}
+		// Append to slice (O(1) amortized)
+		chain = append(chain, conv)
+		cursor = conv.PreviousResponseID
+	}
+	// Reverse to get chronological order (oldest first)
+	// This is O(n) instead of O(n²) prepending
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain
 }
 
 // Store saves a conversation, evicting the oldest if at capacity.
@@ -209,6 +240,15 @@ func GetFromDefault(id string) *Conversation {
 		return nil
 	}
 	return DefaultStore.Get(id)
+}
+
+// WalkChainFromDefault walks the conversation chain from the default store.
+// Returns nil if the default store is not initialized.
+func WalkChainFromDefault(id string) []*Conversation {
+	if DefaultStore == nil {
+		return nil
+	}
+	return DefaultStore.WalkChain(id)
 }
 
 // StoreInDefault saves a conversation to the default store.

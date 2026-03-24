@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
+	"ai-proxy/capture"
 	"ai-proxy/config"
 	"ai-proxy/convert"
 	"ai-proxy/router"
@@ -43,6 +45,14 @@ type ResponsesHandler struct {
 	originalModel string
 	// inputItems stores the parsed input items for conversation storage.
 	inputItems []types.InputItem
+	// shouldStore controls whether to store the conversation.
+	// Default is true; set to false when request specifies store:false.
+	shouldStore bool
+	// previousResponseID is the ID of the previous response for conversation chain.
+	previousResponseID string
+	// reasoningSummaryMode controls how reasoning is summarized.
+	// Values: "" (no summary), "concise", "detailed"
+	reasoningSummaryMode string
 }
 
 // NewResponsesHandler creates a Gin handler for the /v1/responses endpoint.
@@ -92,6 +102,18 @@ func (h *ResponsesHandler) ValidateRequest(body []byte) error {
 	// Parse and store input items for conversation storage
 	h.inputItems = parseInputItems(req.Input)
 
+	// Determine whether to store the conversation
+	// Default is true; only false if explicitly set to false
+	h.shouldStore = req.Store == nil || *req.Store == true
+
+	// Store previous_response_id for conversation chain
+	h.previousResponseID = req.PreviousResponseID
+
+	// Extract reasoning summary mode from request
+	if req.Reasoning != nil && req.Reasoning.Summary != "" {
+		h.reasoningSummaryMode = req.Reasoning.Summary
+	}
+
 	return nil
 }
 
@@ -99,10 +121,11 @@ func (h *ResponsesHandler) ValidateRequest(body []byte) error {
 // For OpenAI providers, it converts to Chat Completions format.
 // For Anthropic providers, it converts to Anthropic Messages format.
 //
+// @param ctx - Context for the request, used for cache status tracking.
 // @param body - Raw request body in OpenAI Responses API format.
 // @return Transformed body in the appropriate upstream format.
 // @return Error if transformation fails.
-func (h *ResponsesHandler) TransformRequest(body []byte) ([]byte, error) {
+func (h *ResponsesHandler) TransformRequest(ctx context.Context, body []byte) ([]byte, error) {
 	if h.route == nil {
 		return nil, fmt.Errorf("route not resolved")
 	}
@@ -128,10 +151,15 @@ func (h *ResponsesHandler) TransformRequest(body []byte) ([]byte, error) {
 		// Convert ResponsesRequest to ChatCompletionRequest
 		converter := convert.NewResponsesToChatConverter()
 		converter.SetReasoningSplit(h.route.ReasoningSplit)
-		return converter.Convert(updatedBody)
+		result, err := converter.Convert(updatedBody)
+		if err == nil && converter.CacheHit() {
+			capture.SetCacheHit(ctx)
+		}
+		return result, err
 	case "anthropic":
 		// Convert ResponsesRequest to Anthropic MessageRequest
-		return convert.TransformResponsesToAnthropic(updatedBody)
+		result, err := convert.TransformResponsesToAnthropicWithCache(updatedBody, ctx)
+		return result, err
 	default:
 		// Unknown protocol - pass through as-is
 		return updatedBody, nil
@@ -212,6 +240,9 @@ func (h *ResponsesHandler) CreateTransformer(w io.Writer) transform.SSETransform
 		t.SetKimiToolCallTransform(h.route.KimiToolCallTransform)
 		t.SetGLM5ToolCallTransform(h.route.GLM5ToolCallTransform)
 		t.SetInputItems(h.inputItems)
+		t.SetStore(h.shouldStore)
+		t.SetPreviousResponseID(h.previousResponseID)
+		t.SetReasoningSummaryMode(h.reasoningSummaryMode)
 		return t
 	case "anthropic":
 		// ResponsesTransformer converts Anthropic SSE to Responses format
@@ -221,6 +252,9 @@ func (h *ResponsesHandler) CreateTransformer(w io.Writer) transform.SSETransform
 		t.SetKimiToolCallTransform(h.route.KimiToolCallTransform)
 		t.SetGLM5ToolCallTransform(h.route.GLM5ToolCallTransform)
 		t.SetInputItems(h.inputItems)
+		t.SetStore(h.shouldStore)
+		t.SetPreviousResponseID(h.previousResponseID)
+		t.SetReasoningSummaryMode(h.reasoningSummaryMode)
 		return t
 	default:
 		return transform.NewPassthroughTransformer(w)

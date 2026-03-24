@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"bytes"
 	"net/http"
 	"net/http/httptest"
@@ -75,13 +76,13 @@ func TestMessagesHandler_TransformRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := h.TransformRequest(tt.body)
+			got, err := h.TransformRequest(context.TODO(), tt.body)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("TransformRequest() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("TransformRequest(context.TODO(), ) error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !bytes.Equal(got, tt.want) {
-				t.Errorf("TransformRequest() = %s, want %s", got, tt.want)
+				t.Errorf("TransformRequest(context.TODO(), ) = %s, want %s", got, tt.want)
 			}
 		})
 	}

@@ -398,9 +398,9 @@ func TestExtractTokenUsageFromChunks(t *testing.T) {
 			chunks: []SSEChunk{
 				{Data: json.RawMessage(`{"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40}}}`)},
 			},
-			wantInput: 100,
+			wantInput:  100,
 			wantOutput: 20,
-			wantCache: 40,
+			wantCache:  40,
 		},
 		{
 			name: "chunk with raw data only",
@@ -436,6 +436,156 @@ func TestExtractTokenUsageFromChunks(t *testing.T) {
 			}
 			if got.CacheCreationTokens != tt.wantCacheCrt {
 				t.Errorf("expected CacheCreationTokens %d, got %d", tt.wantCacheCrt, got.CacheCreationTokens)
+			}
+		})
+	}
+}
+
+func TestExtractFinishReasonFromChunks(t *testing.T) {
+	tests := []struct {
+		name   string
+		chunks []SSEChunk
+		want   string
+	}{
+		{
+			name: "OpenAI finish_reason stop",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"choices":[{"finish_reason":"stop"}]}`)},
+			},
+			want: "stop",
+		},
+		{
+			name: "OpenAI finish_reason tool_calls",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"choices":[{"finish_reason":"tool_calls"}]}`)},
+			},
+			want: "tool_calls",
+		},
+		{
+			name: "OpenAI finish_reason length",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"choices":[{"finish_reason":"length"}]}`)},
+			},
+			want: "length",
+		},
+		{
+			name: "OpenAI finish_reason content_filter",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"choices":[{"finish_reason":"content_filter"}]}`)},
+			},
+			want: "content_filter",
+		},
+		{
+			name: "Anthropic message_delta stop_reason end_turn",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`)},
+			},
+			want: "end_turn",
+		},
+		{
+			name: "Anthropic message_delta stop_reason tool_use",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"message_delta","delta":{"stop_reason":"tool_use"}}`)},
+			},
+			want: "tool_use",
+		},
+		{
+			name: "Anthropic message_delta stop_reason max_tokens",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"message_delta","delta":{"stop_reason":"max_tokens"}}`)},
+			},
+			want: "max_tokens",
+		},
+		{
+			name: "Anthropic message_stop stop_reason",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"message_stop","stop_reason":"end_turn"}`)},
+			},
+			want: "end_turn",
+		},
+		{
+			name: "Responses API status completed",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"status":"completed"}`)},
+			},
+			want: "stop",
+		},
+		{
+			name: "Responses API status incomplete",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"status":"incomplete"}`)},
+			},
+			want: "length",
+		},
+		{
+			name: "Responses API event response.status completed",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"response.completed","response":{"id":"resp_123","status":"completed"}}`)},
+			},
+			want: "stop",
+		},
+		{
+			name: "Responses API event response.status incomplete",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"response.completed","response":{"id":"resp_123","status":"incomplete"}}`)},
+			},
+			want: "length",
+		},
+		{
+			name: "Multiple chunks - last one wins",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"choices":[{"finish_reason":"length"}]}`)},
+				{Data: json.RawMessage(`{"choices":[{"finish_reason":"stop"}]}`)},
+			},
+			want: "stop",
+		},
+		{
+			name:   "Empty chunks",
+			chunks: []SSEChunk{},
+			want:   "unknown",
+		},
+		{
+			name: "No finish reason",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"choices":[{"delta":{"content":"hello"}}]}`)},
+			},
+			want: "unknown",
+		},
+		{
+			name: "Invalid JSON",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{invalid json}`)},
+			},
+			want: "unknown",
+		},
+		{
+			name: "Nil data",
+			chunks: []SSEChunk{
+				{Data: nil},
+			},
+			want: "unknown",
+		},
+		{
+			name: "Empty choices array",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"choices":[]}`)},
+			},
+			want: "unknown",
+		},
+		{
+			name: "OpenAI with multiple choices - first choice used",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"choices":[{"finish_reason":"stop"},{"finish_reason":"length"}]}`)},
+			},
+			want: "stop",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractFinishReasonFromChunks(tt.chunks)
+			if got != tt.want {
+				t.Errorf("expected %q, got %q", tt.want, got)
 			}
 		})
 	}

@@ -357,3 +357,98 @@ func extractUsageFromJSON(data json.RawMessage, usage *TokenUsage) {
 		}
 	}
 }
+
+// ExtractFinishReasonFromChunks extracts the finish reason from SSE chunks.
+// It scans through all chunks looking for finish/stop reasons in various API formats.
+//
+// Supports:
+//   - OpenAI: {"choices":[{"finish_reason":"stop"}]}
+//   - Anthropic: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+//   - Responses API: {"status":"completed"} (maps "completed" to "stop")
+//
+// @param chunks - SSE chunks to extract finish reason from
+// @return The finish reason string, or "unknown" if not found
+//
+// @pre None
+// @post Returns "unknown" if no finish reason found
+// @post Returns last finish reason found if multiple present
+//
+// @note Thread-safe: pure function with no side effects
+func ExtractFinishReasonFromChunks(chunks []SSEChunk) string {
+	reason := "unknown"
+	for _, chunk := range chunks {
+		if len(chunk.Data) == 0 {
+			continue
+		}
+		// Parse finish reason from this chunk
+		if r := extractFinishReasonFromJSON(chunk.Data); r != "" {
+			reason = r
+		}
+	}
+	return reason
+}
+
+// extractFinishReasonFromJSON parses JSON data and extracts the finish/stop reason.
+// Handles multiple API formats by checking various field paths.
+//
+// @param data - JSON data to parse
+// @return The finish reason string, or empty string if not found
+//
+// @pre data is valid JSON
+// @post Returns non-empty string if finish reason found
+func extractFinishReasonFromJSON(data json.RawMessage) string {
+	var root map[string]interface{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return ""
+	}
+
+	// Check for OpenAI Chat format: choices[0].finish_reason
+	if choices, ok := root["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if fr, ok := choice["finish_reason"].(string); ok && fr != "" {
+				return fr
+			}
+		}
+	}
+
+	// Check for Anthropic message_delta format: delta.stop_reason
+	if delta, ok := root["delta"].(map[string]interface{}); ok {
+		if sr, ok := delta["stop_reason"].(string); ok && sr != "" {
+			return sr
+		}
+	}
+
+	// Check for Anthropic message_stop format: stop_reason
+	if sr, ok := root["stop_reason"].(string); ok && sr != "" {
+		return sr
+	}
+
+	// Check for Responses API format: status at root level
+	if status, ok := root["status"].(string); ok && status != "" {
+		// Map Responses API status to finish reason
+		switch status {
+		case "completed":
+			return "stop"
+		case "incomplete":
+			return "length"
+		default:
+			return status
+		}
+	}
+
+	// Check for Responses API event format: response.status (nested in events like response.completed)
+	if resp, ok := root["response"].(map[string]interface{}); ok {
+		if status, ok := resp["status"].(string); ok && status != "" {
+			switch status {
+			case "completed":
+				return "stop"
+			case "incomplete":
+				return "length"
+			default:
+				return status
+			}
+		}
+	}
+
+	return ""
+}

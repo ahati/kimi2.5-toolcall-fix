@@ -112,6 +112,12 @@ func (s *Server) setupRoutes() {
 	if s.modelRouter != nil {
 		s.router.POST("/v1/responses", handlers.NewResponsesHandler(s.config, s.modelRouter))
 	}
+
+	// Responses CRUD endpoints - for managing stored conversations
+	s.router.GET("/v1/responses/:id", handlers.NewResponseGetHandler())
+	s.router.DELETE("/v1/responses/:id", handlers.NewResponseDeleteHandler())
+	s.router.GET("/v1/responses/:id/input_items", handlers.NewResponseInputItemsHandler())
+	s.router.POST("/v1/responses/:id/cancel", handlers.NewResponseCancelHandler())
 }
 
 // Use adds middleware to the server's router chain.

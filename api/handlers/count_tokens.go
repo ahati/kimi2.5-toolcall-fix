@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,7 +40,7 @@ type NonStreamingHandler interface {
 	ValidateRequest(body []byte) error
 
 	// TransformRequest converts the request body to upstream format.
-	TransformRequest(body []byte) ([]byte, error)
+	TransformRequest(ctx context.Context, body []byte) ([]byte, error)
 
 	// UpstreamURL returns the target URL for the upstream API.
 	UpstreamURL() string
@@ -113,10 +114,11 @@ func (h *CountTokensHandler) ValidateRequest(body []byte) error {
 // TransformRequest returns the body with model field defaulted if missing.
 // The upstream API requires a model field for token counting.
 //
+// @param ctx - Context for the request (unused in this handler).
 // @param body - Raw request body in Anthropic format.
 // @return Transformed body with model field ensured.
 // @return Error if JSON parsing fails.
-func (h *CountTokensHandler) TransformRequest(body []byte) ([]byte, error) {
+func (h *CountTokensHandler) TransformRequest(ctx context.Context, body []byte) ([]byte, error) {
 	// Parse request to check if model is specified
 	var req map[string]interface{}
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -223,7 +225,7 @@ func HandleNonStreaming(h NonStreamingHandler) gin.HandlerFunc {
 		}
 
 		// Step 3: Transform request to upstream format
-		transformedBody, err := h.TransformRequest(body)
+		transformedBody, err := h.TransformRequest(c.Request.Context(), body)
 		if err != nil {
 			h.WriteError(c, http.StatusInternalServerError, "Failed to transform request")
 			return

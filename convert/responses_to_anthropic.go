@@ -3,9 +3,11 @@
 package convert
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 
+	"ai-proxy/capture"
 	"ai-proxy/conversation"
 	"ai-proxy/logging"
 	"ai-proxy/types"
@@ -26,19 +28,34 @@ func (c *ResponsesToAnthropicConverter) Convert(body []byte) ([]byte, error) {
 
 // TransformResponsesToAnthropic converts an OpenAI ResponsesRequest to an Anthropic MessageRequest.
 // This handles the translation of all request fields including input, tools, and parameters.
-// When previous_response_id is provided, it fetches the conversation history from the store
-// and prepends it to the current input.
+// When previous_response_id is provided, it walks the conversation chain from the store
+// and prepends all history to the current input.
 func TransformResponsesToAnthropic(body []byte) ([]byte, error) {
+	return TransformResponsesToAnthropicWithCache(body, nil)
+}
+
+// TransformResponsesToAnthropicWithCache converts an OpenAI ResponsesRequest to an Anthropic MessageRequest.
+// This handles the translation of all request fields including input, tools, and parameters.
+// When previous_response_id is provided, it walks the conversation chain from the store
+// and prepends all history to the current input.
+// If ctx contains a CaptureContext, sets CacheHit when conversation is found.
+func TransformResponsesToAnthropicWithCache(body []byte, ctx context.Context) ([]byte, error) {
 	// Parse the OpenAI Responses API format request
 	var openReq types.ResponsesRequest
 	if err := json.Unmarshal(body, &openReq); err != nil {
 		return nil, err
 	}
 
-	// Fetch conversation history if previous_response_id is provided
+	// Fetch conversation history chain if previous_response_id is provided
 	if openReq.PreviousResponseID != "" {
-		if hist := conversation.GetFromDefault(openReq.PreviousResponseID); hist != nil {
-			openReq.Input = prependHistoryToInput(hist, openReq.Input)
+		chain := conversation.WalkChainFromDefault(openReq.PreviousResponseID)
+		if len(chain) > 0 {
+			// Mark cache hit
+			capture.SetCacheHit(ctx)
+			// Prepend all conversations in the chain (oldest first)
+			for _, hist := range chain {
+				openReq.Input = prependHistoryToInput(hist, openReq.Input)
+			}
 		} else {
 			logging.InfoMsg("Warning: Previous response ID not found in conversation store: %s", openReq.PreviousResponseID)
 		}

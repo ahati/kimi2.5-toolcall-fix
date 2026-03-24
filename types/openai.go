@@ -89,6 +89,11 @@ type ChatCompletionRequest struct {
 	// Supported by MiniMax M2.7 and potentially other providers.
 	ReasoningSplit bool `json:"reasoning_split,omitempty"`
 
+	// ReasoningItemID is the ID of a previous reasoning item for continuity across turns.
+	// This allows the upstream LLM to replay its prior reasoning internally.
+	// Supported by providers that expose reasoning continuity (e.g., MiniMax).
+	ReasoningItemID string `json:"reasoning_item_id,omitempty"`
+
 	// Deprecated: System field is non-standard. Use a system message in Messages array instead.
 	// Kept for backwards compatibility with existing clients.
 	System string `json:"system,omitempty"`

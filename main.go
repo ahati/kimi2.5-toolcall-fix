@@ -10,6 +10,7 @@ import (
 	"ai-proxy/config"
 	"ai-proxy/conversation"
 	"ai-proxy/logging"
+	"ai-proxy/summarizer"
 )
 
 // main loads configuration, initializes logging and storage, then starts the HTTP server.
@@ -41,6 +42,9 @@ func main() {
 		TTL:     cfg.ConversationStoreTTL,
 	})
 	logging.InfoMsg("Conversation store initialized: maxSize=%d, ttl=%v", cfg.ConversationStoreSize, cfg.ConversationStoreTTL)
+
+	// Initialize summarizer service for reasoning summarization
+	summarizer.InitDefaultService(cfg.AppConfig)
 
 	// Initialize storage for request capture if logging is enabled
 	storage := api.InitStorage(cfg.SSELogDir)

@@ -353,3 +353,148 @@ func TestDefaultStore(t *testing.T) {
 		t.Errorf("ID = %v, want default_test", got.ID)
 	}
 }
+
+func TestStore_WalkChain(t *testing.T) {
+	store := NewStore(Config{MaxSize: 10, TTL: time.Hour})
+
+	// Test walking empty chain
+	chain := store.WalkChain("nonexistent")
+	if len(chain) != 0 {
+		t.Errorf("WalkChain(nonexistent) = %v, want empty slice", chain)
+	}
+
+	// Store a single conversation (no parent)
+	conv1 := &Conversation{
+		ID:        "resp_1",
+		Input:     []types.InputItem{{Type: "message", Content: "first"}},
+		CreatedAt: time.Now(),
+	}
+	store.Store(conv1)
+
+	// Walk single-element chain
+	chain = store.WalkChain("resp_1")
+	if len(chain) != 1 {
+		t.Fatalf("WalkChain(resp_1) returned %d items, want 1", len(chain))
+	}
+	if chain[0].ID != "resp_1" {
+		t.Errorf("chain[0].ID = %v, want resp_1", chain[0].ID)
+	}
+}
+
+func TestStore_WalkChain_LinkedList(t *testing.T) {
+	store := NewStore(Config{MaxSize: 10, TTL: time.Hour})
+
+	// Create a chain of conversations: resp_1 -> resp_2 -> resp_3
+	// resp_1 is the oldest, resp_3 is the newest
+	conv1 := &Conversation{
+		ID:        "resp_1",
+		Input:     []types.InputItem{{Type: "message", Content: "first"}},
+		CreatedAt: time.Now(),
+	}
+	conv2 := &Conversation{
+		ID:                 "resp_2",
+		PreviousResponseID: "resp_1",
+		Input:              []types.InputItem{{Type: "message", Content: "second"}},
+		CreatedAt:          time.Now(),
+	}
+	conv3 := &Conversation{
+		ID:                 "resp_3",
+		PreviousResponseID: "resp_2",
+		Input:              []types.InputItem{{Type: "message", Content: "third"}},
+		CreatedAt:          time.Now(),
+	}
+
+	store.Store(conv1)
+	store.Store(conv2)
+	store.Store(conv3)
+
+	// Walk chain from newest (resp_3)
+	chain := store.WalkChain("resp_3")
+	if len(chain) != 3 {
+		t.Fatalf("WalkChain(resp_3) returned %d items, want 3", len(chain))
+	}
+
+	// Verify order is chronological (oldest first)
+	expectedOrder := []string{"resp_1", "resp_2", "resp_3"}
+	for i, expected := range expectedOrder {
+		if chain[i].ID != expected {
+			t.Errorf("chain[%d].ID = %v, want %v", i, chain[i].ID, expected)
+		}
+	}
+
+	// Walk chain from middle (resp_2)
+	chain = store.WalkChain("resp_2")
+	if len(chain) != 2 {
+		t.Fatalf("WalkChain(resp_2) returned %d items, want 2", len(chain))
+	}
+	if chain[0].ID != "resp_1" {
+		t.Errorf("chain[0].ID = %v, want resp_1", chain[0].ID)
+	}
+	if chain[1].ID != "resp_2" {
+		t.Errorf("chain[1].ID = %v, want resp_2", chain[1].ID)
+	}
+}
+
+func TestStore_WalkChain_BrokenChain(t *testing.T) {
+	store := NewStore(Config{MaxSize: 10, TTL: time.Hour})
+
+	// Create a chain with a broken link: resp_1 -> resp_2 -> resp_3
+	// But resp_1 is missing
+	conv2 := &Conversation{
+		ID:                 "resp_2",
+		PreviousResponseID: "resp_1_missing",
+		Input:              []types.InputItem{{Type: "message", Content: "second"}},
+		CreatedAt:          time.Now(),
+	}
+	conv3 := &Conversation{
+		ID:                 "resp_3",
+		PreviousResponseID: "resp_2",
+		Input:              []types.InputItem{{Type: "message", Content: "third"}},
+		CreatedAt:          time.Now(),
+	}
+
+	store.Store(conv2)
+	store.Store(conv3)
+
+	// Walk chain from resp_3 should stop at broken link
+	chain := store.WalkChain("resp_3")
+	if len(chain) != 2 {
+		t.Fatalf("WalkChain(resp_3) returned %d items, want 2 (broken chain)", len(chain))
+	}
+
+	// Should only have resp_2 and resp_3 (resp_1 is missing)
+	if chain[0].ID != "resp_2" {
+		t.Errorf("chain[0].ID = %v, want resp_2", chain[0].ID)
+	}
+	if chain[1].ID != "resp_3" {
+		t.Errorf("chain[1].ID = %v, want resp_3", chain[1].ID)
+	}
+}
+
+func TestWalkChainFromDefault(t *testing.T) {
+	// Reset default store
+	DefaultStore = nil
+
+	// Walk from nil store should return nil
+	if WalkChainFromDefault("test") != nil {
+		t.Error("WalkChainFromDefault from nil store should return nil")
+	}
+
+	// Initialize default store
+	InitDefaultStore(Config{MaxSize: 10, TTL: time.Hour})
+
+	// Create a chain
+	conv1 := &Conversation{ID: "chain_1", CreatedAt: time.Now()}
+	conv2 := &Conversation{ID: "chain_2", PreviousResponseID: "chain_1", CreatedAt: time.Now()}
+
+	StoreInDefault(conv1)
+	StoreInDefault(conv2)
+
+	chain := WalkChainFromDefault("chain_2")
+	if len(chain) != 2 {
+		t.Fatalf("WalkChainFromDefault(chain_2) returned %d items, want 2", len(chain))
+	}
+	if chain[0].ID != "chain_1" || chain[1].ID != "chain_2" {
+		t.Errorf("Unexpected chain order: %v", chain)
+	}
+}

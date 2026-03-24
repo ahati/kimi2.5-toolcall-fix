@@ -40,6 +40,10 @@ type ResponsesRequest struct {
 	// Metadata contains arbitrary metadata for the request.
 	// Used for tracking and logging purposes, including user_id.
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	// Store controls whether the response should be stored server-side.
+	// Default is true. When false, enables ZDR (Zero Data Retention) mode.
+	// Use pointer to distinguish between "not specified" (nil, defaults to true) and "explicitly false".
+	Store *bool `json:"store,omitempty"`
 }
 
 // ReasoningConfig represents reasoning configuration for supported models.

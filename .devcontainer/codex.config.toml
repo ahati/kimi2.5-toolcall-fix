@@ -1,7 +1,7 @@
 # ==========================================
 # GLOBAL SETTINGS & DEFAULTS
 # ==========================================
-model = "glm-5"
+model = "qwen3-max-2026-01-23"
 model_provider = "proxy_ai"
 model_catalog_json = "/home/vscode/custom_models.json"
 disabled_providers = ["opencode"]
@@ -143,6 +143,9 @@ thinking_budget = 1024
 trust_level = "trusted"
 
 [projects."/workspaces/temporary/codex"]
+trust_level = "trusted"
+
+[projects."/workspaces/temporary/summarizer"]
 trust_level = "trusted"
 
 [notice]

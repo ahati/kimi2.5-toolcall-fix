@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -40,7 +41,7 @@ func TestCrossProtocol_ConsecutiveUserMessages(t *testing.T) {
 		]
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestCrossProtocol_ConsecutiveAssistantMessages(t *testing.T) {
 		]
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -185,7 +186,7 @@ func TestCrossProtocol_EmptyContentHandling(t *testing.T) {
 			}, tt.outputProto)
 
 			var handler interface {
-				TransformRequest(body []byte) ([]byte, error)
+				TransformRequest(ctx context.Context, body []byte) ([]byte, error)
 			}
 
 			if tt.outputProto == "anthropic" {
@@ -200,7 +201,7 @@ func TestCrossProtocol_EmptyContentHandling(t *testing.T) {
 				}
 			}
 
-			transformed, err := handler.TransformRequest([]byte(tt.request))
+			transformed, err := handler.TransformRequest(context.TODO(), []byte(tt.request))
 			if err != nil {
 				if !tt.expectSuccess {
 					return // expected failure
@@ -255,7 +256,7 @@ func TestCrossProtocol_ToolCallIDConsistency(t *testing.T) {
 		]
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -332,7 +333,7 @@ func TestCrossProtocol_ToolResultArrayContent(t *testing.T) {
 		]
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -387,7 +388,7 @@ func TestCrossProtocol_MultiModalOrdering(t *testing.T) {
 		]
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -428,7 +429,7 @@ func TestCrossProtocol_StopSequenceHandling(t *testing.T) {
 		outputProto string
 		request     string
 		handler     interface {
-			TransformRequest(body []byte) ([]byte, error)
+			TransformRequest(ctx context.Context, body []byte) ([]byte, error)
 		}
 		expectStopField bool
 		stopFieldName   string
@@ -442,7 +443,7 @@ func TestCrossProtocol_StopSequenceHandling(t *testing.T) {
 				"stop": ["END", "STOP"]
 			}`,
 			handler: func() interface {
-				TransformRequest(body []byte) ([]byte, error)
+				TransformRequest(ctx context.Context, body []byte) ([]byte, error)
 			} {
 				return &CompletionsHandler{
 					cfg:   &config.Config{},
@@ -465,7 +466,7 @@ func TestCrossProtocol_StopSequenceHandling(t *testing.T) {
 				"stop_sequences": ["END", "STOP"]
 			}`,
 			handler: func() interface {
-				TransformRequest(body []byte) ([]byte, error)
+				TransformRequest(ctx context.Context, body []byte) ([]byte, error)
 			} {
 				return &MessagesHandler{
 					cfg:   &config.Config{},
@@ -484,7 +485,7 @@ func TestCrossProtocol_StopSequenceHandling(t *testing.T) {
 				"messages": [{"role": "user", "content": "hi"}]
 			}`,
 			handler: func() interface {
-				TransformRequest(body []byte) ([]byte, error)
+				TransformRequest(ctx context.Context, body []byte) ([]byte, error)
 			} {
 				return &MessagesHandler{
 					cfg:   &config.Config{},
@@ -498,7 +499,7 @@ func TestCrossProtocol_StopSequenceHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			transformed, err := tt.handler.TransformRequest([]byte(tt.request))
+			transformed, err := tt.handler.TransformRequest(context.TODO(), []byte(tt.request))
 			if err != nil {
 				t.Fatalf("TransformRequest failed: %v", err)
 			}
@@ -585,7 +586,7 @@ func TestCrossProtocol_TemperatureClamping(t *testing.T) {
 				"messages":    []interface{}{map[string]interface{}{"role": "user", "content": "hi"}},
 			})
 
-			transformed, err := handler.TransformRequest(requestBytes)
+			transformed, err := handler.TransformRequest(context.TODO(), requestBytes)
 			if err != nil {
 				t.Fatalf("TransformRequest failed: %v", err)
 			}
@@ -644,7 +645,7 @@ func TestCrossProtocol_DefaultMaxTokens(t *testing.T) {
 		"messages": [{"role": "user", "content": "hi"}]
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -697,7 +698,7 @@ func TestCrossProtocol_StartingWithAssistantMessage(t *testing.T) {
 		]
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -745,7 +746,7 @@ func TestCrossProtocol_ToolChoiceNoneHandling(t *testing.T) {
 		"tool_choice": "none"
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}

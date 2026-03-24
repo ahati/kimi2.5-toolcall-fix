@@ -3,11 +3,15 @@ module ai-proxy
 go 1.25
 
 require (
+	github.com/ahati/reasoning-summarizer v0.1.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/uuid v1.3.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/tmaxmax/go-sse v0.11.0
 )
+
+// Use local summarizer module for CGo linking to llama.cpp
+replace github.com/ahati/reasoning-summarizer => ../temporary/summarizer
 
 require (
 	github.com/bytedance/sonic v1.11.6 // indirect

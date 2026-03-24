@@ -60,6 +60,16 @@ type CaptureContext struct {
 	// Prevents duplicate extraction attempts which could cause race conditions.
 	// Valid values: false initially, true after SetRequestID is called.
 	IDExtracted bool
+
+	// CacheHit indicates whether the conversation cache was hit for this request.
+	// Set when previous_response_id is provided and the conversation is found in the store.
+	// Valid values: false initially, true if cache hit occurred.
+	CacheHit bool
+
+	// CacheCreated indicates whether a new conversation was stored in the cache.
+	// Set when the response is stored for previous_response_id support.
+	// Valid values: false initially, true if conversation was stored.
+	CacheCreated bool
 }
 
 // NewCaptureContext creates a new CaptureContext initialized with the current time
@@ -206,5 +216,35 @@ func RecordDownstreamRequest(ctx context.Context, r *http.Request, body []byte) 
 		cc.Recorder.RecordDownstreamRequest(r.Header, body)
 	} else {
 		cc.Recorder.RecordDownstreamRequest(nil, body)
+	}
+}
+
+// SetCacheHit marks that a cache hit occurred for this request.
+// Called when previous_response_id is provided and the conversation is found in the store.
+//
+// @param ctx - Context containing CaptureContext. May be nil.
+//
+// @pre None (handles nil inputs gracefully)
+// @post If ctx contains valid CaptureContext, CacheHit is set to true
+// @post If ctx is nil or lacks CaptureContext, no action is taken (no-op)
+func SetCacheHit(ctx context.Context) {
+	cc := GetCaptureContext(ctx)
+	if cc != nil {
+		cc.CacheHit = true
+	}
+}
+
+// SetCacheCreated marks that a new conversation was stored in the cache.
+// Called when a conversation is stored for previous_response_id support.
+//
+// @param ctx - Context containing CaptureContext. May be nil.
+//
+// @pre None (handles nil inputs gracefully)
+// @post If ctx contains valid CaptureContext, CacheCreated is set to true
+// @post If ctx is nil or lacks CaptureContext, no action is taken (no-op)
+func SetCacheCreated(ctx context.Context) {
+	cc := GetCaptureContext(ctx)
+	if cc != nil {
+		cc.CacheCreated = true
 	}
 }

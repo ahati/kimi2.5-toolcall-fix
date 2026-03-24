@@ -91,5 +91,15 @@
     "model": "{model}",
     "type": "auto",
     "kimi_tool_call_transform": false
+  },
+  "summarizer": {
+    "enabled": true,
+    "mode": "local",
+    "local": {
+      "model_path": "../temporary/summarizer/models/Qwen3.5-0.8B-Q4_K_M.gguf",
+      "context_size": 2048,
+      "threads": 4,
+      "max_summary_tokens": 50
+    }
   }
 }

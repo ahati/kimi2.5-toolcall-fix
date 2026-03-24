@@ -379,11 +379,11 @@ The `ToolCallTransformer` implements a 5-state machine (`IDLE → IN_SECTION →
 
 | Token | Description |
 |-------|-------------|
-| `<|tool_calls_section_begin|>` | Starts the tool calls section |
-| `<|tool_call_begin|>` | Starts a function call (ID/name follows) |
-| `<|tool_call_argument_begin|>` | Starts the JSON arguments |
-| `<|tool_call_end|>` | Ends the current tool call |
-| `<|tool_calls_section_end|>` | Ends the tool calls section |
+| `<\|tool_calls_section_begin\|>` | Starts the tool calls section |
+| `<\|tool_call_begin\|>` | Starts a function call (ID/name follows) |
+| `<\|tool_call_argument_begin\|>` | Starts the JSON arguments |
+| `<\|tool_call_end\|>` | Ends the current tool call |
+| `<\|tool_calls_section_end\|>` | Ends the tool calls section |
 
 ### Format Conversions
 
@@ -396,7 +396,7 @@ The `ToolCallTransformer` implements a 5-state machine (`IDLE → IN_SECTION →
 | `/v1/responses` | OpenAI | Responses → Chat | Chat → Responses |
 | `/v1/responses` | Anthropic | Responses → Anthropic | Anthropic → Responses |
 
-*Tool call normalization only applies when `tool_call_transform: true` is set for the model.
+*Tool call normalization only applies when `<model>_tool_call_transform: true` is set for the model.
 
 ## License
 

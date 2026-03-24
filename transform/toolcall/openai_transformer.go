@@ -13,22 +13,22 @@ import (
 )
 
 type OpenAITransformer struct {
-	sseWriter   *transform.SSEWriter
-	formatter   *OpenAIFormatter
-	parser      *Parser
-	glm5Parser  *GLM5Parser
-	messageID   string
-	model       string
-	inReasoning bool
-	toolCallTransform    bool
+	sseWriter             *transform.SSEWriter
+	formatter             *OpenAIFormatter
+	parser                *Parser
+	glm5Parser            *GLM5Parser
+	messageID             string
+	model                 string
+	inReasoning           bool
+	toolCallTransform     bool
 	glm5ToolCallTransform bool
 }
 
 func NewOpenAITransformer(output io.Writer) *OpenAITransformer {
 	return &OpenAITransformer{
-		sseWriter: transform.NewSSEWriter(output),
-		formatter: NewOpenAIFormatter("", ""),
-		parser:    NewParser(DefaultTokens),
+		sseWriter:  transform.NewSSEWriter(output),
+		formatter:  NewOpenAIFormatter("", ""),
+		parser:     NewParser(DefaultTokens),
 		glm5Parser: NewGLM5Parser(),
 	}
 }

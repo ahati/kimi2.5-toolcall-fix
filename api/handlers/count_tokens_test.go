@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -132,7 +133,7 @@ func TestCountTokensHandler_TransformRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			output, err := h.TransformRequest([]byte(tt.input))
+			output, err := h.TransformRequest(context.TODO(), []byte(tt.input))
 			if err != nil {
 				t.Fatalf("TransformRequest failed: %v", err)
 			}
@@ -405,7 +406,7 @@ func (m *mockNonStreamingHandler) ValidateRequest(body []byte) error {
 	return nil
 }
 
-func (m *mockNonStreamingHandler) TransformRequest(body []byte) ([]byte, error) {
+func (m *mockNonStreamingHandler) TransformRequest(ctx context.Context, body []byte) ([]byte, error) {
 	m.transformCalled = true
 	return body, nil
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -94,10 +95,11 @@ func (h *CompletionsHandler) ValidateRequest(body []byte) error {
 // For OpenAI providers: passes through without transformation, adding stream_options.
 // For Anthropic providers: converts OpenAI Chat Completions to Anthropic Messages.
 //
+// @param ctx - Context for the request (unused in this handler).
 // @param body - Raw request body in OpenAI ChatCompletion format.
 // @return Transformed body in the appropriate upstream format.
 // @return Error if transformation fails.
-func (h *CompletionsHandler) TransformRequest(body []byte) ([]byte, error) {
+func (h *CompletionsHandler) TransformRequest(ctx context.Context, body []byte) ([]byte, error) {
 	// If no route resolved, pass through (legacy behavior)
 	if h.route == nil {
 		return body, nil

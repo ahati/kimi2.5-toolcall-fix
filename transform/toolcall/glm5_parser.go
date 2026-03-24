@@ -25,13 +25,13 @@ const (
 // GLM5Parser extracts tool calls from GLM-5's XML format in reasoning_content.
 // GLM-5 embeds tool calls like: <tool_call>func<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>
 type GLM5Parser struct {
-	state        glm5State
-	buf          string
-	toolName     string
+	state         glm5State
+	buf           string
+	toolName      string
 	nameExtracted bool // track if we've already extracted the name
-	currentKey   string
-	currentValue strings.Builder
-	args         map[string]string
+	currentKey    string
+	currentValue  strings.Builder
+	args          map[string]string
 }
 
 // NewGLM5Parser creates a new GLM-5 parser.

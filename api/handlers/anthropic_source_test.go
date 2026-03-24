@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -56,7 +57,7 @@ func TestAnthropicToAnthropic_Passthrough(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestAnthropicToOpenAI_BasicRequest(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -183,7 +184,7 @@ func TestAnthropicToOpenAI_SystemArray(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -252,7 +253,7 @@ func TestAnthropicToOpenAI_ImageBase64(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -334,7 +335,7 @@ func TestAnthropicToOpenAI_ImageURL(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -402,7 +403,7 @@ func TestAnthropicToOpenAI_ToolChoiceMapping(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -449,7 +450,7 @@ func TestAnthropicToOpenAI_DroppedFields(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -493,7 +494,7 @@ func TestAnthropicToOpenAI_MetadataUserMapping(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -537,7 +538,7 @@ func TestAnthropicToOpenAI_StopSequences(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -595,7 +596,7 @@ func TestAnthropicToOpenAI_ToolUse(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -677,7 +678,7 @@ func TestAnthropicToOpenAI_ToolResult(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -736,7 +737,7 @@ func TestAnthropicToResponses_BasicRequest(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -793,7 +794,7 @@ func TestAnthropicToResponses_SystemToInstructions(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -839,7 +840,7 @@ func TestAnthropicToResponses_ToolUse(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -907,7 +908,7 @@ func TestAnthropicToResponses_ToolResult(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -971,7 +972,7 @@ func TestAnthropicToResponses_Tools(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -1040,7 +1041,7 @@ func TestAnthropicToResponses_ToolChoice(t *testing.T) {
 				"stream": true
 			}`
 
-			transformed, err := handler.TransformRequest([]byte(request))
+			transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 			if err != nil {
 				t.Fatalf("TransformRequest failed: %v", err)
 			}
@@ -1201,7 +1202,7 @@ func TestAnthropicSource_NilRoute(t *testing.T) {
 
 	request := `{"model": "test", "max_tokens": 100, "messages": [], "stream": true}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}

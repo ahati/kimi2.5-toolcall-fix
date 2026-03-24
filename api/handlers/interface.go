@@ -3,6 +3,7 @@
 package handlers
 
 import (
+	"context"
 	"io"
 	"net/http"
 
@@ -44,12 +45,13 @@ type Handler interface {
 	// For endpoints that accept the same format as upstream, this may return body unchanged.
 	// For bridging endpoints, this performs format conversion (e.g., Anthropic to OpenAI).
 	//
+	// @param ctx - Context for the request, may contain CaptureContext for tracking.
 	// @param body - Raw request body bytes in downstream format.
 	// @return Transformed body in upstream format, or error if transformation fails.
 	//
 	// @pre body has passed ValidateRequest (implementation may assume validity).
 	// @post Returned body is valid JSON for the upstream API.
-	TransformRequest(body []byte) ([]byte, error)
+	TransformRequest(ctx context.Context, body []byte) ([]byte, error)
 
 	// UpstreamURL returns the target URL for the upstream API.
 	// This URL includes scheme, host, and path for the specific API endpoint.

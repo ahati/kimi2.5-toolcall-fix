@@ -120,7 +120,18 @@ func TestServer_setupRoutes_RouteCount(t *testing.T) {
 
 	routes := server.router.Routes()
 
-	expectedCount := 5
+	// Routes when modelRouter is nil:
+	// GET /health
+	// GET /v1/models
+	// POST /v1/chat/completions
+	// POST /v1/messages
+	// POST /v1/messages/count_tokens
+	// GET /v1/responses/:id
+	// DELETE /v1/responses/:id
+	// GET /v1/responses/:id/input_items
+	// POST /v1/responses/:id/cancel
+	// Note: POST /v1/responses is only added when modelRouter is not nil
+	expectedCount := 9
 	if len(routes) != expectedCount {
 		t.Errorf("expected %d routes, got %d", expectedCount, len(routes))
 	}

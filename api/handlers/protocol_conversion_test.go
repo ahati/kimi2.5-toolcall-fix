@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"bytes"
 	"encoding/json"
 	"net/http"
@@ -87,7 +88,7 @@ func TestMessagesHandler_MultiProtocolProvider_OpenAITarget(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(anthropicRequest))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(anthropicRequest))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -154,7 +155,7 @@ func TestMessagesHandler_MultiProtocolProvider_AnthropicTarget(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(anthropicRequest))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(anthropicRequest))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -208,7 +209,7 @@ func TestMessagesHandler_LegacyProvider_OpenAITarget(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(anthropicRequest))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(anthropicRequest))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -267,7 +268,7 @@ func TestCompletionsHandler_MultiProtocolProvider_AnthropicTarget(t *testing.T) 
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(openAIRequest))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(openAIRequest))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -321,7 +322,7 @@ func TestCompletionsHandler_MultiProtocolProvider_OpenAITarget(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(openAIRequest))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(openAIRequest))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -376,7 +377,7 @@ func TestResponsesHandler_MultiProtocolProvider_AnthropicTarget(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(responsesRequest))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(responsesRequest))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -433,7 +434,7 @@ func TestResponsesHandler_MultiProtocolProvider_OpenAITarget(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(responsesRequest))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(responsesRequest))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -690,7 +691,7 @@ func TestToolTransformation_AnthropicToOpenAI_Detailed(t *testing.T) {
 				"stream": true
 			}`
 
-			transformed, err := handler.TransformRequest([]byte(request))
+			transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 			if err != nil {
 				t.Fatalf("TransformRequest failed: %v", err)
 			}
@@ -757,7 +758,7 @@ func TestMessageConversion_AnthropicToOpenAI_ToolUse(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -881,7 +882,7 @@ func TestPassthrough_OpenAIToOpenAI(t *testing.T) {
 
 	request := `{"model": "downstream-model", "messages": [{"role": "user", "content": "hi"}]}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -927,7 +928,7 @@ func TestPassthrough_AnthropicToAnthropic(t *testing.T) {
 
 	request := `{"model": "test-model", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -968,7 +969,7 @@ func TestSystemPrompt_Preserved(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -1013,7 +1014,7 @@ func TestTools_Preserved(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -1062,7 +1063,7 @@ func TestEdgeCase_EmptyTools(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -1086,7 +1087,7 @@ func TestEdgeCase_NilRoute(t *testing.T) {
 
 	request := `{"model": "test", "max_tokens": 100, "messages": [], "stream": true}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -1136,7 +1137,7 @@ func TestEdgeCase_MultipleToolResults(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -1188,7 +1189,7 @@ func TestResponsesInput_StringToArray(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -1234,7 +1235,7 @@ func TestResponsesInput_InstructionsToSystem(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -1275,7 +1276,7 @@ func TestMaxTokens_AnthropicToOpenAI(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
@@ -1341,7 +1342,7 @@ func TestRegression_MultiProtocolProviderType(t *testing.T) {
 		"stream": true
 	}`
 
-	transformed, err := handler.TransformRequest([]byte(request))
+	transformed, err := handler.TransformRequest(context.TODO(), []byte(request))
 	if err != nil {
 		t.Fatalf("TransformRequest failed: %v", err)
 	}
