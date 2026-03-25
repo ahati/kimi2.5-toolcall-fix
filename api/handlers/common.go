@@ -355,15 +355,14 @@ func streamResponse(c *gin.Context, body io.Reader, h Handler) {
 
 	// Stream SSE events to client via Gin's streaming facility
 	c.Stream(func(w io.Writer) bool {
-		// Iterate over all SSE events from upstream
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
-				// Context canceled is expected when client disconnects after receiving complete response
+				// Context canceled means client disconnected - can't send response.failed
 				if errors.Is(err, context.Canceled) {
 					logging.DebugMsg("Stream completed, client disconnected")
-				} else {
-					logging.ErrorMsg("SSE stream error: %v", err)
+					return false
 				}
+				logging.ErrorMsg("SSE stream error: %v", err)
 				emitStreamError(transformer, err)
 				return false
 			}
@@ -374,7 +373,6 @@ func streamResponse(c *gin.Context, body io.Reader, h Handler) {
 				return false
 			}
 		}
-		// Return false to signal end of stream
 		return false
 	})
 }
@@ -443,12 +441,12 @@ func streamWithCapture(c *gin.Context, body io.Reader, h Handler, cc *capture.Ca
 		// Iterate over all SSE events from upstream
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
-				// Context canceled is expected when client disconnects after receiving complete response
+				// Context canceled means client disconnected - can't send response.failed
 				if errors.Is(err, context.Canceled) {
 					logging.DebugMsg("Stream completed, client disconnected")
-				} else {
-					logging.ErrorMsg("SSE stream error (capture): %v", err)
+					return false
 				}
+				logging.ErrorMsg("SSE stream error (capture): %v", err)
 				emitStreamError(transformer, err)
 				return false
 			}
@@ -487,12 +485,12 @@ func streamWithInitializedTransformer(c *gin.Context, body io.Reader, transforme
 	c.Stream(func(w io.Writer) bool {
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
-				// Context canceled is expected when client disconnects after receiving complete response
+				// Context canceled means client disconnected - can't send response.failed
 				if errors.Is(err, context.Canceled) {
 					logging.DebugMsg("Stream completed, client disconnected")
-				} else {
-					logging.ErrorMsg("SSE stream error (no-capture): %v", err)
+					return false
 				}
+				logging.ErrorMsg("SSE stream error (no-capture): %v", err)
 				emitStreamError(transformer, err)
 				return false
 			}
@@ -538,12 +536,12 @@ func streamWithoutCapture(c *gin.Context, body io.Reader, h Handler) {
 	c.Stream(func(w io.Writer) bool {
 		for ev, err := range sse.Read(body, nil) {
 			if err != nil {
-				// Context canceled is expected when client disconnects after receiving complete response
+				// Context canceled means client disconnected - can't send response.failed
 				if errors.Is(err, context.Canceled) {
 					logging.DebugMsg("Stream completed, client disconnected")
-				} else {
-					logging.ErrorMsg("SSE stream error (no-capture): %v", err)
+					return false
 				}
+				logging.ErrorMsg("SSE stream error (no-capture): %v", err)
 				emitStreamError(transformer, err)
 				return false
 			}
@@ -666,7 +664,7 @@ func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.Ca
 	// 📤 = upstream (to LLM), 📥 = downstream (to client)
 	// ⬆️ = input tokens, ⬇️ = output tokens, 📖 = cache read, 💾  = cache creation
 	if cacheStatus != "" {
-		logging.InfoMsg("|📤 ⬆️ %d ⬇️ %d 📖 %d 💾  %d %s|  |📥 ⬆️ %d ⬇️ %d 📖 %d 💾  %d %s| %s [%s] [%s]",
+		logging.InfoMsg("|📤 ⬆️ %d ⬇️ %d 📖 %d 💾 %d r=%s|  |📥 ⬆️ %d ⬇️ %d 📖 %d 💾 %d r=%s| %s [%s] [%s]",
 			upstreamUsage.InputTokens,
 			upstreamUsage.OutputTokens,
 			upstreamUsage.CacheReadTokens,
@@ -682,7 +680,7 @@ func finalizeCapture(cc *capture.CaptureContext, downstream, upstream capture.Ca
 			cc.RequestID,
 		)
 	} else {
-		logging.InfoMsg("|📤 ⬆️ %d ⬇️ %d 📖 %d 💾  %d %s|  |📥 ⬆️ %d ⬇️ %d 📖 %d 💾  %d %s| [%s] [%s]",
+		logging.InfoMsg("|📤 ⬆️ %d ⬇️ %d 📖 %d 💾 %d r=%s|  |📥 ⬆️ %d ⬇️ %d 📖 %d 💾 %d r=%s| [%s] [%s]",
 			upstreamUsage.InputTokens,
 			upstreamUsage.OutputTokens,
 			upstreamUsage.CacheReadTokens,

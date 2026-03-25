@@ -351,9 +351,18 @@ func extractUsageFromJSON(data json.RawMessage, usage *TokenUsage) {
 			usage.CacheCreationTokens = int(v)
 		}
 	}
+
+	// Check for nested cache details in Responses API format
+	// For Responses API: calculate cache creation as input - cached
+	// This represents tokens that were NOT served from cache (fresh tokens)
+	// Anthropic provides cache_creation_input_tokens directly, but Responses API doesn't
 	if details, ok := usageObj["input_tokens_details"].(map[string]interface{}); ok {
 		if v, ok := details["cached_tokens"].(float64); ok {
 			usage.CacheReadTokens = int(v)
+		}
+		// Calculate cache creation for Responses API format
+		if usage.CacheReadTokens > 0 && usage.CacheCreationTokens == 0 && usage.InputTokens > usage.CacheReadTokens {
+			usage.CacheCreationTokens = usage.InputTokens - usage.CacheReadTokens
 		}
 	}
 }

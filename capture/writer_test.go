@@ -394,6 +394,16 @@ func TestExtractTokenUsageFromChunks(t *testing.T) {
 			wantOutput: 10,
 		},
 		{
+			name: "Responses API format with cache tokens",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":24415,"output_tokens":32,"input_tokens_details":{"cached_tokens":20608}}}}`)},
+			},
+			wantInput:    24415,
+			wantOutput:   32,
+			wantCache:    20608,
+			wantCacheCrt: 3807, // input_tokens - cached_tokens = 24415 - 20608
+		},
+		{
 			name: "OpenAI format with cache tokens",
 			chunks: []SSEChunk{
 				{Data: json.RawMessage(`{"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40}}}`)},
