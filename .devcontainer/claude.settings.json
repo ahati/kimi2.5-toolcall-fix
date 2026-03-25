@@ -6,9 +6,9 @@
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2.5",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3.5-plus",
-    "ANTHROPIC_CUSTOM_MODEL_OPTION": "MiniMax-M2.7",
-    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": "MiniMax M2.7",
-    "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": "MiniMax M2.7 - 200k context, efficient",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION": "MiniMax-M2.5",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": "MiniMax M2.5",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": "MiniMax M2.5 - 200k context, efficient",
     "CLAUDE_CODE_EFFORT_LEVEL": "high",
     "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
@@ -46,5 +46,6 @@
   "showThinkingSummaries": true,
   "skipDangerousModePermissionPrompt": true,
   "terminalProgressBarEnabled": false,
-  "defaultMode": "bypassPermissions"
+  "defaultMode": "bypassPermissions",
+  "teammateMode": "in-process"
 }
