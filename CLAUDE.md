@@ -5,7 +5,9 @@ Go-based HTTP proxy for LLM APIs with OpenAI and Anthropic compatibility.
 ## Quick Commands
 
 ```bash
+go build            # Standard build (no llama.cpp)
 make build          # Build with llama.cpp (cached at .build/)
+make build-cuda     # Build with CUDA GPU support
 make clean-cache    # Clear llama.cpp cache (rebuilds next time)
 go test ./...       # Run tests (>90% coverage required)
 go fmt ./...        # Format code
@@ -20,12 +22,15 @@ go vet ./...        # Lint
 ├── config/           # JSON config loading (XDG paths)
 ├── convert/          # Format conversions (OpenAI↔Anthropic↔Responses)
 ├── conversation/     # In-memory conversation cache
+├── llama/            # CGo bindings to llama.cpp (build tag: llama)
 ├── logging/          # Logging utilities
 ├── proxy/            # Upstream API client
 ├── router/           # Model-to-provider routing
+├── summarizer/       # Reasoning summarization (HTTP or local llama.cpp)
 ├── tokens/           # Token counting
 ├── transform/        # SSE stream transformations
 │   └── toolcall/     # Tool call parsing (Kimi K2.5, GLM-5 format)
+├── websearch/        # Web search service (Exa, Brave, DDG)
 └── types/            # API type definitions
 ```
 

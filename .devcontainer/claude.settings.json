@@ -40,7 +40,6 @@
     "claude-md-management@claude-plugins-official": true
   },
   "effortLevel": "high",
-  "promptSuggestionEnabled": false,
   "plansDirectory": "./plans",
   "prefersReducedMotion": true,
   "showThinkingSummaries": true,

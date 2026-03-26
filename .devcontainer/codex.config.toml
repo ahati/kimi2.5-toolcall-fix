@@ -1,7 +1,7 @@
 # ==========================================
 # GLOBAL SETTINGS & DEFAULTS
 # ==========================================
-model = "qwen3-max-2026-01-23"
+model = "glm-5"
 model_provider = "proxy_ai"
 model_catalog_json = "/home/vscode/custom_models.json"
 disabled_providers = ["opencode"]
@@ -161,3 +161,6 @@ status_line = ["model-with-reasoning", "current-dir", "project-root", "git-branc
 unified_exec = true
 guardian_approval = true
 multi_agent = true
+
+[mcp_servers.exa]
+url = "https://mcp.exa.ai/mcp"

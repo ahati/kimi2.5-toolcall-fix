@@ -3,7 +3,6 @@ module ai-proxy
 go 1.25
 
 require (
-	github.com/ahati/reasoning-summarizer v0.6.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/uuid v1.3.0
 	github.com/pkoukk/tiktoken-go v0.1.8
