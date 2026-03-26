@@ -95,9 +95,9 @@ func TestTransformWebSearchInterception_ToolUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Transform start failed: %v", err)
 	}
-	// Should NOT pass to base - we intercept it
-	if len(mockBase.events) != 0 {
-		t.Errorf("expected 0 events (intercepted), got %d", len(mockBase.events))
+	// Should pass through to base (we don't block it, just track it)
+	if len(mockBase.events) != 1 {
+		t.Errorf("expected 1 event (passed through), got %d", len(mockBase.events))
 	}
 
 	// Send content_block_delta with input
@@ -109,9 +109,9 @@ func TestTransformWebSearchInterception_ToolUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Transform delta failed: %v", err)
 	}
-	// Should NOT pass to base - we buffer it
-	if len(mockBase.events) != 0 {
-		t.Errorf("expected 0 events (buffered), got %d", len(mockBase.events))
+	// Should pass through to base (we buffer it AND pass through)
+	if len(mockBase.events) != 2 {
+		t.Errorf("expected 2 events (passed through), got %d", len(mockBase.events))
 	}
 
 	// Send content_block_stop - should trigger search and emit result
@@ -123,9 +123,10 @@ func TestTransformWebSearchInterception_ToolUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Transform stop failed: %v", err)
 	}
-	// Should emit tool_result
-	if len(mockBase.events) < 2 {
-		t.Errorf("expected at least 2 events (tool_result start and stop), got %d", len(mockBase.events))
+	// Should emit tool_result in addition to passing through stop
+	// Expected: stop event + tool_result start + tool_result stop = 3 more events
+	if len(mockBase.events) < 4 {
+		t.Errorf("expected at least 4 events (originals + tool_result), got %d", len(mockBase.events))
 	}
 }
 
@@ -147,9 +148,9 @@ func TestTransformWebSearchInterception_ServerToolUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Transform start failed: %v", err)
 	}
-	// Should NOT pass to base - we intercept it
-	if len(mockBase.events) != 0 {
-		t.Errorf("expected 0 events (intercepted), got %d", len(mockBase.events))
+	// Should pass through to base (we track it, not block it)
+	if len(mockBase.events) != 1 {
+		t.Errorf("expected 1 event (passed through), got %d", len(mockBase.events))
 	}
 }
 

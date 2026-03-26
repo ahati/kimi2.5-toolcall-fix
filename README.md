@@ -37,13 +37,26 @@ Each conversion handles message structure, tool call formats, streaming semantic
 ### Installation
 
 ```bash
-# Build from source
+# Standard build (no llama.cpp, no CGo required)
 go build -o ai-proxy .
 
-# Or install via Makefile
+# Build with llama.cpp for local reasoning summarization
 make build
+
+# Build with CUDA GPU support for faster summarization
+make build-cuda
+
+# Install binary and config
 make install  # Installs binary to ~/.local/bin and config to ~/.config/ai-proxy/config.json
 ```
+
+### Build Variants
+
+| Command | CGo | llama.cpp | Size | Use Case |
+|---------|-----|-----------|------|----------|
+| `go build` | No | No | ~15MB | Standard deployment |
+| `make build` | Yes | CPU | ~25MB | Local summarization |
+| `make build-cuda` | Yes | GPU | ~25MB | GPU-accelerated summarization |
 
 ### Configuration
 
@@ -293,6 +306,56 @@ Reference them in config using `${VAR_NAME}` syntax:
 }
 ```
 
+## Reasoning Summarizer
+
+The proxy can summarize long reasoning content into concise summaries when the `reasoning.summary` parameter is set in requests. This reduces token usage while preserving key insights.
+
+### Modes
+
+| Mode | Description | Requirements |
+|------|-------------|--------------|
+| `http` | Use external API (e.g., GPT-4o-mini) | Provider + model configured |
+| `local` | Use local llama.cpp inference | Build with `make build`, GGUF model |
+
+### Configuration
+
+```json
+{
+  "summarizer": {
+    "enabled": true,
+    "mode": "local",
+    "local": {
+      "model_path": "./models/Qwen3.5-0.8B-Q4_K_M.gguf",
+      "context_size": 2048,
+      "threads": 4,
+      "gpu_layers": 0,
+      "max_summary_tokens": 50,
+      "max_reasoning_chars": 6000
+    }
+  }
+}
+```
+
+For HTTP mode:
+
+```json
+{
+  "summarizer": {
+    "enabled": true,
+    "mode": "http",
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "prompt": "Summarize in under 10 words."
+  }
+}
+```
+
+### Build Requirements
+
+- **HTTP mode**: Works with standard `go build`
+- **Local mode**: Requires `make build` (includes llama.cpp CGo bindings)
+- **GPU acceleration**: Use `make build-cuda` for CUDA support
+
 ## Request Flow
 
 ```
@@ -386,6 +449,13 @@ ai-proxy/
 │   ├── exa.go                  # Exa.ai backend
 │   ├── brave.go                # Brave Search backend
 │   └── ddg.go                  # DuckDuckGo backend
+├── llama/                      # CGo bindings to llama.cpp
+│   ├── llama.go                # CGo bindings (build tag: llama)
+│   └── generate.go             # go:generate script for building llama.cpp
+├── summarizer/                 # Reasoning summarization
+│   ├── service.go              # HTTP API-based summarizer
+│   ├── local.go                # Local llama.cpp summarizer (build tag: llama)
+│   └── stub.go                 # Stub for builds without llama.cpp
 ├── types/                      # Type definitions
 │   ├── openai.go               # OpenAI Chat API types
 │   ├── openai_responses.go     # OpenAI Responses API types

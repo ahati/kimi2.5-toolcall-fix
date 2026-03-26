@@ -5,10 +5,14 @@ Go-based HTTP proxy for LLM APIs with OpenAI and Anthropic compatibility.
 ## Build Commands
 
 ```bash
-# Build (includes llama.cpp for summarizer module)
-# Uses ninja if available, falls back to make
-# Caches llama.cpp in Go build cache tied to summarizer version
+# Standard build (no llama.cpp, no CGo required)
+go build
+
+# Build with llama.cpp for local summarization
 make build
+
+# Build with CUDA GPU support
+make build-cuda
 
 # Build with specific llama.cpp version
 LLAMA_VERSION=b5508 make build
@@ -18,9 +22,6 @@ make clean
 
 # Clean llama.cpp cache (rebuilds on next build)
 make clean-cache
-
-# Or clear entire Go build cache (also clears llama.cpp)
-go clean -cache
 
 # Run tests
 go test ./...
@@ -34,13 +35,21 @@ go vet ./...
 go mod tidy
 ```
 
+### Build Variants
+
+| Command | CGo | llama.cpp | Use Case |
+|---------|-----|-----------|----------|
+| `go build` | No | No | Standard deployment, lighter binary |
+| `make build` | Yes | CPU | Local summarization with CPU inference |
+| `make build-cuda` | Yes | GPU | Local summarization with GPU acceleration |
+
 ### Build Cache
 
-llama.cpp is cached at `.build/llama-cpp-<summarizer-version>/` (gitignored).
+llama.cpp is cached at `.build/llama-cpp-<version>/` (gitignored).
 - First build: ~2 minutes to compile llama.cpp
 - Subsequent builds: instant (uses cached libraries)
-- Cache is versioned by summarizer module - upgrading summarizer triggers rebuild
 - Clean with `make clean-cache` or `rm -rf .build`
+- CUDA builds use separate cache: `.build/llama-cpp-<version>-cuda/`
 
 ## Code Style Guidelines
 
@@ -189,12 +198,15 @@ func TestFunctionName_Scenario(t *testing.T) {
 ├── config/              # Configuration loading (JSON + flags + env)
 ├── convert/             # Format conversions (OpenAI↔Anthropic↔Responses)
 ├── conversation/        # Conversation store for previous_response_id
+├── llama/               # CGo bindings to llama.cpp (build tag: llama)
 ├── logging/             # Logging utilities
 ├── proxy/               # Upstream API client
 ├── router/              # Model-to-provider routing
+├── summarizer/          # Reasoning summarization (HTTP or local llama.cpp)
 ├── tokens/              # Token counting utilities
 ├── transform/           # SSE stream transformations
 │   └── toolcall/        # Tool call parsing and formatting
+├── websearch/           # Web search service (Exa, Brave, DDG)
 └── types/               # Shared types (OpenAI, Anthropic, SSE)
 ```
 
