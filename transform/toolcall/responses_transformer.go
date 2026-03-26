@@ -827,10 +827,26 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 		var thinkingDelta types.ThinkingDelta
 		if err := json.Unmarshal(event.Delta, &thinkingDelta); err == nil && thinkingDelta.Type == "thinking_delta" {
 			if t.inReasoning {
-				// Check for GLM-5 tool call format (XML-based)
-				if t.glm5ToolCallTransform && strings.Contains(thinkingDelta.Thinking, "<tool_call>") {
-					logging.InfoMsg("[%s] GLM-5 tool call detected in thinking content, extracting", t.messageID)
-					return t.processGLM5ToolCalls(thinkingDelta.Thinking)
+				// Always try GLM-5 parsing when enabled - let the parser's state machine handle detection
+				if t.glm5ToolCallTransform {
+					events := t.glm5Parser.Parse(thinkingDelta.Thinking)
+					// If parser produced events, tool calls were found/extracted
+					if len(events) > 0 {
+						logging.InfoMsg("[%s] GLM-5 tool call markup detected in thinking content, extracting tool calls", t.messageID)
+						for _, e := range events {
+							if e.Type == EventToolStart {
+								logging.InfoMsg("[%s] GLM-5 tool call extracted: id=%s, name=%s", t.messageID, e.ID, e.Name)
+							}
+							if err := t.writeParserEvent(e); err != nil {
+								return err
+							}
+						}
+						return nil
+					}
+					// If parser might be parsing (buffering partial tag), don't emit as reasoning
+					if t.glm5Parser.IsPotentiallyParsing() {
+						return nil
+					}
 				}
 				// Check if content contains tool call markup (only when toolCallTransform is enabled)
 				if t.toolCallTransform {
@@ -987,10 +1003,25 @@ func (t *ResponsesTransformer) handleContentBlockStop(event types.Event) error {
 	if t.inReasoning {
 		t.inReasoning = false
 
-		// Flush any remaining parser state (only when toolCallTransform is enabled)
+		// Flush any remaining parser state (Kimi tool calls)
 		if t.toolCallTransform {
 			for {
 				events := t.parser.Parse("")
+				if len(events) == 0 {
+					break
+				}
+				for _, e := range events {
+					if err := t.writeParserEvent(e); err != nil {
+						return err
+					}
+				}
+			}
+		}
+
+		// Flush any remaining GLM-5 parser state
+		if t.glm5ToolCallTransform {
+			for {
+				events := t.glm5Parser.Parse("")
 				if len(events) == 0 {
 					break
 				}

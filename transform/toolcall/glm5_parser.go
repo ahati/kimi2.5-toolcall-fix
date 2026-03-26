@@ -20,6 +20,8 @@ const (
 	glm5StateReadingArgKey
 	// glm5StateReadingArgValue indicates the parser is reading an argument value.
 	glm5StateReadingArgValue
+	// glm5StateLookingForArgValue indicates the parser is looking for <arg_value> tag after reading key.
+	glm5StateLookingForArgValue
 )
 
 // GLM5Parser extracts tool calls from GLM-5's XML format in reasoning_content.
@@ -73,6 +75,8 @@ func (p *GLM5Parser) processState() []Event {
 		return p.processInToolCall()
 	case glm5StateReadingArgKey:
 		return p.processReadingArgKey()
+	case glm5StateLookingForArgValue:
+		return p.processLookingForArgValue()
 	case glm5StateReadingArgValue:
 		return p.processReadingArgValue()
 	default:
@@ -84,7 +88,19 @@ func (p *GLM5Parser) processState() []Event {
 func (p *GLM5Parser) processIdle() []Event {
 	idx := strings.Index(p.buf, "<tool_call>")
 	if idx < 0 {
-		// No tool call found, emit any content as regular text
+		// No complete tool call found yet
+		// Check if buffer might contain a partial/prefix of <tool_call>
+		tag := "<tool_call>"
+		// Check if buffer ends with any prefix of the tag
+		for i := 1; i <= len(p.buf) && i < len(tag); i++ {
+			// Check if last i chars of buffer match first i chars of tag
+			if p.buf[len(p.buf)-i:] == tag[:i] {
+				// Buffer ends with partial match of <tool_call>, wait for more data
+				return nil
+			}
+		}
+
+		// Not a partial tag, emit any content as regular text
 		if p.buf == "" {
 			return nil
 		}
@@ -123,7 +139,20 @@ func (p *GLM5Parser) processInToolCall() []Event {
 		} else if endIdx >= 0 {
 			nameEnd = endIdx
 		} else {
-			// Need more data
+			// Need more data - check if buffer ends with partial arg_key tag
+			// If buffer is empty or doesn't have the name yet, just wait
+			if p.buf == "" {
+				return nil
+			}
+			// Check for partial <arg_key> tag
+			tag := "<arg_key>"
+			for i := 1; i <= len(p.buf) && i < len(tag); i++ {
+				if p.buf[len(p.buf)-i:] == tag[:i] {
+					// Buffer ends with partial <arg_key>, wait for more
+					return nil
+				}
+			}
+			// No partial tag found, just wait for more data
 			return nil
 		}
 		p.toolName = strings.TrimSpace(p.buf[:nameEnd])
@@ -150,10 +179,19 @@ func (p *GLM5Parser) processInToolCall() []Event {
 	return nil
 }
 
-// processReadingArgKey reads the argument key until </arg_key>.
+// processReadingArgKey reads the argument key until </arg_key>, then looks for <arg_value>.
+// Note: <arg_value> may arrive in a separate chunk, so we transition to a dedicated state.
 func (p *GLM5Parser) processReadingArgKey() []Event {
 	idx := strings.Index(p.buf, "</arg_key>")
 	if idx < 0 {
+		// Check for partial </arg_key> tag
+		tag := "</arg_key>"
+		for i := 1; i <= len(p.buf) && i < len(tag); i++ {
+			if p.buf[len(p.buf)-i:] == tag[:i] {
+				// Buffer ends with partial </arg_key>, wait for more
+				return nil
+			}
+		}
 		// Need more data
 		return nil
 	}
@@ -161,10 +199,24 @@ func (p *GLM5Parser) processReadingArgKey() []Event {
 	p.currentKey = p.buf[:idx]
 	p.buf = p.buf[idx+len("</arg_key>"):]
 
-	// Now skip past <arg_value> opening tag
+	// Transition to looking for <arg_value> (may be in same or next chunk)
+	p.state = glm5StateLookingForArgValue
+	return nil
+}
+
+// processLookingForArgValue skips past the <arg_value> opening tag.
+func (p *GLM5Parser) processLookingForArgValue() []Event {
 	valIdx := strings.Index(p.buf, "<arg_value>")
 	if valIdx < 0 {
-		// Need more data - this shouldn't happen in valid XML
+		// Check for partial <arg_value> tag
+		tag := "<arg_value>"
+		for i := 1; i <= len(p.buf) && i < len(tag); i++ {
+			if p.buf[len(p.buf)-i:] == tag[:i] {
+				// Buffer ends with partial <arg_value>, wait for more
+				return nil
+			}
+		}
+		// Need more data - wait for <arg_value>
 		return nil
 	}
 	p.buf = p.buf[valIdx+len("<arg_value>"):]
@@ -243,7 +295,13 @@ func generateToolCallID(index int) string {
 
 // IsIdle returns true if the parser is not currently parsing a tool call.
 func (p *GLM5Parser) IsIdle() bool {
-	return p.state == glm5StateIdle
+	return p.state == glm5StateIdle && p.buf == ""
+}
+
+// IsPotentiallyParsing returns true if the parser might be in the middle of a tag.
+// This is used to detect when we're buffering partial tag content.
+func (p *GLM5Parser) IsPotentiallyParsing() bool {
+	return p.state != glm5StateIdle || p.buf != ""
 }
 
 // Reset clears the parser state for reuse.

@@ -61,6 +61,7 @@ func TestAnthropicTransformer_TokenAccounting_MessageStart(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			tr := NewAnthropicTransformer(&buf)
+			tr.SetKimiToolCallTransform(true) // Enable Kimi tool call transformation
 
 			event := &sse.Event{
 				Data: tt.inputJSON,
@@ -153,6 +154,7 @@ func TestAnthropicTransformer_TokenAccounting_MessageDelta(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			tr := NewAnthropicTransformer(&buf)
+			tr.SetKimiToolCallTransform(true) // Enable Kimi tool call transformation
 			tr.toolsEmitted = tt.toolsEmitted
 
 			event := &sse.Event{
@@ -325,6 +327,7 @@ func TestAnthropicTransformer_MultiTurn_TokenAccounting(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			tr := NewAnthropicTransformer(&buf)
+			tr.SetKimiToolCallTransform(true) // Enable Kimi tool call transformation
 
 			if len(tt.events) != len(tt.eventChecks) {
 				t.Fatalf("Number of events (%d) must match number of eventChecks (%d)", len(tt.events), len(tt.eventChecks))
@@ -391,6 +394,7 @@ func TestAnthropicTransformer_TokenAccounting_EdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			tr := NewAnthropicTransformer(&buf)
+			tr.SetKimiToolCallTransform(true) // Enable Kimi tool call transformation
 
 			event := &sse.Event{
 				Data: tt.inputJSON,
@@ -463,6 +467,7 @@ func TestAnthropicTransformer_TokenAccounting_ToolCalls(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			tr := NewAnthropicTransformer(&buf)
+			tr.SetKimiToolCallTransform(true) // Enable Kimi tool call transformation
 
 			var allOutput strings.Builder
 

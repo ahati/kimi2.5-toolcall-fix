@@ -303,6 +303,7 @@ func TestTransformer_OpenAI_EndToEnd(t *testing.T) {
 func TestTransformer_Anthropic_EndToEnd(t *testing.T) {
 	buf := &bytes.Buffer{}
 	tr := NewAnthropicTransformer(buf)
+	tr.SetKimiToolCallTransform(true) // Enable Kimi tool call transformation
 
 	events := []types.Event{
 		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-123", Model: "kimi-k2.5"}},
@@ -461,6 +462,7 @@ func TestTransformer_OpenAIToolCallFromReasoning(t *testing.T) {
 func TestTransformer_Anthropic_ToolCallsInThinking(t *testing.T) {
 	buf := &bytes.Buffer{}
 	tr := NewAnthropicTransformer(buf)
+	tr.SetKimiToolCallTransform(true) // Enable Kimi tool call transformation
 
 	events := []types.Event{
 		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-123", Model: "kimi-k2.5"}},
@@ -503,6 +505,7 @@ func TestTransformer_Anthropic_ToolCallsInThinking(t *testing.T) {
 func TestTransformer_Anthropic_ToolCallsInText(t *testing.T) {
 	buf := &bytes.Buffer{}
 	tr := NewAnthropicTransformer(buf)
+	tr.SetKimiToolCallTransform(true) // Enable Kimi tool call transformation
 
 	events := []types.Event{
 		{Type: "message_start", Message: &types.MessageInfo{ID: "msg-456", Model: "kimi-k2.5"}},
@@ -605,5 +608,96 @@ func TestParser_IsIdle(t *testing.T) {
 	p.Parse("<|tool_calls_section_begin|>")
 	if p.IsIdle() {
 		t.Error("expected parser to not be idle after section begin")
+	}
+}
+
+// TestGLM5RealWorldChunkingFromSSELog reproduces the exact failure from SSE log 20260326-141959_62395d82.json
+// where GLM-5 <tool_call> pseudo-XML was not transformed into proper tool calls.
+//
+// The failure occurred because:
+// 1. <tool_call> appeared as ":<tool_call>" (with colon prefix) in chunk 17
+// 2. The arg_value was split across 15+ tiny chunks (chunks 21-36)
+// 3. The tool call appeared as plain text in reasoning instead of being transformed
+//
+// This test uses OpenAI format (chat.completion.chunk) with reasoning_content field,
+// matching the actual upstream response format from the SSE log.
+func TestGLM5RealWorldChunkingFromSSELog(t *testing.T) {
+	buf := &bytes.Buffer{}
+	tr := NewOpenAITransformer(buf)
+	tr.SetGLM5ToolCallTransform(true)
+
+	// Exact chunks from SSE log 20260326-141959_62395d82.json
+	// Model: glm-5, chunks 17-36 containing the first tool call
+	chunks := []string{
+		// Chunk 17: Colon prefix + <tool_call> - this is the key issue
+		":<tool_call>",
+		// Chunk 18: Function name
+		"exec_command",
+		// Chunk 19: Opening arg_key
+		"<arg_key>",
+		// Chunk 20: Key name + closing
+		"cmd</arg_key>",
+		// Chunks 21-36: arg_value split word-by-word (extreme chunking)
+		"<arg_value>cd",
+		" /work",
+		"spaces/k",
+		"imi-k",
+		"2.",
+		"5",
+		"-fix-proxy",
+		" && go",
+		" test",
+		" -v",
+		" ./transform",
+		"/web",
+		"search/",
+		"... ",
+		"2>&",
+		"1</arg_value>",
+		// Closing tag
+		"</tool_call>",
+	}
+
+	for i, text := range chunks {
+		chunk := types.Chunk{
+			ID:     "msg_1774531196716",
+			Object: "chat.completion.chunk",
+			Model:  "glm-5",
+			Choices: []types.Choice{{
+				Delta: types.Delta{
+					ReasoningContent: text,
+				},
+			}},
+		}
+		data, _ := json.Marshal(chunk)
+
+		event := &sse.Event{Data: string(data)}
+		if err := tr.Transform(event); err != nil {
+			t.Fatalf("Transform failed at chunk %d (%q): %v", i, text, err)
+		}
+	}
+
+	if err := tr.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	output := buf.String()
+	t.Logf("Output:\n%s", output)
+
+	// The bug: tool call should be extracted but currently appears as plain text
+	// This assertion will FAIL with the current implementation, demonstrating the bug
+	if !strings.Contains(output, `"tool_calls"`) {
+		t.Error("BUG: GLM-5 tool call was not extracted - appears as plain text instead of tool_calls")
+		t.Log("Expected: tool_calls array with function name and arguments")
+		t.Log("Actual: reasoning content with <tool_call> tags as plain text")
+	}
+
+	if !strings.Contains(output, `"name":"exec_command"`) {
+		t.Error("BUG: function name 'exec_command' was not extracted")
+	}
+
+	// Check that arguments were captured (JSON-escaped in output)
+	if !strings.Contains(output, `"arguments"`) && !strings.Contains(output, `"cd /workspaces/kimi-k2.5-fix-proxy && go test -v ./transform/websearch/... 2>&1"`) {
+		t.Error("BUG: function arguments were not extracted")
 	}
 }

@@ -3,7 +3,6 @@ package toolcall
 import (
 	"encoding/json"
 	"io"
-	"strings"
 
 	"ai-proxy/logging"
 	"ai-proxy/transform"
@@ -118,16 +117,26 @@ func (t *OpenAITransformer) handleChunk(chunk types.Chunk, rawData string) error
 }
 
 func (t *OpenAITransformer) processText(text string) error {
-	// Check for GLM-5 XML tool calls first
-	if t.glm5ToolCallTransform && strings.Contains(text, "<tool_call>") {
-		logging.InfoMsg("[%s] GLM-5 tool call detected in reasoning content, extracting", t.messageID)
+	// Always try GLM-5 parsing when enabled - let the parser's state machine handle detection
+	if t.glm5ToolCallTransform {
 		events := t.glm5Parser.Parse(text)
-		for _, e := range events {
-			if err := t.writeEvent(e); err != nil {
-				return err
+		// If parser produced events, tool calls were found/extracted
+		if len(events) > 0 {
+			logging.InfoMsg("[%s] GLM-5 tool call markup detected in reasoning content, extracting tool calls", t.messageID)
+			for _, e := range events {
+				if e.Type == EventToolStart {
+					logging.InfoMsg("[%s] GLM-5 tool call extracted: name=%s, id=%s, index=%d", t.messageID, e.Name, e.ID, e.Index)
+				}
+				if err := t.writeEvent(e); err != nil {
+					return err
+				}
 			}
+			return nil
 		}
-		return nil
+		// If parser might be parsing (buffering partial tag), don't emit as reasoning
+		if t.glm5Parser.IsPotentiallyParsing() {
+			return nil
+		}
 	}
 
 	// Check for Kimi-style tool call markup (always try if not idle or contains markup)
@@ -178,8 +187,21 @@ func (t *OpenAITransformer) writeData(data []byte) error {
 }
 
 func (t *OpenAITransformer) Flush() error {
+	// Flush Kimi parser
 	for {
 		events := t.parser.Parse("")
+		if len(events) == 0 {
+			break
+		}
+		for _, e := range events {
+			if err := t.writeEvent(e); err != nil {
+				return err
+			}
+		}
+	}
+	// Flush GLM-5 parser
+	for {
+		events := t.glm5Parser.Parse("")
 		if len(events) == 0 {
 			return nil
 		}

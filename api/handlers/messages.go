@@ -232,7 +232,10 @@ func (h *MessagesHandler) CreateTransformer(w io.Writer) transform.SSETransforme
 	switch h.route.OutputProtocol {
 	case "openai":
 		// OpenAI to Anthropic transformer
-		baseTransformer = toolcall.NewAnthropicTransformer(w)
+		transformer := toolcall.NewAnthropicTransformer(w)
+		transformer.SetGLM5ToolCallTransform(h.route.GLM5ToolCallTransform)
+		transformer.SetKimiToolCallTransform(h.route.KimiToolCallTransform)
+		baseTransformer = transformer
 	case "anthropic":
 		// Passthrough for native Anthropic
 		baseTransformer = transform.NewPassthroughTransformer(w)

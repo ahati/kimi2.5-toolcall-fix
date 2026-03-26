@@ -30,6 +30,13 @@ type AnthropicTransformer struct {
 	needThinkingStop bool
 	needTextStop     bool
 	toolsEmitted     bool
+
+	// GLM-5 tool call extraction
+	glm5Parser            *GLM5Parser
+	glm5ToolCallTransform bool
+
+	// Kimi tool call extraction
+	kimiToolCallTransform bool
 }
 
 type anthropicState int
@@ -44,10 +51,21 @@ const (
 
 func NewAnthropicTransformer(output io.Writer) *AnthropicTransformer {
 	return &AnthropicTransformer{
-		sseWriter: transform.NewSSEWriter(output),
-		formatter: NewAnthropicFormatter("", ""),
-		state:     anthropicStateIdle,
+		sseWriter:  transform.NewSSEWriter(output),
+		formatter:  NewAnthropicFormatter("", ""),
+		state:      anthropicStateIdle,
+		glm5Parser: NewGLM5Parser(),
 	}
+}
+
+// SetGLM5ToolCallTransform enables or disables GLM-5 XML tool call extraction.
+func (t *AnthropicTransformer) SetGLM5ToolCallTransform(enabled bool) {
+	t.glm5ToolCallTransform = enabled
+}
+
+// SetKimiToolCallTransform enables or disables Kimi-style tool call extraction.
+func (t *AnthropicTransformer) SetKimiToolCallTransform(enabled bool) {
+	t.kimiToolCallTransform = enabled
 }
 
 func (t *AnthropicTransformer) Transform(event *sse.Event) error {
@@ -296,6 +314,27 @@ func (t *AnthropicTransformer) handleMessageDelta(event types.Event, rawJSON []b
 }
 
 func (t *AnthropicTransformer) processThinking(text string, index int) [][]byte {
+	// If GLM-5 transformation is enabled, use GLM-5 parser exclusively
+	if t.glm5ToolCallTransform {
+		events := t.glm5Parser.Parse(text)
+		if len(events) > 0 {
+			logging.InfoMsg("[%s] GLM-5 tool call markup detected in thinking content, extracting tool calls", t.messageID)
+			return t.convertGLM5EventsToAnthropic(events, index)
+		}
+		// If parser might be parsing (buffering partial tag), don't emit as reasoning
+		if t.glm5Parser.IsPotentiallyParsing() {
+			return nil
+		}
+		// No tool calls found and not parsing - emit as regular thinking
+		return [][]byte{t.makeThinkingDelta(index, text)}
+	}
+
+	// Otherwise, use Kimi-style parsing if enabled
+	if !t.kimiToolCallTransform {
+		// No tool call transformation enabled - pass through as regular thinking
+		return [][]byte{t.makeThinkingDelta(index, text)}
+	}
+
 	t.buf += text
 	var out [][]byte
 
@@ -390,7 +429,58 @@ func (t *AnthropicTransformer) processThinking(text string, index int) [][]byte 
 	}
 }
 
+// convertGLM5EventsToAnthropic converts GLM-5 parser events to Anthropic format events.
+// GLM-5 events (EventToolStart, EventToolArgs, EventToolEnd) are converted to
+// Anthropic tool_use content blocks.
+func (t *AnthropicTransformer) convertGLM5EventsToAnthropic(events []Event, index int) [][]byte {
+	var out [][]byte
+
+	for _, e := range events {
+		switch e.Type {
+		case EventContent:
+			// Regular thinking content - emit as thinking delta
+			if e.Text != "" {
+				out = append(out, t.makeThinkingDelta(index, e.Text))
+			}
+		case EventToolStart:
+			// Start a new tool_use block
+			logging.InfoMsg("[%s] GLM-5 tool call extracted: name=%s, id=%s, blockIndex=%d", t.messageID, e.Name, e.ID, t.blockIndex)
+			t.currentID = e.ID
+			out = append(out, t.makeToolUseBlockStart(e.Name))
+		case EventToolArgs:
+			// Emit tool arguments as input_json_delta
+			out = append(out, t.makeInputJSONDelta(e.Args))
+		case EventToolEnd:
+			// End the tool_use block
+			out = append(out, t.makeContentBlockStop())
+			t.toolIndex++
+		}
+	}
+
+	return out
+}
+
 func (t *AnthropicTransformer) processText(text string, index int) [][]byte {
+	// If GLM-5 transformation is enabled, use GLM-5 parser exclusively
+	if t.glm5ToolCallTransform {
+		events := t.glm5Parser.Parse(text)
+		if len(events) > 0 {
+			return t.convertGLM5EventsToAnthropic(events, index)
+		}
+		// If parser might be parsing (buffering partial tag), don't emit as text
+		if t.glm5Parser.IsPotentiallyParsing() {
+			return nil
+		}
+		// No tool calls found and not parsing - emit as regular text
+		return [][]byte{t.makeTextDelta(index, text)}
+	}
+
+	// Otherwise, use Kimi-style parsing if enabled
+	if !t.kimiToolCallTransform {
+		// No tool call transformation enabled - pass through as regular text
+		return [][]byte{t.makeTextDelta(index, text)}
+	}
+
 	t.buf += text
 	var out [][]byte
 
@@ -603,6 +693,22 @@ func (t *AnthropicTransformer) writePassthrough(eventType string, data []byte) e
 }
 
 func (t *AnthropicTransformer) Flush() error {
+	// Flush any pending GLM-5 parser state
+	if t.glm5ToolCallTransform {
+		events := t.glm5Parser.Parse("")
+		if len(events) > 0 {
+			// Determine which index to use based on current context
+			index := t.thinkingIndex
+			if t.inText {
+				index = t.textIndex
+			}
+			anthropicEvents := t.convertGLM5EventsToAnthropic(events, index)
+			for _, e := range anthropicEvents {
+				t.write(e)
+			}
+		}
+	}
+
 	if t.buf == "" {
 		return nil
 	}
