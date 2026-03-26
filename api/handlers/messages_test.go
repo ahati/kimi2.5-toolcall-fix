@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -298,5 +299,68 @@ func TestMessagesHandler_CreateTransformer(t *testing.T) {
 
 	if transformer == nil {
 		t.Error("expected non-nil transformer")
+	}
+}
+
+func TestMessagesHandler_TransformRequest_PassthroughNormalizesWebSearchToolResult(t *testing.T) {
+	// This test verifies that web_search_tool_result blocks are normalized
+	// even when IsPassthrough is true (which happens when provider supports
+	// the incoming protocol). This is needed because the proxy internally
+	// injects web_search_tool_result blocks that upstream providers don't understand.
+	provider := config.Provider{
+		Name:      "test-provider",
+		Endpoints: map[string]string{"anthropic": "https://api.example.com/v1/messages"},
+	}
+	h := &MessagesHandler{
+		cfg: &config.Config{},
+		route: &router.ResolvedRoute{
+			Provider:       provider,
+			OutputProtocol: "anthropic",
+			Model:          "test-model",
+			IsPassthrough:  true,
+		},
+	}
+
+	// Request with web_search_tool_result that should be normalized
+	body := []byte(`{
+		"model": "test-model",
+		"messages": [{
+			"role": "user",
+			"content": [{
+				"type": "web_search_tool_result",
+				"tool_use_id": "toolu_123",
+				"content": [
+					{"type": "web_search_result", "title": "Test", "url": "https://example.com", "content": "Test content"}
+				]
+			}]
+		}]
+	}`)
+
+	result, err := h.TransformRequest(context.TODO(), body)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	// Verify the result is valid JSON
+	var req map[string]interface{}
+	if err := json.Unmarshal(result, &req); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	// Verify web_search_tool_result was converted to tool_result
+	messages := req["messages"].([]interface{})
+	msg := messages[0].(map[string]interface{})
+	content := msg["content"].([]interface{})
+	block := content[0].(map[string]interface{})
+
+	if block["type"] != "tool_result" {
+		t.Errorf("expected type 'tool_result', got '%v'", block["type"])
+	}
+	if block["tool_use_id"] != "toolu_123" {
+		t.Errorf("expected tool_use_id 'toolu_123', got '%v'", block["tool_use_id"])
+	}
+	// Content should be converted to a string, not an array
+	if _, ok := block["content"].(string); !ok {
+		t.Errorf("expected content to be string, got %T", block["content"])
 	}
 }

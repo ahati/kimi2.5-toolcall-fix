@@ -124,9 +124,10 @@ func (h *MessagesHandler) TransformRequest(ctx context.Context, body []byte) ([]
 		return nil, fmt.Errorf("failed to marshal updated request: %w", err)
 	}
 
-	// Passthrough optimization - no transformation needed
+	// Passthrough optimization - normalize web_search_tool_result for upstream compatibility
+	// Web search is handled internally, so we must always normalize even in passthrough mode
 	if h.route.IsPassthrough {
-		return updatedBody, nil
+		return convert.NormalizeWebSearchToolResultsInMessages(updatedBody), nil
 	}
 
 	switch h.route.OutputProtocol {
