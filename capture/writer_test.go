@@ -413,6 +413,28 @@ func TestExtractTokenUsageFromChunks(t *testing.T) {
 			wantCache:  40,
 		},
 		{
+			name: "Anthropic format with cache read but no cache creation (should calculate)",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":26293,"output_tokens":0,"cache_read_input_tokens":51,"cache_creation_input_tokens":0}}}`)},
+				{Data: json.RawMessage(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":47}}`)},
+			},
+			wantInput:    26293,
+			wantOutput:   47,
+			wantCache:    51,
+			wantCacheCrt: 26242, // input_tokens - cache_read_input_tokens = 26293 - 51
+		},
+		{
+			name: "Anthropic format with cache creation provided directly (should not recalculate)",
+			chunks: []SSEChunk{
+				{Data: json.RawMessage(`{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":4,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":23888}}}`)},
+				{Data: json.RawMessage(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":107}}`)},
+			},
+			wantInput:    4,
+			wantOutput:   107,
+			wantCache:    0,
+			wantCacheCrt: 23888, // use the provided value, don't recalculate
+		},
+		{
 			name: "chunk with raw data only",
 			chunks: []SSEChunk{
 				{Raw: "some raw data"},

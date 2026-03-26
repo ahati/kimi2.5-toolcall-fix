@@ -365,6 +365,20 @@ func extractUsageFromJSON(data json.RawMessage, usage *TokenUsage) {
 			usage.CacheCreationTokens = usage.InputTokens - usage.CacheReadTokens
 		}
 	}
+
+	// Calculate cache creation for Anthropic format if not provided directly
+	// Some providers (like DashScope with certain models) return cache_read_input_tokens but not cache_creation_input_tokens
+	// In this case, calculate: cache_creation = input_tokens - cache_read_input_tokens
+	// This represents tokens that were NOT served from cache (fresh tokens or newly cached)
+	//
+	// IMPORTANT: Only apply this for Anthropic format (has "input_tokens" field), not OpenAI format
+	// OpenAI: prompt_tokens INCLUDES cached tokens, so calculation would be incorrect
+	// Anthropic: input_tokens is fresh tokens only, cache_read is additive
+	if _, hasInputTokens := usageObj["input_tokens"]; hasInputTokens {
+		if usage.CacheReadTokens > 0 && usage.CacheCreationTokens == 0 && usage.InputTokens > usage.CacheReadTokens {
+			usage.CacheCreationTokens = usage.InputTokens - usage.CacheReadTokens
+		}
+	}
 }
 
 // ExtractFinishReasonFromChunks extracts the finish reason from SSE chunks.
