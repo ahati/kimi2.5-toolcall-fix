@@ -830,9 +830,19 @@ func (t *ResponsesTransformer) handleContentBlockDelta(event types.Event) error 
 				// Always try GLM-5 parsing when enabled - let the parser's state machine handle detection
 				if t.glm5ToolCallTransform {
 					events := t.glm5Parser.Parse(thinkingDelta.Thinking)
-					// If parser produced events, tool calls were found/extracted
 					if len(events) > 0 {
-						logging.InfoMsg("[%s] GLM-5 tool call markup detected in thinking content, extracting tool calls", t.messageID)
+						// Check if any events are actual tool call events (not just content)
+						hasToolCallEvents := false
+						for _, e := range events {
+							if e.Type == EventToolStart || e.Type == EventToolArgs || e.Type == EventToolEnd {
+								hasToolCallEvents = true
+								break
+							}
+						}
+						// Only log "markup detected" when actual tool calls are found
+						if hasToolCallEvents {
+							logging.InfoMsg("[%s] GLM-5 tool call markup detected in thinking content, extracting tool calls", t.messageID)
+						}
 						for _, e := range events {
 							if e.Type == EventToolStart {
 								logging.InfoMsg("[%s] GLM-5 tool call extracted: id=%s, name=%s", t.messageID, e.ID, e.Name)
