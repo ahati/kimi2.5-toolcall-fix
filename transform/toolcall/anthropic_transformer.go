@@ -318,7 +318,18 @@ func (t *AnthropicTransformer) processThinking(text string, index int) [][]byte 
 	if t.glm5ToolCallTransform {
 		events := t.glm5Parser.Parse(text)
 		if len(events) > 0 {
-			logging.InfoMsg("[%s] GLM-5 tool call markup detected in thinking content, extracting tool calls", t.messageID)
+			// Check if any events are actual tool call events (not just content)
+			hasToolCallEvents := false
+			for _, e := range events {
+				if e.Type == EventToolStart || e.Type == EventToolArgs || e.Type == EventToolEnd {
+					hasToolCallEvents = true
+					break
+				}
+			}
+			// Only log "markup detected" when actual tool calls are found
+			if hasToolCallEvents {
+				logging.InfoMsg("[%s] GLM-5 tool call markup detected in thinking content, extracting tool calls", t.messageID)
+			}
 			return t.convertGLM5EventsToAnthropic(events, index)
 		}
 		// If parser might be parsing (buffering partial tag), don't emit as reasoning
